@@ -220,7 +220,7 @@
                 <span class="mod-reason">{{ mod.modification_reason }}</span>
                 <div class="mod-actions">
                   <el-switch
-                    v-model="mod.showDiff"
+                    v-model="getModUIState(mod.id).showDiff"
                     active-text="差异"
                     inactive-text="全文"
                     size="small"
@@ -238,7 +238,7 @@
                 <el-col :span="12">
                   <div class="text-label">当前文本</div>
                   <div
-                    v-if="mod.showDiff"
+                    v-if="getModUIState(mod.id).showDiff"
                     class="text-box diff-view"
                     v-html="getDiffHtml(mod).originalHtml"
                   ></div>
@@ -248,11 +248,11 @@
                   <div class="text-label">
                     建议修改为
                     <el-button
-                      v-if="!mod.isEditing"
+                      v-if="!getModUIState(mod.id).isEditing"
                       type="primary"
                       link
                       size="small"
-                      @click="mod.isEditing = true"
+                      @click="getModUIState(mod.id).isEditing = true"
                     >
                       编辑
                     </el-button>
@@ -267,19 +267,19 @@
                     </el-button>
                   </div>
                   <div
-                    v-if="mod.showDiff && !mod.isEditing"
+                    v-if="getModUIState(mod.id).showDiff && !getModUIState(mod.id).isEditing"
                     class="text-box diff-view suggested"
                     v-html="getDiffHtml(mod).modifiedHtml"
                   ></div>
                   <div
-                    v-else-if="!mod.isEditing"
+                    v-else-if="!getModUIState(mod.id).isEditing"
                     class="text-box suggested"
-                  >{{ mod.editText || mod.suggested_text }}</div>
+                  >{{ getModUIState(mod.id).editText || mod.suggested_text }}</div>
                   <el-input
                     v-else
                     type="textarea"
                     :rows="4"
-                    v-model="mod.editText"
+                    v-model="getModUIState(mod.id).editText"
                   />
                 </el-col>
               </el-row>
@@ -349,6 +349,9 @@ const redlinePreview = ref(null)
 const showRedlineDialog = ref(false)
 const includeComments = ref(false)
 
+// 独立存储 UI 状态，不受 store 重载影响
+const modificationUIStates = ref({}) // { modId: { showDiff: true, isEditing: false, editText: '' } }
+
 const result = computed(() => store.reviewResult)
 const summary = computed(() => result.value?.summary || {
   total_risks: 0,
@@ -391,19 +394,41 @@ const canExportRedline = computed(() => {
   return true
 })
 
+// 获取修改建议的 UI 状态
+function getModUIState(modId) {
+  if (!modificationUIStates.value[modId]) {
+    const mod = result.value?.modifications?.find(m => m.id === modId)
+    modificationUIStates.value[modId] = {
+      showDiff: true,
+      isEditing: false,
+      editText: mod?.user_modified_text || mod?.suggested_text || ''
+    }
+  }
+  return modificationUIStates.value[modId]
+}
+
+// 初始化所有修改建议的 UI 状态
+function initModUIStates() {
+  if (result.value?.modifications) {
+    result.value.modifications.forEach(mod => {
+      if (!modificationUIStates.value[mod.id]) {
+        modificationUIStates.value[mod.id] = {
+          showDiff: true,
+          isEditing: false,
+          editText: mod.user_modified_text || mod.suggested_text || ''
+        }
+      }
+    })
+  }
+}
+
 onMounted(async () => {
   if (taskId.value) {
     loading.value = true
     try {
       await store.loadResult(taskId.value)
-      // 初始化编辑文本和UI状态
-      if (result.value?.modifications) {
-        result.value.modifications.forEach(mod => {
-          mod.editText = mod.user_modified_text || mod.suggested_text
-          mod.showDiff = true  // 默认显示差异视图
-          mod.isEditing = false
-        })
-      }
+      // 初始化 UI 状态（独立于 store 数据）
+      initModUIStates()
       // 获取 Redline 预览信息
       await loadRedlinePreview()
     } catch (error) {
@@ -592,15 +617,17 @@ function computeWordDiff(original, modified) {
 // 获取 diff HTML
 function getDiffHtml(mod) {
   const original = mod.original_text || ''
-  const modified = mod.editText || mod.user_modified_text || mod.suggested_text || ''
+  const uiState = getModUIState(mod.id)
+  const modified = uiState.editText || mod.user_modified_text || mod.suggested_text || ''
   return computeWordDiff(original, modified)
 }
 
 // 保存修改
 async function saveModification(mod) {
+  const uiState = getModUIState(mod.id)
   try {
-    await store.updateModification(taskId.value, mod.id, { user_modified_text: mod.editText })
-    mod.isEditing = false
+    await store.updateModification(taskId.value, mod.id, { user_modified_text: uiState.editText })
+    uiState.isEditing = false
     ElMessage.success('保存成功')
   } catch (error) {
     ElMessage.error('保存失败')
@@ -610,23 +637,23 @@ async function saveModification(mod) {
 async function updateModification(mod, updates) {
   try {
     await store.updateModification(taskId.value, mod.id, updates)
-    // 重新初始化编辑文本
-    if (result.value?.modifications) {
-      result.value.modifications.forEach(m => {
-        m.editText = m.user_modified_text || m.suggested_text
-      })
-    }
+    // UI 状态独立存储，不需要额外处理
   } catch (error) {
     ElMessage.error('更新失败')
   }
 }
 
 async function updateAction(action, confirmed) {
+  // 先乐观更新 UI
+  action.user_confirmed = confirmed
+
   try {
     await store.updateAction(taskId.value, action.id, confirmed)
-    // 重新加载 Redline 预览信息以更新可批注数量
-    await loadRedlinePreview()
+    // 后台静默刷新 Redline 预览信息，不阻塞 UI
+    loadRedlinePreview()
   } catch (error) {
+    // 如果失败，回滚 UI 状态
+    action.user_confirmed = !confirmed
     ElMessage.error('更新失败')
   }
 }
@@ -649,12 +676,19 @@ async function handleExportRedline() {
   try {
     const res = await api.exportRedline(taskId.value, null, includeComments.value)
 
-    // 从响应头获取文件名
+    // 从响应头获取文件名（支持 UTF-8 编码）
     const contentDisposition = res.headers['content-disposition']
     let filename = 'document_redline.docx'
     if (contentDisposition) {
-      const match = contentDisposition.match(/filename="?([^"]+)"?/)
-      if (match) filename = match[1]
+      // 优先匹配 filename*=UTF-8'' 格式（RFC 5987）
+      const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;\s]+)/)
+      if (utf8Match) {
+        filename = decodeURIComponent(utf8Match[1])
+      } else {
+        // 回退到普通 filename 格式
+        const match = contentDisposition.match(/filename="?([^"]+)"?/)
+        if (match) filename = match[1]
+      }
     }
 
     // 创建下载链接

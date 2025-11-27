@@ -727,9 +727,15 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
             detail=f"生成 Redline 文档失败: {error_msg}"
         )
 
-    # 生成文件名
+    # 生成文件名（处理中文文件名）
     original_name = doc_path.stem
     filename = f"{original_name}_redline.docx"
+
+    # URL 编码文件名以支持中文（RFC 5987）
+    from urllib.parse import quote
+    filename_encoded = quote(filename)
+    # 使用 filename* 参数支持 UTF-8 编码的文件名
+    content_disposition = f"attachment; filename*=UTF-8''{filename_encoded}"
 
     logger.info(
         f"任务 {task_id} 导出 Redline: 应用 {redline_result.applied_count} 条修改，"
@@ -741,7 +747,7 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
         content=redline_result.document_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": content_disposition,
             "X-Redline-Applied": str(redline_result.applied_count),
             "X-Redline-Skipped": str(redline_result.skipped_count),
             "X-Comments-Added": str(redline_result.comments_added),
