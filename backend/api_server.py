@@ -66,7 +66,42 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # 允许前端访问自定义响应头
 )
+
+
+# 全局异常处理器 - 确保异常响应也包含 CORS 头
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    logger.error(f"未捕获的异常: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"服务器内部错误: {str(exc)}"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
 
 # 初始化管理器
 task_manager = TaskManager(settings.review.tasks_dir)
@@ -668,15 +703,22 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
         raise HTTPException(status_code=400, detail="没有已确认的修改建议或行动建议")
 
     # 生成 Redline 文档
-    redline_result = generate_redline_document(
-        docx_path=doc_path,
-        modifications=modifications,
-        author="AI审阅助手",
-        filter_confirmed=filter_confirmed,
-        actions=result.actions if include_comments else None,
-        risks=result.risks if include_comments else None,
-        include_comments=include_comments,
-    )
+    try:
+        redline_result = generate_redline_document(
+            docx_path=doc_path,
+            modifications=modifications,
+            author="AI审阅助手",
+            filter_confirmed=filter_confirmed,
+            actions=result.actions if include_comments else None,
+            risks=result.risks if include_comments else None,
+            include_comments=include_comments,
+        )
+    except Exception as e:
+        logger.error(f"生成 Redline 文档时发生异常: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"生成 Redline 文档时发生内部错误: {str(e)}"
+        )
 
     if not redline_result.success:
         error_msg = "; ".join(redline_result.skipped_reasons[:3])
