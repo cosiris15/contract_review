@@ -400,5 +400,24 @@ export default {
     return api.post(`/standards/${standardId}/ai-modify`, {
       instruction: instruction
     })
+  },
+
+  // ==================== 预设模板 ====================
+
+  // 获取预设模板列表（包含完整标准内容）
+  getPresetTemplates() {
+    return api.get('/preset-templates')
+  },
+
+  // 获取单个预设模板详情
+  getPresetTemplate(templateId) {
+    return api.get(`/preset-templates/${templateId}`)
+  },
+
+  // ==================== 特殊要求整合 ====================
+
+  // 整合特殊要求到审核标准
+  mergeSpecialRequirements(data) {
+    return api.post('/standards/merge-special-requirements', data)
   }
 }

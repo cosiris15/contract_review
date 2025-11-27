@@ -38,6 +38,7 @@ from src.contract_review.prompts import (
     build_usage_instruction_messages,
     build_standard_recommendation_messages,
     build_standard_modification_messages,
+    build_merge_special_requirements_messages,
 )
 from src.contract_review.llm_client import LLMClient
 
@@ -1193,6 +1194,54 @@ class AIModifyStandardResponse(BaseModel):
     modification_summary: str
 
 
+# ---------- 特殊要求整合相关模型 ----------
+
+class MergedStandardItem(BaseModel):
+    """整合后的单条标准"""
+    id: Optional[str] = None  # 原标准ID，新增时为null
+    category: str
+    item: str
+    description: str
+    risk_level: str
+    change_type: str  # unchanged | modified | added | removed
+    change_reason: Optional[str] = None  # 修改原因
+
+
+class MergeSummary(BaseModel):
+    """整合摘要"""
+    total_original: int
+    total_merged: int
+    added_count: int
+    modified_count: int
+    removed_count: int
+    unchanged_count: int
+
+
+class MergeSpecialRequirementsRequest(BaseModel):
+    """整合特殊要求请求"""
+    standards: List[CreateStandardRequest]  # 基础标准列表
+    special_requirements: str  # 用户输入的特殊要求
+    our_party: str  # 我方身份
+    material_type: str = "contract"  # 材料类型
+
+
+class MergeSpecialRequirementsResponse(BaseModel):
+    """整合特殊要求响应"""
+    merged_standards: List[MergedStandardItem]
+    summary: MergeSummary
+    merge_notes: str  # 整合说明
+
+
+class PresetTemplateInfo(BaseModel):
+    """预设模板信息"""
+    id: str
+    name: str
+    description: str
+    material_type: str
+    standard_count: int
+    standards: List[StandardResponse]
+
+
 @app.post("/api/standards/{standard_id}/ai-modify", response_model=AIModifyStandardResponse)
 async def ai_modify_standard(standard_id: str, request: AIModifyStandardRequest):
     """
@@ -1276,6 +1325,219 @@ async def ai_modify_standard(standard_id: str, request: AIModifyStandardRequest)
     except Exception as e:
         logger.error(f"AI 辅助修改失败: {e}")
         raise HTTPException(status_code=500, detail=f"修改失败: {str(e)}")
+
+
+# ==================== 预设模板 API ====================
+
+@app.get("/api/preset-templates", response_model=List[PresetTemplateInfo])
+async def get_preset_templates():
+    """
+    获取预设模板列表（从 templates 目录读取）
+
+    预设模板是系统内置的标准模板，用户可以直接选择使用。
+    """
+    templates = []
+
+    if TEMPLATES_DIR.exists():
+        for f in TEMPLATES_DIR.iterdir():
+            if f.suffix.lower() in {".xlsx", ".csv"}:
+                try:
+                    # 解析模板文件
+                    standard_set = parse_standard_file(f)
+
+                    # 根据文件名确定材料类型和描述
+                    name = f.stem
+                    if "contract" in name.lower() or "合同" in name:
+                        material_type = "contract"
+                        description = "通用合同审核标准，涵盖主体资格、权利义务、费用条款等关键审核要点"
+                    elif "marketing" in name.lower() or "营销" in name:
+                        material_type = "marketing"
+                        description = "营销材料合规审核标准，涵盖广告法、消费者权益保护等合规要点"
+                    else:
+                        material_type = "contract"
+                        description = "审核标准模板"
+
+                    # 将标准转换为响应格式
+                    standards_response = []
+                    for s in standard_set.standards:
+                        standards_response.append(StandardResponse(
+                            id=s.id or "",
+                            category=s.category,
+                            item=s.item,
+                            description=s.description,
+                            risk_level=s.risk_level,
+                            applicable_to=list(s.applicable_to),
+                            usage_instruction=s.usage_instruction,
+                            tags=list(s.tags) if s.tags else [],
+                        ))
+
+                    templates.append(PresetTemplateInfo(
+                        id=name,
+                        name=name,
+                        description=description,
+                        material_type=material_type,
+                        standard_count=len(standard_set.standards),
+                        standards=standards_response,
+                    ))
+                except Exception as e:
+                    logger.error(f"解析模板文件失败 {f.name}: {e}")
+                    continue
+
+    return templates
+
+
+@app.get("/api/preset-templates/{template_id}", response_model=PresetTemplateInfo)
+async def get_preset_template(template_id: str):
+    """获取单个预设模板的详细信息"""
+    template_path = TEMPLATES_DIR / f"{template_id}.xlsx"
+    if not template_path.exists():
+        template_path = TEMPLATES_DIR / f"{template_id}.csv"
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="模板不存在")
+
+    try:
+        standard_set = parse_standard_file(template_path)
+
+        name = template_path.stem
+        if "contract" in name.lower() or "合同" in name:
+            material_type = "contract"
+            description = "通用合同审核标准，涵盖主体资格、权利义务、费用条款等关键审核要点"
+        elif "marketing" in name.lower() or "营销" in name:
+            material_type = "marketing"
+            description = "营销材料合规审核标准，涵盖广告法、消费者权益保护等合规要点"
+        else:
+            material_type = "contract"
+            description = "审核标准模板"
+
+        standards_response = []
+        for s in standard_set.standards:
+            standards_response.append(StandardResponse(
+                id=s.id or "",
+                category=s.category,
+                item=s.item,
+                description=s.description,
+                risk_level=s.risk_level,
+                applicable_to=list(s.applicable_to),
+                usage_instruction=s.usage_instruction,
+                tags=list(s.tags) if s.tags else [],
+            ))
+
+        return PresetTemplateInfo(
+            id=name,
+            name=name,
+            description=description,
+            material_type=material_type,
+            standard_count=len(standard_set.standards),
+            standards=standards_response,
+        )
+    except Exception as e:
+        logger.error(f"获取模板失败 {template_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"获取模板失败: {str(e)}")
+
+
+# ==================== 特殊要求整合 API ====================
+
+@app.post("/api/standards/merge-special-requirements", response_model=MergeSpecialRequirementsResponse)
+async def merge_special_requirements(request: MergeSpecialRequirementsRequest):
+    """
+    整合特殊要求到审核标准（使用 LLM）
+
+    将用户输入的项目特殊要求整合到选定的基础标准中，
+    LLM 会根据特殊要求对标准进行新增、修改或删除。
+    """
+    import json
+    import re
+
+    if not request.special_requirements or not request.special_requirements.strip():
+        raise HTTPException(status_code=400, detail="请输入特殊要求")
+
+    if not request.standards:
+        raise HTTPException(status_code=400, detail="请选择基础标准")
+
+    # 将请求中的标准转换为 ReviewStandard 对象
+    base_standards = []
+    for i, s in enumerate(request.standards):
+        base_standards.append(ReviewStandard(
+            id=f"std_{i+1}",
+            category=s.category,
+            item=s.item,
+            description=s.description,
+            risk_level=s.risk_level,
+            applicable_to=s.applicable_to,
+        ))
+
+    try:
+        # 构建 Prompt
+        messages = build_merge_special_requirements_messages(
+            standards=base_standards,
+            special_requirements=request.special_requirements.strip(),
+            our_party=request.our_party,
+            material_type=request.material_type,
+        )
+
+        # 调用 LLM
+        response = await llm_client.chat(messages, max_output_tokens=4000)
+
+        # 解析 JSON 响应
+        response = response.strip()
+        # 移除可能的 markdown 代码块
+        response = re.sub(r"```json\s*", "", response)
+        response = re.sub(r"```\s*$", "", response)
+
+        # 尝试找到 JSON 对象
+        start = response.find("{")
+        end = response.rfind("}")
+        if start != -1 and end != -1:
+            response = response[start:end + 1]
+
+        result = json.loads(response)
+
+        # 验证响应结构
+        if "merged_standards" not in result:
+            raise ValueError("响应缺少 merged_standards 字段")
+
+        # 构建响应
+        merged_standards = []
+        for s in result.get("merged_standards", []):
+            merged_standards.append(MergedStandardItem(
+                id=s.get("id"),
+                category=s.get("category", ""),
+                item=s.get("item", ""),
+                description=s.get("description", ""),
+                risk_level=s.get("risk_level", "medium"),
+                change_type=s.get("change_type", "unchanged"),
+                change_reason=s.get("change_reason"),
+            ))
+
+        summary_data = result.get("summary", {})
+        summary = MergeSummary(
+            total_original=summary_data.get("total_original", len(request.standards)),
+            total_merged=summary_data.get("total_merged", len(merged_standards)),
+            added_count=summary_data.get("added_count", 0),
+            modified_count=summary_data.get("modified_count", 0),
+            removed_count=summary_data.get("removed_count", 0),
+            unchanged_count=summary_data.get("unchanged_count", 0),
+        )
+
+        merge_notes = result.get("merge_notes", "已完成特殊要求整合")
+
+        logger.info(f"整合特殊要求: {summary.modified_count} 修改, {summary.added_count} 新增, {summary.removed_count} 删除")
+
+        return MergeSpecialRequirementsResponse(
+            merged_standards=merged_standards,
+            summary=summary,
+            merge_notes=merge_notes,
+        )
+
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 LLM 响应失败: {e}")
+        raise HTTPException(status_code=500, detail="AI 响应解析失败，请重试")
+    except ValueError as e:
+        logger.error(f"响应验证失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"整合特殊要求失败: {e}")
+        raise HTTPException(status_code=500, detail=f"整合失败: {str(e)}")
 
 
 # ==================== 健康检查 ====================

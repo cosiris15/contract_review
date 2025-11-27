@@ -92,114 +92,119 @@
 
           <el-divider />
 
-          <!-- 步骤 3: 上传审核标准 -->
-          <div class="upload-section">
+          <!-- 步骤 3: 审核标准选择 -->
+          <div class="standard-section">
             <h4>
               <el-icon><List /></el-icon>
               审核标准
             </h4>
 
-            <!-- 选择模板或上传 -->
-            <el-tabs v-model="standardTab">
-              <el-tab-pane label="使用模板" name="template">
-                <el-select
-                  v-model="selectedTemplate"
-                  placeholder="选择审核标准模板"
-                  style="width: 100%"
-                  @change="handleTemplateSelect"
+            <!-- 预设模板选择 -->
+            <div class="preset-templates">
+              <p class="section-label">选择标准模板</p>
+              <div class="template-cards">
+                <div
+                  v-for="tpl in presetTemplates"
+                  :key="tpl.id"
+                  class="template-card"
+                  :class="{ selected: selectedPresetTemplate?.id === tpl.id }"
+                  @click="selectPresetTemplate(tpl)"
                 >
-                  <el-option
-                    v-for="tpl in templates"
-                    :key="tpl.name"
-                    :label="tpl.name"
-                    :value="tpl.name"
-                  >
-                    <span>{{ tpl.name }}</span>
-                    <span style="color: #909399; font-size: 12px; margin-left: 8px">
-                      {{ tpl.description }}
-                    </span>
-                  </el-option>
-                </el-select>
-              </el-tab-pane>
-
-              <el-tab-pane label="上传自定义" name="upload">
+                  <div class="template-card-header">
+                    <el-icon :size="20" :color="selectedPresetTemplate?.id === tpl.id ? '#409eff' : '#909399'">
+                      <Document />
+                    </el-icon>
+                    <span class="template-name">{{ tpl.name }}</span>
+                  </div>
+                  <p class="template-desc">{{ tpl.description }}</p>
+                  <div class="template-meta">
+                    <el-tag size="small" type="info">{{ tpl.standard_count }} 条标准</el-tag>
+                  </div>
+                </div>
+              </div>
+              <div class="other-options">
+                <el-button text type="primary" @click="showLibrarySelector = true">
+                  <el-icon><Collection /></el-icon>
+                  从标准库选择
+                </el-button>
                 <el-upload
-                  class="upload-box"
-                  drag
                   :auto-upload="false"
                   :show-file-list="false"
-                  :on-change="handleStandardChange"
+                  :on-change="handleStandardUpload"
                   accept=".xlsx,.xls,.csv,.docx,.md,.txt"
                 >
-                  <div v-if="currentTask?.standard_filename && !selectedTemplate" class="uploaded-file">
-                    <el-icon :size="40" color="#67c23a"><DocumentChecked /></el-icon>
-                    <span>{{ currentTask.standard_filename }}</span>
-                    <el-button type="primary" text size="small">重新上传</el-button>
-                  </div>
-                  <div v-else class="upload-placeholder">
-                    <el-icon :size="40"><UploadFilled /></el-icon>
-                    <p>上传自定义审核标准</p>
-                    <span>支持 .xlsx, .csv, .docx, .md 格式</span>
-                  </div>
+                  <el-button text type="primary">
+                    <el-icon><UploadFilled /></el-icon>
+                    上传自定义标准
+                  </el-button>
                 </el-upload>
-              </el-tab-pane>
+              </div>
+            </div>
 
-              <el-tab-pane label="从标准库选择" name="library">
-                <div class="library-section">
-                  <div class="library-actions">
-                    <el-button
-                      type="primary"
-                      :loading="recommending"
-                      :disabled="!currentTask?.document_filename"
-                      @click="handleRecommend"
-                    >
-                      <el-icon><MagicStick /></el-icon>
-                      智能推荐
-                    </el-button>
-                    <el-button @click="showLibrarySelector = true">
-                      手动选择
-                    </el-button>
-                  </div>
+            <!-- 已选标准显示 -->
+            <div v-if="selectedStandards.length > 0" class="selected-standards-section">
+              <div class="selected-header">
+                <span class="selected-label">已选标准</span>
+                <el-tag type="success" size="small">{{ selectedStandards.length }} 条</el-tag>
+                <el-button text type="primary" size="small" @click="showStandardPreview = true">
+                  查看详情
+                </el-button>
+              </div>
+              <div class="selected-tags">
+                <el-tag
+                  v-for="s in selectedStandards.slice(0, 6)"
+                  :key="s.id || s.item"
+                  size="small"
+                  style="margin: 2px"
+                >
+                  {{ s.item }}
+                </el-tag>
+                <span v-if="selectedStandards.length > 6" class="more-count">
+                  +{{ selectedStandards.length - 6 }} 条
+                </span>
+              </div>
+            </div>
 
-                  <div v-if="selectedLibraryStandards.length" class="selected-standards">
-                    <p class="selected-count">已选择 {{ selectedLibraryStandards.length }} 条标准</p>
-                    <div class="standards-preview">
-                      <el-tag
-                        v-for="s in selectedLibraryStandards.slice(0, 5)"
-                        :key="s.id"
-                        closable
-                        @close="removeSelectedStandard(s.id)"
-                        style="margin: 4px"
-                      >
-                        {{ s.item }}
-                      </el-tag>
-                      <span v-if="selectedLibraryStandards.length > 5" class="more-count">
-                        +{{ selectedLibraryStandards.length - 5 }} 条
-                      </span>
-                    </div>
+            <!-- 特殊要求输入（可选） -->
+            <div class="special-requirements">
+              <div class="special-header" @click="showSpecialInput = !showSpecialInput">
+                <el-icon><Edit /></el-icon>
+                <span>本次特殊要求</span>
+                <el-tag size="small" type="info">可选</el-tag>
+                <el-icon class="expand-icon" :class="{ expanded: showSpecialInput }">
+                  <ArrowDown />
+                </el-icon>
+              </div>
+              <el-collapse-transition>
+                <div v-show="showSpecialInput" class="special-content">
+                  <el-input
+                    v-model="specialRequirements"
+                    type="textarea"
+                    :rows="3"
+                    placeholder="输入本次项目的特殊审核要求，例如：&#10;• 本项目为政府采购，需特别关注合规要求&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;• 涉及数据跨境，需审核数据安全条款"
+                  />
+                  <div class="special-actions">
                     <el-button
                       type="primary"
                       size="small"
-                      style="margin-top: 12px"
-                      @click="applyLibraryStandards"
-                      :loading="applyingStandards"
+                      :loading="merging"
+                      :disabled="!specialRequirements.trim() || !selectedStandards.length"
+                      @click="mergeSpecialRequirements"
                     >
-                      应用选中标准
+                      <el-icon><MagicStick /></el-icon>
+                      整合到标准
                     </el-button>
-                  </div>
-
-                  <div v-else class="library-tip">
-                    <el-icon :size="32" color="#909399"><Collection /></el-icon>
-                    <p>点击「智能推荐」或「手动选择」从标准库中选择标准</p>
+                    <span class="special-tip">AI 将根据特殊要求调整审核标准</span>
                   </div>
                 </div>
-              </el-tab-pane>
-            </el-tabs>
+              </el-collapse-transition>
+            </div>
 
-            <div v-if="currentTask?.standard_filename" class="standard-status">
-              <el-tag type="success">
-                已选择: {{ currentTask.standard_filename }}
-              </el-tag>
+            <!-- 当前应用的标准状态 -->
+            <div v-if="currentTask?.standard_filename" class="applied-standard">
+              <el-icon color="#67c23a"><CircleCheck /></el-icon>
+              <span>已应用: {{ currentTask.standard_filename }}</span>
+              <el-button text type="primary" size="small" @click="reselect">重新选择</el-button>
             </div>
           </div>
 
@@ -283,6 +288,105 @@
               <el-button @click="showLibrarySelector = false">取消</el-button>
               <el-button type="primary" @click="confirmLibrarySelection">
                 确认选择
+              </el-button>
+            </template>
+          </el-dialog>
+
+          <!-- 标准预览对话框 -->
+          <el-dialog
+            v-model="showStandardPreview"
+            title="已选审核标准"
+            width="750px"
+          >
+            <el-table :data="selectedStandards" max-height="450">
+              <el-table-column prop="category" label="分类" width="100" />
+              <el-table-column prop="item" label="审核要点" width="150" />
+              <el-table-column prop="description" label="详细说明" show-overflow-tooltip />
+              <el-table-column label="风险" width="60" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="getRiskTagType(row.risk_level)" size="small">
+                    {{ getRiskLabel(row.risk_level) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+            <template #footer>
+              <el-button @click="showStandardPreview = false">关闭</el-button>
+              <el-button type="primary" @click="applyStandards" :loading="applyingStandards">
+                应用标准
+              </el-button>
+            </template>
+          </el-dialog>
+
+          <!-- 整合预览对话框 -->
+          <el-dialog
+            v-model="showMergePreview"
+            title="标准整合预览"
+            width="850px"
+            :close-on-click-modal="false"
+          >
+            <div class="merge-preview">
+              <!-- 整合摘要 -->
+              <div class="merge-summary">
+                <el-alert :title="mergeResult?.merge_notes" type="info" :closable="false" show-icon />
+                <div class="summary-stats">
+                  <el-tag type="success">
+                    <el-icon><CirclePlus /></el-icon>
+                    新增 {{ mergeResult?.summary?.added_count || 0 }} 条
+                  </el-tag>
+                  <el-tag type="warning">
+                    <el-icon><Edit /></el-icon>
+                    修改 {{ mergeResult?.summary?.modified_count || 0 }} 条
+                  </el-tag>
+                  <el-tag type="danger">
+                    <el-icon><Remove /></el-icon>
+                    删除 {{ mergeResult?.summary?.removed_count || 0 }} 条
+                  </el-tag>
+                  <el-tag type="info">
+                    <el-icon><Check /></el-icon>
+                    未变 {{ mergeResult?.summary?.unchanged_count || 0 }} 条
+                  </el-tag>
+                </div>
+              </div>
+
+              <!-- 标准列表 -->
+              <div class="merge-standards-list">
+                <div
+                  v-for="(s, idx) in mergeResult?.merged_standards || []"
+                  :key="idx"
+                  class="merge-standard-item"
+                  :class="s.change_type"
+                >
+                  <div class="standard-change-badge">
+                    <el-tag
+                      :type="getChangeTagType(s.change_type)"
+                      size="small"
+                    >
+                      {{ getChangeLabel(s.change_type) }}
+                    </el-tag>
+                  </div>
+                  <div class="standard-content">
+                    <div class="standard-header">
+                      <span class="standard-category">{{ s.category }}</span>
+                      <span class="standard-item">{{ s.item }}</span>
+                      <el-tag :type="getRiskTagType(s.risk_level)" size="small">
+                        {{ getRiskLabel(s.risk_level) }}
+                      </el-tag>
+                    </div>
+                    <p class="standard-desc">{{ s.description }}</p>
+                    <p v-if="s.change_reason" class="change-reason">
+                      <el-icon><InfoFilled /></el-icon>
+                      {{ s.change_reason }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <template #footer>
+              <el-button @click="cancelMerge">取消，保留原标准</el-button>
+              <el-button type="primary" @click="applyMergedStandards">
+                应用整合后的标准
               </el-button>
             </template>
           </el-dialog>
@@ -405,20 +509,31 @@ const rules = {
   our_party: [{ required: true, message: '请输入我方身份', trigger: 'blur' }]
 }
 
-const standardTab = ref('template')
-const selectedTemplate = ref('')
-const templates = ref([])
+// 预设模板相关状态
+const presetTemplates = ref([])
+const selectedPresetTemplate = ref(null)
+const selectedStandards = ref([]) // 当前选中的标准列表
 
 // 标准库相关状态
-const recommending = ref(false)
-const showRecommendDialog = ref(false)
 const showLibrarySelector = ref(false)
-const recommendations = ref([])
-const selectedLibraryStandards = ref([])
 const libraryStandards = ref([])
 const librarySearch = ref('')
 const tempSelection = ref([])
 const applyingStandards = ref(false)
+const showStandardPreview = ref(false)
+
+// 特殊要求相关状态
+const showSpecialInput = ref(false)
+const specialRequirements = ref('')
+const merging = ref(false)
+const showMergePreview = ref(false)
+const mergeResult = ref(null)
+
+// 推荐相关
+const recommending = ref(false)
+const showRecommendDialog = ref(false)
+const recommendations = ref([])
+const selectedLibraryStandards = ref([])
 
 const currentTask = computed(() => store.currentTask)
 const isCompleted = computed(() => currentTask.value?.status === 'completed')
@@ -449,9 +564,13 @@ const activeStep = computed(() => {
 })
 
 onMounted(async () => {
-  // 加载模板列表
-  await store.fetchTemplates()
-  templates.value = store.templates
+  // 加载预设模板列表
+  try {
+    const response = await api.getPresetTemplates()
+    presetTemplates.value = response.data
+  } catch (error) {
+    console.error('加载预设模板失败:', error)
+  }
 
   // 如果有 taskId，加载任务
   if (taskId.value) {
@@ -515,35 +634,44 @@ async function handleDocumentChange(file) {
   }
 }
 
-async function handleStandardChange(file) {
+// ==================== 标准选择相关函数 ====================
+
+// 选择预设模板
+function selectPresetTemplate(template) {
+  selectedPresetTemplate.value = template
+  selectedStandards.value = template.standards.map(s => ({
+    id: s.id,
+    category: s.category,
+    item: s.item,
+    description: s.description,
+    risk_level: s.risk_level,
+    applicable_to: s.applicable_to
+  }))
+  ElMessage.success(`已选择「${template.name}」，共 ${template.standard_count} 条标准`)
+}
+
+// 上传自定义标准文件
+async function handleStandardUpload(file) {
   if (!taskId.value) {
     ElMessage.warning('请先上传文档')
     return
   }
 
   try {
-    selectedTemplate.value = ''
     await store.uploadStandard(taskId.value, file.raw)
+    selectedPresetTemplate.value = null
+    selectedStandards.value = []
     ElMessage.success('审核标准上传成功')
   } catch (error) {
     ElMessage.error(error.message || '上传失败')
   }
 }
 
-async function handleTemplateSelect(templateName) {
-  if (!taskId.value) {
-    ElMessage.warning('请先上传文档')
-    selectedTemplate.value = ''
-    return
-  }
-
-  try {
-    await store.useTemplate(taskId.value, templateName)
-    ElMessage.success('模板应用成功')
-  } catch (error) {
-    ElMessage.error(error.message || '应用模板失败')
-    selectedTemplate.value = ''
-  }
+// 重新选择标准
+function reselect() {
+  selectedPresetTemplate.value = null
+  selectedStandards.value = []
+  specialRequirements.value = ''
 }
 
 async function startReview() {
@@ -693,6 +821,27 @@ function getRiskLabel(level) {
   return { high: '高', medium: '中', low: '低' }[level] || level
 }
 
+// 变更类型辅助函数
+function getChangeTagType(changeType) {
+  const types = {
+    added: 'success',
+    modified: 'warning',
+    removed: 'danger',
+    unchanged: 'info'
+  }
+  return types[changeType] || 'info'
+}
+
+function getChangeLabel(changeType) {
+  const labels = {
+    added: '新增',
+    modified: '修改',
+    removed: '删除',
+    unchanged: '未变'
+  }
+  return labels[changeType] || changeType
+}
+
 // 应用选中的标准库标准
 async function applyLibraryStandards() {
   if (!taskId.value || !selectedLibraryStandards.value.length) return
@@ -730,9 +879,110 @@ async function applyLibraryStandards() {
   }
 }
 
-// 监听标准库 Tab，加载数据
-watch(standardTab, (newTab) => {
-  if (newTab === 'library' && !libraryStandards.value.length) {
+// ==================== 特殊要求整合相关函数 ====================
+
+// 整合特殊要求到标准
+async function mergeSpecialRequirements() {
+  if (!selectedStandards.value.length) {
+    ElMessage.warning('请先选择基础标准')
+    return
+  }
+  if (!specialRequirements.value.trim()) {
+    ElMessage.warning('请输入特殊要求')
+    return
+  }
+
+  merging.value = true
+  try {
+    const response = await api.mergeSpecialRequirements({
+      standards: selectedStandards.value.map(s => ({
+        category: s.category,
+        item: s.item,
+        description: s.description,
+        risk_level: s.risk_level,
+        applicable_to: s.applicable_to || ['contract']
+      })),
+      special_requirements: specialRequirements.value.trim(),
+      our_party: form.value.our_party,
+      material_type: form.value.material_type
+    })
+    mergeResult.value = response.data
+    showMergePreview.value = true
+  } catch (error) {
+    ElMessage.error('整合失败: ' + (error.message || '请重试'))
+  } finally {
+    merging.value = false
+  }
+}
+
+// 取消整合，保留原标准
+function cancelMerge() {
+  showMergePreview.value = false
+  mergeResult.value = null
+}
+
+// 应用整合后的标准
+function applyMergedStandards() {
+  if (!mergeResult.value) return
+
+  // 将整合后的标准（排除已删除的）设为当前选中标准
+  selectedStandards.value = mergeResult.value.merged_standards
+    .filter(s => s.change_type !== 'removed')
+    .map(s => ({
+      id: s.id,
+      category: s.category,
+      item: s.item,
+      description: s.description,
+      risk_level: s.risk_level,
+      applicable_to: ['contract'] // 默认值
+    }))
+
+  showMergePreview.value = false
+  mergeResult.value = null
+  ElMessage.success('已应用整合后的标准')
+}
+
+// 应用选中的标准到任务
+async function applyStandards() {
+  if (!taskId.value) {
+    ElMessage.warning('请先上传文档')
+    return
+  }
+  if (!selectedStandards.value.length) {
+    ElMessage.warning('请先选择标准')
+    return
+  }
+
+  applyingStandards.value = true
+  try {
+    // 创建 CSV 内容
+    const csvContent = [
+      '审核分类,审核要点,详细说明,风险等级,适用材料类型',
+      ...selectedStandards.value.map(s =>
+        `"${s.category}","${s.item}","${s.description}","${s.risk_level === 'high' ? '高' : s.risk_level === 'medium' ? '中' : '低'}","${(s.applicable_to || ['contract']).join(',')}"`
+      )
+    ].join('\n')
+
+    // 创建 Blob 并上传
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
+    const fileName = selectedPresetTemplate.value
+      ? `${selectedPresetTemplate.value.name}.csv`
+      : 'selected_standards.csv'
+    const file = new File([blob], fileName, { type: 'text/csv' })
+
+    await store.uploadStandard(taskId.value, file)
+    showStandardPreview.value = false
+    ElMessage.success('标准应用成功')
+  } catch (error) {
+    ElMessage.error('应用标准失败: ' + error.message)
+  } finally {
+    applyingStandards.value = false
+  }
+}
+
+// 监听标准库对话框打开时加载数据
+watch(showLibrarySelector, (show) => {
+  if (show && !libraryStandards.value.length) {
     loadLibraryStandards()
   }
 })
@@ -986,5 +1236,291 @@ watch(standardTab, (newTab) => {
   margin: 0;
   font-size: 12px;
   color: #909399;
+}
+
+/* ==================== 新标准选择界面样式 ==================== */
+
+.standard-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #303133;
+}
+
+.section-label {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #606266;
+}
+
+/* 预设模板卡片 */
+.template-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.template-card {
+  padding: 14px;
+  border: 2px solid #ebeef5;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.template-card:hover {
+  border-color: #c0c4cc;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.template-card.selected {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.template-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.template-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+}
+
+.template-desc {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.template-meta {
+  display: flex;
+  gap: 8px;
+}
+
+.other-options {
+  display: flex;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 1px dashed #ebeef5;
+}
+
+/* 已选标准显示 */
+.selected-standards-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.selected-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.selected-label {
+  font-size: 13px;
+  color: #606266;
+}
+
+.selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* 特殊要求输入 */
+.special-requirements {
+  margin-top: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.special-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #fafafa;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.special-header:hover {
+  background: #f5f7fa;
+}
+
+.special-header span {
+  font-size: 13px;
+  color: #606266;
+}
+
+.expand-icon {
+  margin-left: auto;
+  transition: transform 0.3s;
+}
+
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.special-content {
+  padding: 14px;
+  background: white;
+}
+
+.special-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.special-tip {
+  font-size: 12px;
+  color: #909399;
+}
+
+/* 已应用标准状态 */
+.applied-standard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 14px;
+  background: #f0f9eb;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #67c23a;
+}
+
+.applied-standard span {
+  flex: 1;
+}
+
+/* ==================== 整合预览样式 ==================== */
+
+.merge-preview {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.merge-summary {
+  margin-bottom: 20px;
+}
+
+.summary-stats {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.summary-stats .el-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.merge-standards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.merge-standard-item {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.merge-standard-item.added {
+  background: #f0f9eb;
+  border-color: #c2e7b0;
+}
+
+.merge-standard-item.modified {
+  background: #fdf6ec;
+  border-color: #f5dab1;
+}
+
+.merge-standard-item.removed {
+  background: #fef0f0;
+  border-color: #fbc4c4;
+  opacity: 0.7;
+}
+
+.merge-standard-item.removed .standard-desc {
+  text-decoration: line-through;
+}
+
+.standard-change-badge {
+  flex-shrink: 0;
+}
+
+.standard-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.standard-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.standard-category {
+  font-size: 12px;
+  color: #909399;
+  padding: 2px 6px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.standard-item {
+  font-weight: 600;
+  color: #303133;
+  font-size: 14px;
+}
+
+.standard-desc {
+  margin: 0;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.change-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.1);
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.change-reason .el-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 </style>

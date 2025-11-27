@@ -412,6 +412,102 @@ def build_standard_recommendation_messages(
     ]
 
 
+def build_merge_special_requirements_messages(
+    standards: List[ReviewStandard],
+    special_requirements: str,
+    our_party: str,
+    material_type: MaterialType,
+) -> List[Dict[str, Any]]:
+    """
+    构建整合特殊要求到审核标准的 Prompt
+
+    Args:
+        standards: 基础审核标准列表
+        special_requirements: 用户输入的特殊要求
+        our_party: 我方身份
+        material_type: 材料类型
+
+    Returns:
+        消息列表
+    """
+    material_type_cn = "合同" if material_type == "contract" else "营销材料"
+
+    # 格式化现有标准
+    standards_json = []
+    for s in standards:
+        standards_json.append({
+            "id": s.id,
+            "category": s.category,
+            "item": s.item,
+            "description": s.description,
+            "risk_level": s.risk_level,
+        })
+
+    import json
+    standards_text = json.dumps(standards_json, ensure_ascii=False, indent=2)
+
+    system = f"""你是一位资深法务审阅专家。你的任务是将用户的特殊审核要求整合到现有的审核标准中。
+
+【背景信息】
+- 我方身份：{our_party}
+- 材料类型：{material_type_cn}
+
+【整合原则】
+1. 特殊要求的优先级高于一般标准，应该优先体现用户的特殊关注点
+2. 可以通过以下方式整合：
+   - 修改现有标准的描述，加入特殊要求的关注点
+   - 提升相关标准的风险等级（如果特殊要求强调了某方面的重要性）
+   - 新增标准条目（如果特殊要求涉及现有标准未覆盖的内容）
+   - 删除不适用的标准（如果特殊要求明确排除了某些内容）
+3. 保持标准的专业性和可操作性
+4. 每条标准的 description 应该清晰、具体，便于后续审阅时使用
+
+【输出格式】
+输出纯 JSON 对象，包含以下字段：
+
+{{
+  "merged_standards": [
+    {{
+      "id": "原标准ID或null（新增时为null）",
+      "category": "分类",
+      "item": "审核要点",
+      "description": "详细说明",
+      "risk_level": "high|medium|low",
+      "change_type": "unchanged|modified|added|removed",
+      "change_reason": "修改原因（仅当change_type不为unchanged时填写）"
+    }}
+  ],
+  "summary": {{
+    "total_original": 原标准数量,
+    "total_merged": 整合后数量,
+    "added_count": 新增数量,
+    "modified_count": 修改数量,
+    "removed_count": 删除数量,
+    "unchanged_count": 未变化数量
+  }},
+  "merge_notes": "整合说明，简要描述做了哪些主要调整（不超过100字）"
+}}
+
+【注意事项】
+- change_type 必须准确标注，便于用户识别变化
+- 被删除的标准也要输出，change_type 设为 "removed"
+- 确保 JSON 格式正确，可被直接解析
+- 不要添加 markdown 代码块"""
+
+    user = f"""【现有审核标准】
+{standards_text}
+
+【用户特殊要求】
+{special_requirements}
+
+请将特殊要求整合到审核标准中，并按指定格式输出。"""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 def build_standard_modification_messages(
     standard: ReviewStandard,
     user_instruction: str,
