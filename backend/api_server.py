@@ -888,16 +888,30 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
         f"跳过 {redline_result.skipped_count + redline_result.comments_skipped} 条"
     )
 
+    # 构建响应头
+    response_headers = {
+        "Content-Disposition": content_disposition,
+        "X-Redline-Applied": str(redline_result.applied_count),
+        "X-Redline-Skipped": str(redline_result.skipped_count),
+        "X-Comments-Added": str(redline_result.comments_added),
+        "X-Comments-Skipped": str(redline_result.comments_skipped),
+    }
+
+    # 添加跳过原因摘要（最多3条，方便前端显示）
+    if redline_result.skipped_reasons:
+        # 简化原因描述，只保留关键信息
+        brief_reasons = []
+        for reason in redline_result.skipped_reasons[:3]:
+            # 截取关键部分
+            if len(reason) > 80:
+                reason = reason[:77] + "..."
+            brief_reasons.append(reason)
+        response_headers["X-Redline-Skipped-Reasons"] = "; ".join(brief_reasons)
+
     return Response(
         content=redline_result.document_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={
-            "Content-Disposition": content_disposition,
-            "X-Redline-Applied": str(redline_result.applied_count),
-            "X-Redline-Skipped": str(redline_result.skipped_count),
-            "X-Comments-Added": str(redline_result.comments_added),
-            "X-Comments-Skipped": str(redline_result.comments_skipped),
-        },
+        headers=response_headers,
     )
 
 

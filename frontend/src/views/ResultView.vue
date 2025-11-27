@@ -282,13 +282,6 @@
                       :rows="4"
                       v-model="getModUIState(mod.id).editText"
                     />
-                    <!-- 编辑时的实时diff预览 -->
-                    <div
-                      v-if="getModUIState(mod.id).showDiff"
-                      class="text-box diff-view suggested preview-box"
-                      v-html="getDiffHtml(mod).modifiedHtml"
-                      style="margin-top: 8px; opacity: 0.9; font-size: 12px;"
-                    ></div>
                   </template>
                 </el-col>
               </el-row>
@@ -928,8 +921,12 @@ async function handleExportRedline() {
     window.URL.revokeObjectURL(url)
 
     // 显示成功信息
-    const applied = res.headers['x-redline-applied'] || 0
-    const commentsAdded = res.headers['x-comments-added'] || 0
+    const applied = parseInt(res.headers['x-redline-applied'] || '0')
+    const commentsAdded = parseInt(res.headers['x-comments-added'] || '0')
+    const skipped = parseInt(res.headers['x-redline-skipped'] || '0')
+    const commentsSkipped = parseInt(res.headers['x-comments-skipped'] || '0')
+    const totalSkipped = skipped + commentsSkipped
+
     let message = '导出成功！'
     if (applied > 0) {
       message += `已应用 ${applied} 条修改`
@@ -937,7 +934,16 @@ async function handleExportRedline() {
     if (commentsAdded > 0) {
       message += `${applied > 0 ? '，' : ''}添加 ${commentsAdded} 条批注`
     }
-    ElMessage.success(message)
+
+    // 如果有跳过的项目，显示警告
+    if (totalSkipped > 0) {
+      ElMessage.warning({
+        message: `${message}，但有 ${totalSkipped} 条未能应用（可能是原文在文档中找不到匹配）`,
+        duration: 6000
+      })
+    } else {
+      ElMessage.success(message)
+    }
 
     // 关闭对话框
     showRedlineDialog.value = false

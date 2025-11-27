@@ -330,8 +330,14 @@ class RedlineGenerator:
                     logger.error(f"应用修改 {mod.id} 失败: {e}")
                     skipped_reasons.append(f"修改 {mod.id}: 应用失败 - {str(e)}")
             else:
-                logger.warning(f"未找到原文: '{original[:50]}...'")
-                skipped_reasons.append(f"修改 {mod.id}: 未在文档中找到原文")
+                # 详细日志：显示原文和规范化后的文本，方便调试
+                normalized_original = self._normalize_text(original)
+                logger.warning(
+                    f"未找到原文 (修改 {mod.id}):\n"
+                    f"  原文: '{original[:80]}{'...' if len(original) > 80 else ''}'\n"
+                    f"  规范化后: '{normalized_original[:80]}{'...' if len(normalized_original) > 80 else ''}'"
+                )
+                skipped_reasons.append(f"修改 {mod.id}: 未在文档中找到原文 '{original[:30]}...'")
 
         # 启用修订追踪
         self._enable_track_revisions()
@@ -423,6 +429,9 @@ class RedlineGenerator:
         if idx == -1:
             # 尝试模糊匹配（忽略多余空格）
             idx = self._fuzzy_find(normalized_full, target)
+        if idx == -1:
+            # 尝试相似度匹配（最后手段）
+            idx = self._similarity_find(normalized_full, target, threshold=0.85)
 
         if idx == -1:
             return None
@@ -462,11 +471,46 @@ class RedlineGenerator:
         规范化文本以便比较
 
         - 合并多个空白字符为单个空格
+        - 统一中英文标点符号
+        - 统一引号类型
+        - 统一全角数字/字母为半角
         - 去除首尾空白
-        - 统一换行符
         """
-        # 替换各种空白字符
+        if not text:
+            return ""
+
+        # 1. 统一空白字符
         text = re.sub(r'[\s\u00a0\u3000]+', ' ', text)
+
+        # 2. 统一标点符号（中文→ASCII或统一为一种）
+        punct_map = {
+            '（': '(', '）': ')',
+            '【': '[', '】': ']',
+            '｛': '{', '｝': '}',
+            '，': ',', '。': '.',
+            '；': ';', '：': ':',
+            '！': '!', '？': '?',
+            '"': '"', '"': '"',
+            ''': "'", ''': "'",
+            '「': '"', '」': '"',
+            '『': '"', '』': '"',
+            '—': '-', '–': '-',
+            '…': '...',
+        }
+        for cn, en in punct_map.items():
+            text = text.replace(cn, en)
+
+        # 3. 统一全角数字/字母为半角
+        result = []
+        for char in text:
+            code = ord(char)
+            # 全角字母数字 (0xFF01-0xFF5E) 转半角
+            if 0xFF01 <= code <= 0xFF5E:
+                result.append(chr(code - 0xFEE0))
+            else:
+                result.append(char)
+        text = ''.join(result)
+
         return text.strip()
 
     def _fuzzy_find(self, haystack: str, needle: str) -> int:
@@ -492,6 +536,54 @@ class RedlineGenerator:
                     return i
                 char_count += 1
 
+        return -1
+
+    def _similarity_find(self, haystack: str, needle: str, threshold: float = 0.85) -> int:
+        """
+        使用相似度匹配查找文本
+
+        当精确匹配和空格模糊匹配都失败时，使用相似度匹配作为最后手段。
+        使用滑动窗口在文本中寻找最相似的片段。
+
+        Args:
+            haystack: 搜索范围文本
+            needle: 目标文本
+            threshold: 相似度阈值 (0-1)，默认0.85表示85%相似
+
+        Returns:
+            匹配位置索引，未找到返回 -1
+        """
+        from difflib import SequenceMatcher
+
+        needle_len = len(needle)
+        if needle_len == 0:
+            return -1
+
+        haystack_len = len(haystack)
+        if haystack_len < needle_len * 0.5:
+            return -1
+
+        best_ratio = 0.0
+        best_pos = -1
+
+        # 允许窗口大小有一定偏差（±20%）
+        min_window = max(1, int(needle_len * 0.8))
+        max_window = min(haystack_len, int(needle_len * 1.2))
+
+        # 滑动窗口搜索
+        for window_size in range(min_window, max_window + 1):
+            for i in range(haystack_len - window_size + 1):
+                window = haystack[i:i + window_size]
+                ratio = SequenceMatcher(None, needle, window).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_pos = i
+
+        if best_ratio >= threshold:
+            logger.debug(f"相似度匹配成功: ratio={best_ratio:.2f}, pos={best_pos}")
+            return best_pos
+
+        logger.debug(f"相似度匹配失败: best_ratio={best_ratio:.2f}, threshold={threshold}")
         return -1
 
     def _map_normalized_to_original(
@@ -844,6 +936,13 @@ class RedlineGenerator:
 
             if not match:
                 skipped_count += 1
+                # 详细日志
+                normalized_target = self._normalize_text(target_text)
+                logger.warning(
+                    f"批注未找到原文 (行动建议 {action.id}):\n"
+                    f"  原文: '{target_text[:80]}{'...' if len(target_text) > 80 else ''}'\n"
+                    f"  规范化后: '{normalized_target[:80]}{'...' if len(normalized_target) > 80 else ''}'"
+                )
                 skipped_reasons.append(
                     f"行动建议 {action.id}: 未在文档中找到原文 '{target_text[:30]}...'"
                 )
