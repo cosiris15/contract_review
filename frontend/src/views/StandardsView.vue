@@ -95,6 +95,11 @@
           <el-icon><Plus /></el-icon>
           手动添加
         </el-button>
+
+        <el-button type="success" @click="showCreateDialog = true">
+          <el-icon><MagicStick /></el-icon>
+          制作标准
+        </el-button>
       </div>
     </el-card>
 
@@ -282,6 +287,275 @@
       </template>
     </el-dialog>
 
+    <!-- 制作标准对话框 -->
+    <el-dialog
+      v-model="showCreateDialog"
+      :title="createDialogTitle"
+      width="900px"
+      :close-on-click-modal="false"
+      @close="resetCreateDialog"
+    >
+      <!-- 步骤指示器 -->
+      <el-steps :active="createStep - 1" align-center style="margin-bottom: 24px;">
+        <el-step title="填写问卷" description="提供业务信息" />
+        <el-step title="预览编辑" description="确认生成的标准" />
+        <el-step title="确认入库" description="保存到标准库" />
+      </el-steps>
+
+      <!-- 步骤1：问卷表单 -->
+      <div v-if="createStep === 1" class="create-step-content">
+        <el-form :model="creationForm" label-width="120px" label-position="top">
+          <!-- 必答问题区域 -->
+          <div class="form-section">
+            <div class="form-section-title">
+              <span class="required-badge">必答</span>
+              基本信息
+            </div>
+
+            <el-form-item label="文档类型" required>
+              <el-radio-group v-model="creationForm.document_type">
+                <el-radio value="contract">合同</el-radio>
+                <el-radio value="marketing">营销材料</el-radio>
+                <el-radio value="both">两者都有</el-radio>
+              </el-radio-group>
+            </el-form-item>
+
+            <el-form-item label="业务场景描述" required>
+              <el-input
+                v-model="creationForm.business_scenario"
+                type="textarea"
+                :rows="3"
+                placeholder="请详细描述您的业务场景，例如：我们是一家软件公司，需要审核与客户签订的SaaS服务协议，主要涉及订阅费用、服务级别承诺、数据安全等条款..."
+                maxlength="500"
+                show-word-limit
+              />
+            </el-form-item>
+
+            <el-form-item label="核心关注点" required>
+              <div class="focus-area-selector">
+                <el-checkbox-group v-model="creationForm.focus_areas">
+                  <el-checkbox
+                    v-for="area in focusAreaOptions"
+                    :key="area"
+                    :value="area"
+                    :label="area"
+                  />
+                </el-checkbox-group>
+                <el-input
+                  v-model="creationForm.custom_focus"
+                  placeholder="其他关注点（逗号分隔）"
+                  style="margin-top: 8px; width: 300px;"
+                />
+              </div>
+            </el-form-item>
+          </div>
+
+          <!-- 选答问题区域 -->
+          <div class="form-section">
+            <div class="form-section-title">
+              <span class="optional-badge">选答</span>
+              补充信息（帮助生成更精准的标准）
+            </div>
+
+            <el-form-item label="我方角色">
+              <el-input
+                v-model="creationForm.our_role"
+                placeholder="例如：甲方/采购方/服务提供方/委托方"
+              />
+            </el-form-item>
+
+            <el-form-item label="所属行业">
+              <div class="industry-selector">
+                <el-select
+                  v-model="creationForm.industry"
+                  placeholder="选择行业"
+                  clearable
+                  style="width: 200px;"
+                >
+                  <el-option
+                    v-for="ind in industryOptions"
+                    :key="ind"
+                    :label="ind"
+                    :value="ind"
+                  />
+                </el-select>
+                <el-input
+                  v-model="creationForm.custom_industry"
+                  placeholder="或输入其他行业"
+                  style="width: 200px; margin-left: 12px;"
+                />
+              </div>
+            </el-form-item>
+
+            <el-form-item label="特殊风险关注">
+              <el-input
+                v-model="creationForm.special_risks"
+                type="textarea"
+                :rows="2"
+                placeholder="如有特殊的风险点需要关注，请在此说明"
+              />
+            </el-form-item>
+
+            <el-form-item label="参考材料">
+              <el-input
+                v-model="creationForm.reference_material"
+                type="textarea"
+                :rows="4"
+                placeholder="粘贴相关的法规条文、行业规范、已有合同模板等作为参考"
+              />
+            </el-form-item>
+          </div>
+        </el-form>
+      </div>
+
+      <!-- 步骤2：预览编辑生成的标准 -->
+      <div v-if="createStep === 2" class="create-step-content">
+        <el-alert
+          v-if="generationSummary"
+          type="success"
+          :closable="false"
+          style="margin-bottom: 16px;"
+        >
+          {{ generationSummary }}
+        </el-alert>
+
+        <el-table
+          :data="generatedStandards"
+          border
+          size="small"
+          max-height="400"
+        >
+          <el-table-column type="expand">
+            <template #default="{ row, $index }">
+              <div class="expand-edit-form">
+                <el-form label-width="80px" size="small">
+                  <el-form-item label="分类">
+                    <el-input v-model="row.category" />
+                  </el-form-item>
+                  <el-form-item label="审核要点">
+                    <el-input v-model="row.item" />
+                  </el-form-item>
+                  <el-form-item label="详细说明">
+                    <el-input v-model="row.description" type="textarea" :rows="2" />
+                  </el-form-item>
+                  <el-form-item label="风险等级">
+                    <el-select v-model="row.risk_level">
+                      <el-option label="高" value="high" />
+                      <el-option label="中" value="medium" />
+                      <el-option label="低" value="low" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="适用类型">
+                    <el-checkbox-group v-model="row.applicable_to">
+                      <el-checkbox label="contract" value="contract">合同</el-checkbox>
+                      <el-checkbox label="marketing" value="marketing">营销材料</el-checkbox>
+                    </el-checkbox-group>
+                  </el-form-item>
+                  <el-form-item label="适用说明">
+                    <el-input v-model="row.usage_instruction" type="textarea" :rows="2" />
+                  </el-form-item>
+                </el-form>
+                <div class="expand-actions">
+                  <el-button type="danger" size="small" @click="removeGeneratedStandard($index)">
+                    删除此标准
+                  </el-button>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="category" label="分类" width="100" />
+          <el-table-column prop="item" label="审核要点" width="150" />
+          <el-table-column prop="description" label="说明" show-overflow-tooltip />
+          <el-table-column label="风险" width="60" align="center">
+            <template #default="{ row }">
+              <el-tag :type="getRiskTagType(row.risk_level)" size="small">
+                {{ getRiskLabel(row.risk_level) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="适用" width="80">
+            <template #default="{ row }">
+              {{ formatApplicableTo(row.applicable_to) }}
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="step2-tip">
+          <el-icon><InfoFilled /></el-icon>
+          点击行左侧展开按钮可编辑标准详情
+        </div>
+      </div>
+
+      <!-- 步骤3：确认适用条件 -->
+      <div v-if="createStep === 3" class="create-step-content">
+        <el-alert
+          type="info"
+          :closable="false"
+          style="margin-bottom: 16px;"
+        >
+          请确认每条标准的适用说明，适用说明将帮助审阅时判断该标准是否适用于当前文档。
+        </el-alert>
+
+        <div class="usage-instruction-list">
+          <div
+            v-for="(std, index) in generatedStandards"
+            :key="index"
+            class="usage-item"
+          >
+            <div class="usage-item-header">
+              <el-tag :type="getRiskTagType(std.risk_level)" size="small">{{ getRiskLabel(std.risk_level) }}</el-tag>
+              <span class="usage-item-title">{{ std.category }} - {{ std.item }}</span>
+            </div>
+            <el-input
+              v-model="std.usage_instruction"
+              type="textarea"
+              :rows="2"
+              placeholder="说明该标准适用的条件，例如：适用于涉及支付条款的合同"
+            />
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="create-dialog-footer">
+          <el-button @click="showCreateDialog = false">取消</el-button>
+
+          <!-- 步骤1按钮 -->
+          <template v-if="createStep === 1">
+            <el-button
+              type="primary"
+              @click="generateStandardsFromBusiness"
+              :loading="generating"
+              :disabled="!canGenerate"
+            >
+              <el-icon><MagicStick /></el-icon>
+              生成标准
+            </el-button>
+          </template>
+
+          <!-- 步骤2按钮 -->
+          <template v-if="createStep === 2">
+            <el-button @click="createStep = 1">上一步</el-button>
+            <el-button type="primary" @click="createStep = 3" :disabled="!generatedStandards.length">
+              下一步
+            </el-button>
+          </template>
+
+          <!-- 步骤3按钮 -->
+          <template v-if="createStep === 3">
+            <el-button @click="createStep = 2">上一步</el-button>
+            <el-button
+              type="primary"
+              @click="saveGeneratedStandards"
+              :loading="savingCreated"
+            >
+              确认入库
+            </el-button>
+          </template>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- AI 辅助编辑对话框 -->
     <el-dialog
       v-model="showEditDialog"
@@ -398,8 +672,9 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed } from 'vue'
 import {
-  Upload, Download, Search, Plus, UploadFilled, MagicStick, Check
+  Upload, Download, Search, Plus, UploadFilled, MagicStick, Check, InfoFilled
 } from '@element-plus/icons-vue'
 import api from '@/api'
 
@@ -443,6 +718,149 @@ const aiModifiedResult = ref(null)
 
 // 生成适用说明状态
 const generatingIds = ref([])
+
+// 标准制作对话框状态
+const showCreateDialog = ref(false)
+const createStep = ref(1)  // 步骤：1=问卷 2=预览编辑 3=确认适用条件
+const generating = ref(false)
+const savingCreated = ref(false)
+const creationForm = reactive({
+  document_type: 'contract',
+  business_scenario: '',
+  focus_areas: [],
+  our_role: '',
+  industry: '',
+  special_risks: '',
+  reference_material: '',
+  custom_focus: '',  // 自定义关注点
+  custom_industry: '',  // 自定义行业
+})
+const generatedStandards = ref([])
+const generationSummary = ref('')
+
+// 核心关注点选项
+const focusAreaOptions = [
+  '合同主体资格',
+  '权利义务条款',
+  '费用与支付',
+  '违约责任',
+  '知识产权',
+  '保密条款',
+  '争议解决',
+  '合规性要求',
+]
+
+// 行业选项
+const industryOptions = [
+  '信息技术/互联网',
+  '金融/保险',
+  '制造业',
+  '房地产/建筑',
+  '医疗/生物',
+  '零售/消费',
+]
+
+// 制作标准 - 计算属性
+const createDialogTitle = computed(() => {
+  const titles = ['制作审核标准', '预览编辑标准', '确认入库']
+  return titles[createStep.value - 1]
+})
+
+const canGenerate = computed(() => {
+  return (
+    creationForm.business_scenario.trim() &&
+    (creationForm.focus_areas.length > 0 || creationForm.custom_focus.trim())
+  )
+})
+
+// 制作标准 - 生成标准
+async function generateStandardsFromBusiness() {
+  if (!canGenerate.value) {
+    ElMessage.warning('请填写业务场景和至少一个关注点')
+    return
+  }
+
+  generating.value = true
+  try {
+    // 合并选中的关注点和自定义关注点
+    const allFocusAreas = [...creationForm.focus_areas]
+    if (creationForm.custom_focus.trim()) {
+      const customAreas = creationForm.custom_focus.split(/[,，、]/).map(s => s.trim()).filter(Boolean)
+      allFocusAreas.push(...customAreas)
+    }
+
+    // 确定行业
+    const industry = creationForm.custom_industry.trim() || creationForm.industry
+
+    const response = await api.createStandardsFromBusiness({
+      document_type: creationForm.document_type,
+      business_scenario: creationForm.business_scenario,
+      focus_areas: allFocusAreas,
+      our_role: creationForm.our_role || null,
+      industry: industry || null,
+      special_risks: creationForm.special_risks || null,
+      reference_material: creationForm.reference_material || null,
+    })
+
+    generatedStandards.value = response.data.standards
+    generationSummary.value = response.data.generation_summary || `成功生成 ${response.data.standards.length} 条标准`
+    createStep.value = 2
+    ElMessage.success('标准生成成功')
+  } catch (error) {
+    ElMessage.error('生成标准失败: ' + (error.response?.data?.detail || error.message))
+  } finally {
+    generating.value = false
+  }
+}
+
+// 制作标准 - 删除生成的标准
+function removeGeneratedStandard(index) {
+  generatedStandards.value.splice(index, 1)
+}
+
+// 制作标准 - 保存生成的标准
+async function saveGeneratedStandards() {
+  if (!generatedStandards.value.length) {
+    ElMessage.warning('没有可保存的标准')
+    return
+  }
+
+  savingCreated.value = true
+  try {
+    const response = await api.saveToLibrary({
+      standards: generatedStandards.value,
+      replace: false,
+    })
+    ElMessage.success(response.data.message || '标准保存成功')
+    showCreateDialog.value = false
+    resetCreateDialog()
+    loadStandards()
+    loadStats()
+    loadCategories()
+  } catch (error) {
+    ElMessage.error('保存失败: ' + error.message)
+  } finally {
+    savingCreated.value = false
+  }
+}
+
+// 制作标准 - 重置对话框
+function resetCreateDialog() {
+  createStep.value = 1
+  Object.assign(creationForm, {
+    document_type: 'contract',
+    business_scenario: '',
+    focus_areas: [],
+    our_role: '',
+    industry: '',
+    special_risks: '',
+    reference_material: '',
+    custom_focus: '',
+    custom_industry: '',
+  })
+  generatedStandards.value = []
+  generationSummary.value = ''
+}
 
 // 加载标准列表
 async function loadStandards() {
@@ -856,5 +1274,108 @@ onMounted(() => {
   padding: 2px 4px;
   border-radius: 4px;
   font-weight: 500;
+}
+
+/* 制作标准对话框样式 */
+.create-step-content {
+  min-height: 300px;
+}
+
+.form-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+}
+
+.form-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.required-badge {
+  background: #f56c6c;
+  color: white;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.optional-badge {
+  background: #909399;
+  color: white;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.focus-area-selector {
+  display: flex;
+  flex-direction: column;
+}
+
+.focus-area-selector .el-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.industry-selector {
+  display: flex;
+  align-items: center;
+}
+
+.expand-edit-form {
+  padding: 16px 24px;
+  background: #fafafa;
+}
+
+.expand-actions {
+  margin-top: 12px;
+  text-align: right;
+}
+
+.step2-tip {
+  margin-top: 12px;
+  color: #909399;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.usage-instruction-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.usage-item {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+}
+
+.usage-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.usage-item-title {
+  font-weight: 500;
+  color: #303133;
+}
+
+.create-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 </style>

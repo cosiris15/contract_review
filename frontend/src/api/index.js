@@ -407,6 +407,11 @@ export default {
     })
   },
 
+  // 从业务信息生成标准
+  createStandardsFromBusiness(data) {
+    return api.post('/standards/create-from-business', data)
+  },
+
   // ==================== 预设模板 ====================
 
   // 获取预设模板列表（包含完整标准内容）

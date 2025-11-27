@@ -175,6 +175,35 @@ class UpdateActionRequest(BaseModel):
     deadline_suggestion: Optional[str] = None
 
 
+# ---------- 标准制作相关模型 ----------
+
+class StandardCreationRequest(BaseModel):
+    """标准制作请求"""
+    document_type: str  # "contract" | "marketing" | "both"
+    business_scenario: str  # 业务场景描述
+    focus_areas: List[str]  # 核心关注点列表
+    our_role: Optional[str] = None  # 我方角色
+    industry: Optional[str] = None  # 行业领域
+    special_risks: Optional[str] = None  # 特殊风险提示
+    reference_material: Optional[str] = None  # 参考材料文本
+
+
+class GeneratedStandard(BaseModel):
+    """生成的标准"""
+    category: str
+    item: str
+    description: str
+    risk_level: str
+    applicable_to: List[str]
+    usage_instruction: str
+
+
+class StandardCreationResponse(BaseModel):
+    """标准制作响应"""
+    standards: List[GeneratedStandard]
+    generation_summary: str
+
+
 class TemplateInfo(BaseModel):
     name: str
     filename: str
@@ -1071,6 +1100,94 @@ async def import_to_library(
         }
     finally:
         tmp_path.unlink()
+
+
+# ==================== 标准制作 API ====================
+
+@app.post("/api/standards/create-from-business", response_model=StandardCreationResponse)
+async def create_standards_from_business(request: StandardCreationRequest):
+    """根据业务信息生成审阅标准（使用 Gemini）"""
+    from src.contract_review.gemini_client import GeminiClient
+    from src.contract_review.prompts import (
+        STANDARD_CREATION_SYSTEM_PROMPT,
+        STANDARD_CREATION_USER_PROMPT,
+    )
+
+    # 检查 Gemini API Key 是否配置
+    if not settings.gemini.api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Gemini API Key 未配置，请设置环境变量 GEMINI_API_KEY"
+        )
+
+    # 验证必填字段
+    if not request.business_scenario or not request.business_scenario.strip():
+        raise HTTPException(status_code=400, detail="业务场景描述不能为空")
+    if not request.focus_areas:
+        raise HTTPException(status_code=400, detail="请至少选择一个核心关注点")
+
+    # 创建 Gemini 客户端
+    gemini_client = GeminiClient(
+        api_key=settings.gemini.api_key,
+        model=settings.gemini.model,
+        timeout=settings.gemini.timeout,
+    )
+
+    # 构建业务信息
+    business_info = {
+        "document_type": request.document_type,
+        "business_scenario": request.business_scenario,
+        "focus_areas": request.focus_areas,
+        "our_role": request.our_role,
+        "industry": request.industry,
+        "special_risks": request.special_risks,
+        "reference_material": request.reference_material,
+    }
+
+    try:
+        # 调用 Gemini 生成标准
+        result = await gemini_client.generate_standards(
+            business_info=business_info,
+            system_prompt=STANDARD_CREATION_SYSTEM_PROMPT,
+            user_prompt_template=STANDARD_CREATION_USER_PROMPT,
+        )
+
+        # 转换为响应格式
+        standards = []
+        for s in result.get("standards", []):
+            # 根据 document_type 设置 applicable_to
+            if request.document_type == "both":
+                applicable_to = ["contract", "marketing"]
+            elif request.document_type == "contract":
+                applicable_to = ["contract"]
+            else:
+                applicable_to = ["marketing"]
+
+            # 优先使用 LLM 生成的 applicable_to，否则使用默认值
+            final_applicable_to = s.get("applicable_to", applicable_to)
+
+            standards.append(GeneratedStandard(
+                category=s.get("category", "未分类"),
+                item=s.get("item", ""),
+                description=s.get("description", ""),
+                risk_level=s.get("risk_level", "medium"),
+                applicable_to=final_applicable_to,
+                usage_instruction=s.get("usage_instruction", ""),
+            ))
+
+        logger.info(f"成功生成 {len(standards)} 条审阅标准")
+
+        return StandardCreationResponse(
+            standards=standards,
+            generation_summary=result.get("generation_summary", f"成功生成 {len(standards)} 条审阅标准"),
+        )
+
+    except Exception as e:
+        logger.error(f"生成审阅标准失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"生成审阅标准失败: {str(e)}"
+        )
 
 
 # ==================== 标准预览与入库 API ====================

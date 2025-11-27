@@ -26,6 +26,13 @@ class LLMSettings(BaseModel):
     request_timeout: int = Field(default=120)  # 审阅可能耗时较长
 
 
+class GeminiSettings(BaseModel):
+    """Gemini API 配置（用于标准生成）"""
+    api_key: Optional[str] = None
+    model: str = Field(default="gemini-2.0-flash")
+    timeout: int = Field(default=120)
+
+
 class ReviewSettings(BaseModel):
     """审阅任务配置"""
     tasks_dir: Path = Field(default=Path("tasks"))
@@ -45,6 +52,7 @@ class Settings(BaseModel):
     """全局配置"""
     llm: LLMSettings
     review: ReviewSettings = Field(default_factory=ReviewSettings)
+    gemini: GeminiSettings = Field(default_factory=GeminiSettings)
 
 
 def load_settings(config_path: Optional[Path] = None) -> Settings:
@@ -77,13 +85,20 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
     llm_cfg["api_key"] = os.getenv("DEEPSEEK_API_KEY", llm_cfg.get("api_key"))
     data["llm"] = llm_cfg
 
+    # 允许通过环境变量配置 Gemini API Key
+    gemini_cfg = data.get("gemini", {})
+    gemini_api_key = os.getenv("GEMINI_API_KEY", gemini_cfg.get("api_key"))
+    if gemini_api_key:
+        gemini_cfg["api_key"] = gemini_api_key
+    data["gemini"] = gemini_cfg
+
     settings = Settings(**data)
 
     # 解析相对路径
     base_dir = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
     resolved_review = settings.review.resolve_paths(base_dir)
 
-    return Settings(llm=settings.llm, review=resolved_review)
+    return Settings(llm=settings.llm, review=resolved_review, gemini=settings.gemini)
 
 
 # 全局配置实例（延迟加载）
