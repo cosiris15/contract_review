@@ -12,18 +12,18 @@
           <el-dropdown trigger="click" @command="handleNewStandardCommand">
             <el-button type="primary">
               <el-icon><Plus /></el-icon>
-              新建标准集
+              新建标准
               <el-icon class="el-icon--right"><ArrowDown /></el-icon>
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="upload">
                   <el-icon><Upload /></el-icon>
-                  上传新标准（批量）
+                  上传新标准
                 </el-dropdown-item>
                 <el-dropdown-item command="ai">
                   <el-icon><MagicStick /></el-icon>
-                  AI辅助制作（批量）
+                  AI辅助制作
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -36,7 +36,7 @@
         <div class="filter-row">
           <el-input
             v-model="collectionSearch"
-            placeholder="搜索标准集..."
+            placeholder="搜索标准..."
             clearable
             style="width: 300px"
           >
@@ -68,7 +68,7 @@
 
       <!-- 集合列表 -->
       <div class="collections-list" v-loading="loadingCollections">
-        <el-empty v-if="filteredCollections.length === 0" description="暂无标准集" />
+        <el-empty v-if="filteredCollections.length === 0" description="暂无标准" />
         <div
           v-for="col in filteredCollections"
           :key="col.id"
@@ -324,7 +324,7 @@
             v-model="collectionForm.description"
             type="textarea"
             :rows="3"
-            placeholder="描述该标准集的适用场景"
+            placeholder="描述该标准的适用场景"
           />
         </el-form-item>
         <el-form-item label="材料类型">
@@ -362,7 +362,7 @@
               v-model="newCollectionForm.description"
               type="textarea"
               :rows="2"
-              placeholder="描述该标准集的适用场景"
+              placeholder="描述该标准的适用场景"
             />
           </el-form-item>
           <el-form-item label="材料类型">
@@ -408,7 +408,7 @@
           :closable="false"
           style="margin-bottom: 16px"
         >
-          解析成功，将创建标准集「{{ newCollectionForm.name }}」，共 {{ previewStandards.length }} 条风险点
+          解析成功，将创建标准「{{ newCollectionForm.name }}」，共 {{ previewStandards.length }} 条审核条目
         </el-alert>
 
         <el-table :data="previewStandards" max-height="400" size="small">
@@ -486,8 +486,8 @@
 
             <el-form-item label="标准语言" required>
               <el-radio-group v-model="creationForm.language">
-                <el-radio value="zh-CN">中文（中国法律体系）</el-radio>
-                <el-radio value="en">English (Common Law)</el-radio>
+                <el-radio value="zh-CN">中文</el-radio>
+                <el-radio value="en">English</el-radio>
               </el-radio-group>
             </el-form-item>
 
@@ -592,7 +592,7 @@
 
         <!-- 集合名称编辑 -->
         <div class="collection-name-edit">
-          <el-form-item label="标准集名称" label-width="100px">
+          <el-form-item label="标准名称" label-width="100px">
             <el-input v-model="generatedCollectionName" placeholder="AI生成的名称，可修改" />
           </el-form-item>
         </div>
@@ -666,7 +666,7 @@
           :closable="false"
           style="margin-bottom: 16px;"
         >
-          将创建标准集「{{ generatedCollectionName }}」，包含 {{ generatedStandards.length }} 条风险点
+          将创建标准「{{ generatedCollectionName }}」，包含 {{ generatedStandards.length }} 条审核条目
         </el-alert>
 
         <div class="usage-instruction-list">
@@ -783,7 +783,7 @@ async function loadCollections() {
     const response = await api.getCollections(params)
     collections.value = response.data
   } catch (error) {
-    ElMessage.error('加载标准集失败: ' + error.message)
+    ElMessage.error('加载标准失败: ' + error.message)
   } finally {
     loadingCollections.value = false
   }
@@ -862,7 +862,7 @@ async function deleteCollection(col) {
 
   try {
     await ElMessageBox.confirm(
-      `确定要删除标准集「${col.name}」吗？该集合内的所有风险点将一并删除。`,
+      `确定要删除标准「${col.name}」吗？该标准内的所有审核条目将一并删除。`,
       '确认删除',
       { type: 'warning' }
     )
@@ -1209,7 +1209,7 @@ async function saveGeneratedStandards() {
     return
   }
   if (!generatedCollectionName.value.trim()) {
-    ElMessage.warning('请输入标准集名称')
+    ElMessage.warning('请输入标准名称')
     return
   }
 

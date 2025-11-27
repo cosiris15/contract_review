@@ -62,8 +62,8 @@
 
             <el-form-item label="审阅语言" prop="language">
               <el-radio-group v-model="form.language" :disabled="!!taskId">
-                <el-radio value="zh-CN">中文（中国法律体系）</el-radio>
-                <el-radio value="en">English (Common Law)</el-radio>
+                <el-radio value="zh-CN">中文</el-radio>
+                <el-radio value="en">English</el-radio>
               </el-radio-group>
               <div v-if="detectedLanguage" class="language-detection-hint">
                 <el-icon><InfoFilled /></el-icon>
@@ -250,7 +250,7 @@
               <div class="selector-header">
                 <el-input
                   v-model="collectionSearch"
-                  placeholder="搜索标准集..."
+                  placeholder="搜索标准..."
                   clearable
                   style="flex: 1"
                 >
@@ -306,7 +306,7 @@
                   <p v-if="collection.description" class="collection-desc">{{ collection.description }}</p>
                 </div>
 
-                <el-empty v-if="filteredCollections.length === 0" description="暂无标准集">
+                <el-empty v-if="filteredCollections.length === 0" description="暂无标准">
                   <el-button type="primary" @click="goToStandardsManagement">
                     前往标准管理
                   </el-button>
@@ -784,7 +784,7 @@ async function confirmCollectionSelection() {
   }
 
   if (!selectedCollection.value) {
-    ElMessage.warning('请先选择标准集')
+    ElMessage.warning('请先选择标准')
     return
   }
 
@@ -842,7 +842,8 @@ function handleNewStandardInReview(command) {
       uploadInput.click()
     }
   } else if (command === 'ai') {
-    // 跳转到标准管理页面的AI制作功能
+    // 先关闭弹窗，再跳转到标准管理页面的AI制作功能
+    showLibrarySelector.value = false
     router.push({ name: 'standards', query: { action: 'ai-create' } })
   }
 }
