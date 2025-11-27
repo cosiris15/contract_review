@@ -105,19 +105,36 @@
                 <el-icon><Collection /></el-icon>
                 选择审核标准
               </el-button>
-              <el-upload
-                :auto-upload="false"
-                :show-file-list="false"
-                :on-change="handleStandardUpload"
-                accept=".xlsx,.xls,.csv,.docx,.md,.txt"
-                style="margin-left: 12px;"
-              >
+              <el-dropdown trigger="click" @command="handleNewStandardInReview" style="margin-left: 12px;">
                 <el-button>
-                  <el-icon><UploadFilled /></el-icon>
-                  上传自定义标准
+                  <el-icon><Plus /></el-icon>
+                  新建标准
+                  <el-icon class="el-icon--right"><ArrowDown /></el-icon>
                 </el-button>
-              </el-upload>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="upload">
+                      <el-icon><UploadFilled /></el-icon>
+                      上传新标准
+                    </el-dropdown-item>
+                    <el-dropdown-item command="ai">
+                      <el-icon><MagicStick /></el-icon>
+                      AI辅助制作
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
+
+            <!-- 隐藏的上传组件 -->
+            <el-upload
+              ref="standardUploadRef"
+              :auto-upload="false"
+              :show-file-list="false"
+              :on-change="handleStandardUpload"
+              accept=".xlsx,.xls,.csv,.docx,.md,.txt"
+              style="display: none;"
+            />
 
             <!-- 已选标准显示 -->
             <div v-if="selectedStandards.length > 0" class="selected-standards-section">
@@ -521,6 +538,7 @@ const store = useReviewStore()
 
 const formRef = ref(null)
 const libraryTableRef = ref(null)
+const standardUploadRef = ref(null)
 const taskId = ref(route.params.taskId || null)
 
 const form = ref({
@@ -589,12 +607,21 @@ const activeStep = computed(() => {
 })
 
 onMounted(async () => {
-  // 加载预设模板列表
+  // 加载标准集合列表（原预设模板已迁移到集合）
   try {
-    const response = await api.getPresetTemplates()
-    presetTemplates.value = response.data
+    const response = await api.getCollections()
+    // 转换为与原预设模板兼容的格式
+    presetTemplates.value = response.data.map(c => ({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      material_type: c.material_type,
+      standard_count: c.standard_count,
+      is_preset: c.is_preset,
+      standards: c.standards || []  // 集合列表API不返回standards，需要单独获取
+    }))
   } catch (error) {
-    console.error('加载预设模板失败:', error)
+    console.error('加载标准集合失败:', error)
   }
 
   // 如果有 taskId，加载任务
@@ -673,7 +700,7 @@ function openStandardSelector() {
 }
 
 // 对话框内选择预设模板（只标记，不立即应用）
-function selectPresetTemplateInDialog(template) {
+async function selectPresetTemplateInDialog(template) {
   // 选择模板时，清除标准库的选择
   if (libraryTableRef.value) {
     libraryTableRef.value.clearSelection()
@@ -684,6 +711,18 @@ function selectPresetTemplateInDialog(template) {
     // 再次点击取消选择
     selectedPresetTemplate.value = null
   } else {
+    // 如果标准列表为空，需要从API获取完整集合详情
+    if (!template.standards || template.standards.length === 0) {
+      try {
+        const response = await api.getCollection(template.id)
+        template.standards = response.data.standards || []
+        template.standard_count = template.standards.length
+      } catch (error) {
+        console.error('获取集合详情失败:', error)
+        ElMessage.error('获取标准详情失败')
+        return
+      }
+    }
     selectedPresetTemplate.value = template
   }
 }
@@ -788,6 +827,20 @@ function selectPresetTemplate(template) {
     applicable_to: s.applicable_to
   }))
   ElMessage.success(`已选择「${template.name}」，共 ${template.standard_count} 条标准`)
+}
+
+// 新建标准下拉菜单命令处理
+function handleNewStandardInReview(command) {
+  if (command === 'upload') {
+    // 触发隐藏的上传组件
+    const uploadInput = standardUploadRef.value?.$el?.querySelector('input[type="file"]')
+    if (uploadInput) {
+      uploadInput.click()
+    }
+  } else if (command === 'ai') {
+    // 跳转到标准管理页面的AI制作功能
+    router.push({ name: 'standards', query: { action: 'ai-create' } })
+  }
 }
 
 // 上传自定义标准文件

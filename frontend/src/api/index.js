@@ -412,7 +412,19 @@ export default {
     return api.post('/standards/create-from-business', data)
   },
 
-  // ==================== 预设模板 ====================
+  // ==================== 标准集合 ====================
+
+  // 获取所有标准集合
+  getCollections() {
+    return api.get('/standard-library/collections')
+  },
+
+  // 获取单个集合（包含标准列表）
+  getCollection(collectionId) {
+    return api.get(`/standard-library/collections/${collectionId}`)
+  },
+
+  // ==================== 预设模板（兼容旧接口） ====================
 
   // 获取预设模板列表（包含完整标准内容）
   getPresetTemplates() {

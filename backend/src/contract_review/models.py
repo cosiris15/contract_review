@@ -77,9 +77,22 @@ class ReviewStandardSet(BaseModel):
 
 # ==================== 标准库模型 ====================
 
+class StandardCollection(BaseModel):
+    """标准集合（用于预设模板和分组管理）"""
+    id: str = Field(default_factory=generate_id)
+    name: str  # 集合名称，如"通用合同审核标准"
+    description: str = ""  # 集合描述
+    material_type: str = "both"  # contract/marketing/both
+    is_preset: bool = False  # 是否为系统预设（预设集合不可删除）
+    standard_ids: List[str] = Field(default_factory=list)  # 包含的标准ID列表
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
 class StandardLibrary(BaseModel):
     """全局审核标准库"""
     standards: List[ReviewStandard] = Field(default_factory=list)
+    collections: List[StandardCollection] = Field(default_factory=list)  # 标准集合
     updated_at: datetime = Field(default_factory=datetime.now)
 
     @property
@@ -117,6 +130,22 @@ class StandardLibrary(BaseModel):
         """获取所有分类"""
         categories = set(s.category for s in self.standards)
         return sorted(categories)
+
+    # ====== 集合相关方法 ======
+
+    def get_collection_by_id(self, collection_id: str) -> Optional[StandardCollection]:
+        """根据 ID 获取集合"""
+        for c in self.collections:
+            if c.id == collection_id:
+                return c
+        return None
+
+    def get_collection_standards(self, collection_id: str) -> List[ReviewStandard]:
+        """获取集合中的所有标准"""
+        collection = self.get_collection_by_id(collection_id)
+        if not collection:
+            return []
+        return [s for s in self.standards if s.id in collection.standard_ids]
 
 
 class StandardRecommendation(BaseModel):

@@ -7,10 +7,25 @@
         <p class="subtitle">管理和维护审核标准库，支持导入、编辑、删除标准</p>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="showImportDialog = true">
-          <el-icon><Upload /></el-icon>
-          上传标准
-        </el-button>
+        <el-dropdown trigger="click" @command="handleNewStandardCommand">
+          <el-button type="primary">
+            <el-icon><Plus /></el-icon>
+            新建标准
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="upload">
+                <el-icon><Upload /></el-icon>
+                上传新标准（批量）
+              </el-dropdown-item>
+              <el-dropdown-item command="ai">
+                <el-icon><MagicStick /></el-icon>
+                AI辅助制作（批量）
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button @click="handleExport">
           <el-icon><Download /></el-icon>
           导出
@@ -93,12 +108,7 @@
 
         <el-button type="primary" text @click="showAddDialog = true">
           <el-icon><Plus /></el-icon>
-          手动添加
-        </el-button>
-
-        <el-button type="success" @click="showCreateDialog = true">
-          <el-icon><MagicStick /></el-icon>
-          制作标准
+          添加单条
         </el-button>
       </div>
     </el-card>
@@ -674,7 +684,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed } from 'vue'
 import {
-  Upload, Download, Search, Plus, UploadFilled, MagicStick, Check, InfoFilled
+  Upload, Download, Search, Plus, UploadFilled, MagicStick, Check, InfoFilled, ArrowDown
 } from '@element-plus/icons-vue'
 import api from '@/api'
 
@@ -1118,6 +1128,15 @@ async function generateUsageInstruction(row) {
     ElMessage.error('生成失败: ' + error.message)
   } finally {
     generatingIds.value = generatingIds.value.filter(id => id !== row.id)
+  }
+}
+
+// 新建标准下拉菜单命令处理
+function handleNewStandardCommand(command) {
+  if (command === 'upload') {
+    showImportDialog.value = true
+  } else if (command === 'ai') {
+    showCreateDialog.value = true
   }
 }
 

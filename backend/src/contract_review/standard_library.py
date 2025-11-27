@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from .models import MaterialType, ReviewStandard, StandardLibrary
+from .models import MaterialType, ReviewStandard, StandardCollection, StandardLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -371,3 +371,185 @@ class StandardLibraryManager:
         logger.info(f"Imported {imported_count} standards, {len(warnings)} warnings")
 
         return imported_count, warnings
+
+    # ==================== 集合管理 ====================
+
+    def list_collections(self) -> List[StandardCollection]:
+        """获取所有集合"""
+        library = self._load_library()
+        return library.collections
+
+    def get_collection(self, collection_id: str) -> Optional[StandardCollection]:
+        """获取单个集合"""
+        library = self._load_library()
+        return library.get_collection_by_id(collection_id)
+
+    def get_collection_with_standards(self, collection_id: str) -> Optional[dict]:
+        """获取集合及其标准列表"""
+        library = self._load_library()
+        collection = library.get_collection_by_id(collection_id)
+        if not collection:
+            return None
+
+        standards = library.get_collection_standards(collection_id)
+        return {
+            "collection": collection,
+            "standards": standards,
+        }
+
+    def add_collection(
+        self,
+        name: str,
+        standard_ids: List[str],
+        description: str = "",
+        material_type: str = "both",
+        is_preset: bool = False,
+    ) -> str:
+        """
+        添加集合
+
+        Args:
+            name: 集合名称
+            standard_ids: 包含的标准ID列表
+            description: 集合描述
+            material_type: 适用材料类型
+            is_preset: 是否为系统预设
+
+        Returns:
+            集合 ID
+        """
+        library = self._load_library()
+
+        collection = StandardCollection(
+            name=name,
+            description=description,
+            material_type=material_type,
+            is_preset=is_preset,
+            standard_ids=standard_ids,
+        )
+
+        library.collections.append(collection)
+        self._save_library()
+
+        logger.info(f"Added collection: {collection.id} - {name} ({len(standard_ids)} standards)")
+        return collection.id
+
+    def update_collection(self, collection_id: str, updates: dict) -> bool:
+        """更新集合"""
+        library = self._load_library()
+        collection = library.get_collection_by_id(collection_id)
+
+        if collection is None:
+            logger.warning(f"Collection not found: {collection_id}")
+            return False
+
+        # 预设集合不允许修改名称和is_preset
+        if collection.is_preset:
+            updates.pop("is_preset", None)
+
+        for key, value in updates.items():
+            if hasattr(collection, key) and key not in ("id", "created_at", "is_preset"):
+                setattr(collection, key, value)
+
+        collection.updated_at = datetime.now()
+        self._save_library()
+
+        logger.info(f"Updated collection: {collection_id}")
+        return True
+
+    def delete_collection(self, collection_id: str) -> bool:
+        """删除集合（预设集合不可删除）"""
+        library = self._load_library()
+        collection = library.get_collection_by_id(collection_id)
+
+        if collection is None:
+            logger.warning(f"Collection not found: {collection_id}")
+            return False
+
+        if collection.is_preset:
+            logger.warning(f"Cannot delete preset collection: {collection_id}")
+            return False
+
+        library.collections = [c for c in library.collections if c.id != collection_id]
+        self._save_library()
+
+        logger.info(f"Deleted collection: {collection_id}")
+        return True
+
+    def import_preset_templates(self, templates_dir: Path) -> int:
+        """
+        从模板目录导入预设模板到标准库
+
+        Args:
+            templates_dir: 模板目录路径
+
+        Returns:
+            导入的集合数量
+        """
+        from .standard_parser import parse_standard_file
+
+        if not templates_dir.exists():
+            logger.warning(f"Templates directory not found: {templates_dir}")
+            return 0
+
+        library = self._load_library()
+        imported_count = 0
+
+        for template_file in templates_dir.iterdir():
+            if template_file.suffix.lower() not in {".csv", ".xlsx"}:
+                continue
+
+            template_name = template_file.stem
+
+            # 检查是否已存在同名预设集合
+            existing_collection = None
+            for c in library.collections:
+                if c.is_preset and c.name == template_name:
+                    existing_collection = c
+                    break
+
+            if existing_collection:
+                logger.info(f"Preset collection already exists: {template_name}")
+                continue
+
+            try:
+                # 解析模板文件
+                standard_set = parse_standard_file(template_file)
+
+                # 确定材料类型
+                if "contract" in template_name.lower() or "合同" in template_name:
+                    material_type = "contract"
+                elif "marketing" in template_name.lower() or "营销" in template_name:
+                    material_type = "marketing"
+                else:
+                    material_type = "both"
+
+                # 添加标准到库中
+                now = datetime.now()
+                standard_ids = []
+                for standard in standard_set.standards:
+                    standard.created_at = now
+                    standard.updated_at = now
+                    library.standards.append(standard)
+                    standard_ids.append(standard.id)
+
+                # 创建预设集合
+                collection = StandardCollection(
+                    name=template_name,
+                    description=f"系统预设模板: {template_name}",
+                    material_type=material_type,
+                    is_preset=True,
+                    standard_ids=standard_ids,
+                )
+                library.collections.append(collection)
+
+                imported_count += 1
+                logger.info(f"Imported preset template: {template_name} ({len(standard_ids)} standards)")
+
+            except Exception as e:
+                logger.error(f"Failed to import template {template_name}: {e}")
+
+        if imported_count > 0:
+            self._save_library()
+
+        return imported_count

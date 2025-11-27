@@ -118,6 +118,14 @@ llm_client = LLMClient(settings.llm)
 # 默认模板目录
 TEMPLATES_DIR = settings.review.templates_dir
 
+# 启动时将预设模板导入标准库（如果尚未导入）
+try:
+    imported_count = standard_library_manager.import_preset_templates(TEMPLATES_DIR)
+    if imported_count > 0:
+        logger.info(f"已将 {imported_count} 个预设模板导入标准库")
+except Exception as e:
+    logger.warning(f"导入预设模板失败: {e}")
+
 
 # ==================== 请求/响应模型 ====================
 
@@ -1100,6 +1108,74 @@ async def import_to_library(
         }
     finally:
         tmp_path.unlink()
+
+
+# ==================== 标准集合 API ====================
+
+class CollectionResponse(BaseModel):
+    """标准集合响应"""
+    id: str
+    name: str
+    description: str
+    material_type: str
+    is_preset: bool
+    standard_count: int
+    standards: Optional[List[StandardResponse]] = None
+
+
+class CollectionWithStandardsResponse(BaseModel):
+    """标准集合（包含标准列表）响应"""
+    id: str
+    name: str
+    description: str
+    material_type: str
+    is_preset: bool
+    standard_count: int
+    standards: List[StandardResponse]
+
+
+def _collection_to_response(collection, include_standards: bool = False, standards: list = None) -> CollectionResponse:
+    """将集合转换为响应格式"""
+    response = CollectionResponse(
+        id=collection.id,
+        name=collection.name,
+        description=collection.description,
+        material_type=collection.material_type,
+        is_preset=collection.is_preset,
+        standard_count=len(collection.standard_ids),
+        standards=None,
+    )
+    if include_standards and standards:
+        response.standards = [_standard_to_response(s) for s in standards]
+    return response
+
+
+@app.get("/api/standard-library/collections", response_model=List[CollectionResponse])
+async def list_collections():
+    """获取所有标准集合"""
+    collections = standard_library_manager.list_collections()
+    return [_collection_to_response(c) for c in collections]
+
+
+@app.get("/api/standard-library/collections/{collection_id}", response_model=CollectionWithStandardsResponse)
+async def get_collection(collection_id: str):
+    """获取单个集合（包含标准列表）"""
+    result = standard_library_manager.get_collection_with_standards(collection_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    collection = result["collection"]
+    standards = result["standards"]
+
+    return CollectionWithStandardsResponse(
+        id=collection.id,
+        name=collection.name,
+        description=collection.description,
+        material_type=collection.material_type,
+        is_preset=collection.is_preset,
+        standard_count=len(collection.standard_ids),
+        standards=[_standard_to_response(s) for s in standards],
+    )
 
 
 # ==================== 标准制作 API ====================
