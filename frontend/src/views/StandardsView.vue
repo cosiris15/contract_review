@@ -732,8 +732,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Upload, Download, Search, Plus, UploadFilled, MagicStick, InfoFilled, ArrowDown,
@@ -743,6 +743,7 @@ import api from '@/api'
 
 // ==================== 路由参数 ====================
 const route = useRoute()
+const router = useRouter()
 
 // ==================== 标准列表相关 ====================
 const loadingCollections = ref(false)
@@ -1284,19 +1285,33 @@ function handleNewStandardCommand(command) {
 }
 
 // ==================== 初始化 ====================
+
+// 监听路由 query 参数变化（处理从其他页面跳转过来的情况）
+watch(
+  () => route.query.action,
+  (action) => {
+    if (action === 'ai-create') {
+      showCreateDialog.value = true
+      // 清除 query 参数，避免刷新页面时重复打开
+      router.replace({ query: {} })
+    }
+  }
+)
+
 onMounted(async () => {
   await loadCollections()
-  // 检查是否需要自动打开 AI 制作对话框（从 ReviewView 跳转过来）
+  // 初次加载时也检查是否需要自动打开 AI 制作对话框（从 ReviewView 跳转过来）
   if (route.query.action === 'ai-create') {
     showCreateDialog.value = true
+    router.replace({ query: {} })
   }
 })
 </script>
 
 <style scoped>
 .standards-view {
-  padding: 24px;
-  max-width: 1400px;
+  padding: var(--spacing-6);
+  max-width: var(--max-width);
   margin: 0 auto;
 }
 
@@ -1304,33 +1319,33 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 24px;
+  margin-bottom: var(--spacing-6);
 }
 
 .header-left h1 {
-  margin: 0 0 8px 0;
-  font-size: 24px;
-  color: #303133;
+  margin: 0 0 var(--spacing-2) 0;
+  font-size: var(--font-size-2xl);
+  color: var(--color-text-primary);
 }
 
 .subtitle {
   margin: 0;
-  color: #909399;
-  font-size: 14px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--spacing-3);
 }
 
 .filter-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--spacing-4);
 }
 
 .filter-row {
   display: flex;
-  gap: 16px;
+  gap: var(--spacing-4);
   flex-wrap: wrap;
   align-items: center;
 }
@@ -1339,29 +1354,29 @@ onMounted(async () => {
 .collections-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-3);
 }
 
 .collection-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  background: white;
-  border-radius: 8px;
-  border: 1px solid #ebeef5;
+  padding: var(--spacing-4) var(--spacing-5);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-light);
   transition: all 0.2s;
 }
 
 .collection-card:hover {
-  border-color: #409eff;
-  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
 }
 
 .collection-card-main {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--spacing-4);
   flex: 1;
   cursor: pointer;
 }
@@ -1372,9 +1387,9 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f7fa;
-  border-radius: 8px;
-  color: #409eff;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
 }
 
 .collection-info {
@@ -1382,58 +1397,58 @@ onMounted(async () => {
 }
 
 .collection-name {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
 .collection-desc {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #909399;
+  margin-top: var(--spacing-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 
 .collection-meta {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #909399;
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 
 .meta-sep {
-  margin: 0 8px;
+  margin: 0 var(--spacing-2);
 }
 
 .collection-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
 /* 详情页样式 */
 .detail-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: var(--spacing-4);
+  margin-bottom: var(--spacing-4);
 }
 
 .detail-header h2 {
   margin: 0;
-  font-size: 20px;
-  color: #303133;
+  font-size: var(--font-size-xl);
+  color: var(--color-text-primary);
 }
 
 .collection-info-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--spacing-4);
 }
 
 .info-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px;
-  margin-bottom: 12px;
+  gap: var(--spacing-6);
+  margin-bottom: var(--spacing-3);
 }
 
 .info-item {
@@ -1442,23 +1457,23 @@ onMounted(async () => {
 }
 
 .info-label {
-  color: #909399;
-  margin-right: 8px;
+  color: var(--color-text-tertiary);
+  margin-right: var(--spacing-2);
 }
 
 .info-value {
-  color: #303133;
+  color: var(--color-text-primary);
 }
 
 .table-card {
-  margin-bottom: 24px;
+  margin-bottom: var(--spacing-6);
 }
 
 .table-footer {
-  margin-top: 16px;
+  margin-top: var(--spacing-4);
   text-align: right;
-  color: #909399;
-  font-size: 14px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
 }
 
 /* 制作标准对话框样式 */
@@ -1467,36 +1482,36 @@ onMounted(async () => {
 }
 
 .form-section {
-  margin-bottom: 24px;
-  padding: 16px;
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
+  margin-bottom: var(--spacing-6);
+  padding: var(--spacing-4);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
 }
 
 .form-section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 16px;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-4);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
 .required-badge {
-  background: #f56c6c;
+  background: var(--color-danger);
   color: white;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  padding: 2px var(--spacing-2);
+  border-radius: var(--radius-sm);
 }
 
 .optional-badge {
-  background: #909399;
+  background: var(--color-info);
   color: white;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  padding: 2px var(--spacing-2);
+  border-radius: var(--radius-sm);
 }
 
 .focus-area-selector {
@@ -1507,7 +1522,7 @@ onMounted(async () => {
 .focus-area-selector .el-checkbox-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
 .industry-selector {
@@ -1516,29 +1531,29 @@ onMounted(async () => {
 }
 
 .collection-name-edit {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: #f5f7fa;
-  border-radius: 8px;
+  margin-bottom: var(--spacing-4);
+  padding: var(--spacing-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
 }
 
 .expand-edit-form {
-  padding: 16px 24px;
-  background: #fafafa;
+  padding: var(--spacing-4) var(--spacing-6);
+  background: var(--color-bg-hover);
 }
 
 .expand-actions {
-  margin-top: 12px;
+  margin-top: var(--spacing-3);
   text-align: right;
 }
 
 .step2-tip {
-  margin-top: 12px;
-  color: #909399;
-  font-size: 13px;
+  margin-top: var(--spacing-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-1);
 }
 
 .usage-instruction-list {
@@ -1547,27 +1562,27 @@ onMounted(async () => {
 }
 
 .usage-item {
-  margin-bottom: 16px;
-  padding: 12px;
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
+  margin-bottom: var(--spacing-4);
+  padding: var(--spacing-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
 }
 
 .usage-item-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
 }
 
 .usage-item-title {
-  font-weight: 500;
-  color: #303133;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
 }
 
 .create-dialog-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--spacing-3);
 }
 </style>

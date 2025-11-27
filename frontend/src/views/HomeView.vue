@@ -70,17 +70,17 @@
         </div>
         <div class="welcome-features">
           <div class="feature-item">
-            <el-icon :size="32" color="#667eea"><Search /></el-icon>
+            <el-icon :size="32"><Search /></el-icon>
             <h3>智能风险识别</h3>
             <p>基于审核标准自动识别文本中的法务风险点</p>
           </div>
           <div class="feature-item">
-            <el-icon :size="32" color="#667eea"><Edit /></el-icon>
+            <el-icon :size="32"><Edit /></el-icon>
             <h3>修改建议</h3>
             <p>针对每个风险点提供具体的文本修改建议</p>
           </div>
           <div class="feature-item">
-            <el-icon :size="32" color="#667eea"><List /></el-icon>
+            <el-icon :size="32"><List /></el-icon>
             <h3>行动建议</h3>
             <p>除文本修改外还应采取的其他措施</p>
           </div>
@@ -337,162 +337,179 @@ function formatTime(isoString) {
 
 <style scoped>
 .home-view {
-  max-width: 1200px;
+  max-width: var(--max-width);
   margin: 0 auto;
 }
 
 /* 状态提示样式 */
 .status-alert {
-  margin-bottom: 16px;
+  margin-bottom: var(--spacing-4);
 }
 
 .status-alert :deep(.el-alert__title) {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
 .alert-detail {
-  color: #909399;
-  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
 }
 
 .alert-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--spacing-4);
 }
 
 .backend-hint {
-  margin-top: 12px;
-  color: #909399;
-  font-size: 13px;
+  margin-top: var(--spacing-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
 }
 
+/* 欢迎区域 */
 .welcome-section {
-  margin-bottom: 32px;
+  margin-bottom: var(--spacing-8);
 }
 
 .welcome-card {
-  background: white;
-  border-radius: 12px;
-  padding: 40px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-10);
+  box-shadow: var(--shadow-md);
 }
 
 .welcome-content {
   text-align: center;
-  margin-bottom: 40px;
+  margin-bottom: var(--spacing-10);
 }
 
 .welcome-content h1 {
-  font-size: 28px;
-  color: #303133;
-  margin-bottom: 12px;
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-3);
 }
 
 .welcome-content p {
-  color: #606266;
-  font-size: 16px;
-  margin-bottom: 24px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  margin-bottom: var(--spacing-6);
+  line-height: var(--line-height-relaxed);
 }
 
 .welcome-features {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  gap: var(--spacing-6);
 }
 
 .feature-item {
   text-align: center;
-  padding: 20px;
+  padding: var(--spacing-5);
+}
+
+.feature-item :deep(.el-icon) {
+  color: var(--color-primary) !important;
 }
 
 .feature-item h3 {
-  margin: 12px 0 8px;
-  font-size: 16px;
-  color: #303133;
+  margin: var(--spacing-3) 0 var(--spacing-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
 
 .feature-item p {
-  color: #909399;
-  font-size: 14px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
 }
 
+/* 最近任务区域 */
 .recent-section {
-  background: white;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-6);
+  box-shadow: var(--shadow-md);
 }
 
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: var(--spacing-5);
 }
 
 .section-header h2 {
-  font-size: 18px;
-  color: #303133;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
   margin: 0;
 }
 
 .task-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  gap: var(--spacing-4);
 }
 
 .task-card {
   cursor: pointer;
-  transition: transform 0.2s;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .task-card:hover {
   transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .task-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-3);
 }
 
 .task-name {
-  font-weight: 600;
-  color: #303133;
-  font-size: 15px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
 }
 
 .task-meta {
   display: flex;
-  gap: 16px;
-  color: #909399;
-  font-size: 13px;
-  margin-bottom: 12px;
+  gap: var(--spacing-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-3);
 }
 
 .task-meta span {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-1);
 }
 
 .task-files {
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-3);
 }
 
 .task-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
+/* 响应式 */
 @media (max-width: 768px) {
+  .welcome-card {
+    padding: var(--spacing-6);
+  }
+
   .welcome-features {
     grid-template-columns: 1fr;
   }

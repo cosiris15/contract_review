@@ -96,63 +96,63 @@ const handleIntelligenceLevelChange = (value) => {
 
 <style scoped>
 .settings-content {
-  padding: 0 4px;
+  padding: 0 var(--spacing-1);
 }
 
 .settings-section {
-  margin-bottom: 24px;
+  margin-bottom: var(--spacing-6);
 }
 
 .section-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
 }
 
 .section-icon {
-  font-size: 18px;
-  color: #409eff;
+  font-size: var(--font-size-lg);
+  color: var(--color-primary);
 }
 
 .section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
 
 .section-description {
-  font-size: 13px;
-  color: #909399;
-  margin-bottom: 16px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-4);
 }
 
 .intelligence-radio-group {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-3);
   width: 100%;
 }
 
 .intelligence-radio {
   display: flex;
   align-items: flex-start;
-  padding: 16px;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  padding: var(--spacing-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   margin-right: 0 !important;
   height: auto !important;
   transition: all 0.2s;
 }
 
 .intelligence-radio:hover {
-  border-color: #c0c4cc;
-  background-color: #fafafa;
+  border-color: var(--color-border-dark);
+  background-color: var(--color-bg-hover);
 }
 
 .intelligence-radio.is-checked {
-  border-color: #409eff;
-  background-color: #ecf5ff;
+  border-color: var(--color-primary);
+  background-color: var(--color-primary-bg);
 }
 
 .intelligence-radio :deep(.el-radio__input) {
@@ -160,42 +160,42 @@ const handleIntelligenceLevelChange = (value) => {
 }
 
 .intelligence-radio :deep(.el-radio__label) {
-  padding-left: 12px;
+  padding-left: var(--spacing-3);
   flex: 1;
 }
 
 .radio-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--spacing-1);
 }
 
 .radio-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 
 .radio-title {
-  font-size: 15px;
-  font-weight: 500;
-  color: #303133;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
 }
 
 .radio-description {
-  font-size: 13px;
-  color: #909399;
-  line-height: 1.4;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-normal);
 }
 
 .drawer-footer {
   display: flex;
   justify-content: center;
-  padding: 12px 0;
+  padding: var(--spacing-3) 0;
 }
 
 .version-info {
-  font-size: 12px;
-  color: #c0c4cc;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-disabled);
 }
 </style>

@@ -952,7 +952,7 @@ async function handleExportRedline() {
 
 <style scoped>
 .result-view {
-  max-width: 1400px;
+  max-width: var(--max-width);
   margin: 0 auto;
 }
 
@@ -960,63 +960,63 @@ async function handleExportRedline() {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 24px;
-  background: white;
-  padding: 20px 24px;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  margin-bottom: var(--spacing-6);
+  background: var(--color-bg-card);
+  padding: var(--spacing-5) var(--spacing-6);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .header-info h2 {
-  margin: 8px 0;
-  font-size: 20px;
-  color: #303133;
+  margin: var(--spacing-2) 0;
+  font-size: var(--font-size-xl);
+  color: var(--color-text-primary);
 }
 
 .header-meta {
   display: flex;
   align-items: center;
-  gap: 16px;
-  color: #909399;
-  font-size: 14px;
+  gap: var(--spacing-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--spacing-3);
   align-items: center;
 }
 
 .stat-cards {
-  margin-bottom: 24px;
+  margin-bottom: var(--spacing-6);
 }
 
 .stat-card {
   text-align: center;
-  padding: 12px;
+  padding: var(--spacing-3);
 }
 
 .stat-card .stat-value {
-  font-size: 32px;
-  font-weight: 700;
-  margin-bottom: 4px;
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
+  margin-bottom: var(--spacing-1);
 }
 
 .stat-card .stat-label {
-  font-size: 14px;
-  color: #606266;
-  margin-bottom: 4px;
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-1);
 }
 
 .stat-card .stat-detail {
-  font-size: 12px;
-  color: #909399;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 
-.stat-card.danger .stat-value { color: #f56c6c; }
-.stat-card.warning .stat-value { color: #e6a23c; }
-.stat-card.primary .stat-value { color: #409eff; }
-.stat-card.success .stat-value { color: #67c23a; }
+.stat-card.danger .stat-value { color: var(--color-danger); }
+.stat-card.warning .stat-value { color: var(--color-warning); }
+.stat-card.primary .stat-value { color: var(--color-primary); }
+.stat-card.success .stat-value { color: var(--color-success); }
 
 .content-card {
   min-height: 500px;
@@ -1029,65 +1029,65 @@ async function handleExportRedline() {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-  color: #409eff;
+  color: var(--color-primary);
 }
 
 .modification-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--spacing-4);
 }
 
 .modification-card {
-  border-left: 4px solid #e6a23c;
+  border-left: 4px solid var(--color-warning);
 }
 
 .modification-card.confirmed {
-  border-left-color: #67c23a;
+  border-left-color: var(--color-success);
 }
 
 .mod-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
 }
 
 .mod-reason {
   flex: 1;
-  color: #606266;
+  color: var(--color-text-secondary);
 }
 
 .mod-content {
-  margin-top: 12px;
+  margin-top: var(--spacing-3);
 }
 
 .text-label {
-  font-size: 13px;
-  color: #909399;
-  margin-bottom: 8px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-2);
 }
 
 .text-box {
-  background: #f5f7fa;
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 14px;
-  line-height: 1.6;
+  background: var(--color-bg-secondary);
+  padding: var(--spacing-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-relaxed);
   min-height: 100px;
 }
 
 .text-box.original {
-  color: #909399;
+  color: var(--color-text-tertiary);
   text-decoration: line-through;
 }
 
 .text-box.suggested {
-  color: #303133;
+  color: var(--color-text-primary);
 }
 
 .text-box.diff-view {
-  color: #303133;
+  color: var(--color-text-primary);
   text-decoration: none;
   line-height: 1.8;
 }
@@ -1095,8 +1095,8 @@ async function handleExportRedline() {
 /* Diff 样式 */
 .text-box :deep(.diff-del),
 .text-box.diff-view :deep(.diff-del) {
-  background-color: #fde2e2;
-  color: #f56c6c;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
   text-decoration: line-through;
   padding: 0 2px;
   border-radius: 2px;
@@ -1104,12 +1104,12 @@ async function handleExportRedline() {
 
 .text-box :deep(.diff-ins),
 .text-box.diff-view :deep(.diff-ins) {
-  background-color: #e1f3d8;
-  color: #67c23a;
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
   text-decoration: none;
   padding: 0 2px;
   border-radius: 2px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .mod-actions {
@@ -1119,41 +1119,41 @@ async function handleExportRedline() {
 
 /* Redline 导出对话框样式 */
 .redline-dialog-content {
-  padding: 8px 0;
+  padding: var(--spacing-2) 0;
 }
 
 .export-option {
-  padding: 12px 0;
+  padding: var(--spacing-3) 0;
 }
 
 .option-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  color: #303133;
-  margin-bottom: 8px;
+  gap: var(--spacing-2);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-2);
 }
 
 .option-header .el-icon {
-  color: #409eff;
+  color: var(--color-primary);
 }
 
 .option-desc {
-  font-size: 13px;
-  color: #909399;
-  margin-bottom: 8px;
-  padding-left: 24px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-2);
+  padding-left: var(--spacing-6);
 }
 
 .option-count {
-  font-size: 13px;
-  color: #606266;
-  padding-left: 24px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  padding-left: var(--spacing-6);
 }
 
 .option-count strong {
-  color: #409eff;
+  color: var(--color-primary);
 }
 </style>
