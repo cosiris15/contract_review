@@ -1,20 +1,165 @@
 import axios from 'axios'
 
+const API_BASE_URL = 'https://contract-review-z9te.onrender.com/api'
+
 const api = axios.create({
-  baseURL: 'https://contract-review-z9te.onrender.com/api',
-  timeout: 60000,
+  baseURL: API_BASE_URL,
+  timeout: 120000, // 增加到 120 秒，适应 Render 免费版冷启动
   headers: {
     'Content-Type': 'application/json'
   }
 })
 
-// 响应拦截器
-api.interceptors.response.use(
-  response => response,
+// 连接状态追踪
+export const connectionState = {
+  isConnecting: false,
+  isBackendReady: false,
+  lastError: null,
+  retryCount: 0,
+  maxRetries: 3,
+  listeners: new Set(),
+
+  notify() {
+    this.listeners.forEach(fn => fn(this.getState()))
+  },
+
+  subscribe(fn) {
+    this.listeners.add(fn)
+    return () => this.listeners.delete(fn)
+  },
+
+  getState() {
+    return {
+      isConnecting: this.isConnecting,
+      isBackendReady: this.isBackendReady,
+      lastError: this.lastError,
+      retryCount: this.retryCount
+    }
+  },
+
+  setConnecting(value) {
+    this.isConnecting = value
+    this.notify()
+  },
+
+  setBackendReady(value) {
+    this.isBackendReady = value
+    this.notify()
+  },
+
+  setError(error) {
+    this.lastError = error
+    this.notify()
+  },
+
+  clearError() {
+    this.lastError = null
+    this.notify()
+  },
+
+  incrementRetry() {
+    this.retryCount++
+    this.notify()
+    return this.retryCount <= this.maxRetries
+  },
+
+  resetRetry() {
+    this.retryCount = 0
+    this.notify()
+  }
+}
+
+// 请求拦截器 - 添加请求追踪
+api.interceptors.request.use(
+  config => {
+    console.log(`[API] 请求: ${config.method?.toUpperCase()} ${config.url}`)
+    connectionState.setConnecting(true)
+    return config
+  },
   error => {
-    const message = error.response?.data?.detail || error.message || '请求失败'
-    console.error('API Error:', message)
-    return Promise.reject(new Error(message))
+    connectionState.setConnecting(false)
+    return Promise.reject(error)
+  }
+)
+
+// 响应拦截器 - 详细错误处理
+api.interceptors.response.use(
+  response => {
+    connectionState.setConnecting(false)
+    connectionState.setBackendReady(true)
+    connectionState.clearError()
+    connectionState.resetRetry()
+    console.log(`[API] 响应成功: ${response.config.url}`)
+    return response
+  },
+  error => {
+    connectionState.setConnecting(false)
+
+    let errorInfo = {
+      type: 'unknown',
+      message: '未知错误',
+      detail: null,
+      retryable: false
+    }
+
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      errorInfo = {
+        type: 'timeout',
+        message: '请求超时，后端服务可能正在启动中',
+        detail: 'Render 免费版服务在空闲后会休眠，首次请求可能需要等待 30-60 秒',
+        retryable: true
+      }
+    } else if (error.code === 'ERR_NETWORK' || !error.response) {
+      errorInfo = {
+        type: 'network',
+        message: '网络连接失败',
+        detail: '无法连接到后端服务，请检查网络连接或稍后重试',
+        retryable: true
+      }
+    } else if (error.response) {
+      const status = error.response.status
+      const detail = error.response.data?.detail
+
+      if (status === 502 || status === 503 || status === 504) {
+        errorInfo = {
+          type: 'backend_unavailable',
+          message: '后端服务暂时不可用',
+          detail: 'Render 免费版服务正在启动，请等待 30-60 秒后重试',
+          retryable: true
+        }
+      } else if (status === 404) {
+        errorInfo = {
+          type: 'not_found',
+          message: detail || '请求的资源不存在',
+          detail: null,
+          retryable: false
+        }
+      } else if (status >= 400 && status < 500) {
+        errorInfo = {
+          type: 'client_error',
+          message: detail || '请求参数错误',
+          detail: `HTTP ${status}`,
+          retryable: false
+        }
+      } else if (status >= 500) {
+        errorInfo = {
+          type: 'server_error',
+          message: detail || '服务器内部错误',
+          detail: `HTTP ${status}`,
+          retryable: true
+        }
+      }
+    }
+
+    connectionState.setError(errorInfo)
+    console.error(`[API] 请求失败:`, errorInfo)
+
+    // 创建增强的错误对象
+    const enhancedError = new Error(errorInfo.message)
+    enhancedError.errorInfo = errorInfo
+    enhancedError.originalError = error
+
+    return Promise.reject(enhancedError)
   }
 )
 
@@ -126,6 +271,48 @@ export default {
   // 健康检查
   health() {
     return api.get('/health')
+  },
+
+  // 预热后端服务 - 带重试逻辑
+  async warmupBackend(onProgress) {
+    const maxAttempts = 5
+    const retryDelay = 3000 // 3秒
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (onProgress) {
+          onProgress({
+            attempt,
+            maxAttempts,
+            message: attempt === 1
+              ? '正在连接后端服务...'
+              : `后端服务正在启动，正在重试 (${attempt}/${maxAttempts})...`
+          })
+        }
+
+        const response = await api.get('/health', { timeout: 30000 })
+        connectionState.setBackendReady(true)
+        return { success: true, data: response.data }
+      } catch (error) {
+        console.log(`[API] 预热尝试 ${attempt}/${maxAttempts} 失败:`, error.message)
+
+        if (attempt < maxAttempts) {
+          if (onProgress) {
+            onProgress({
+              attempt,
+              maxAttempts,
+              message: `连接失败，${retryDelay/1000}秒后重试...`
+            })
+          }
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+        }
+      }
+    }
+
+    return {
+      success: false,
+      error: '无法连接到后端服务，请稍后再试或刷新页面'
+    }
   },
 
   // ==================== 标准库管理 ====================

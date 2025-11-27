@@ -1,15 +1,72 @@
 <template>
   <div class="home-view">
+    <!-- 后端连接状态提示 -->
+    <el-alert
+      v-if="backendStatus === 'connecting'"
+      type="info"
+      :closable="false"
+      show-icon
+      class="status-alert"
+    >
+      <template #title>
+        <span>
+          <el-icon class="is-loading"><Loading /></el-icon>
+          {{ connectionMessage || '正在连接后端服务...' }}
+        </span>
+      </template>
+      <template #default>
+        <span class="alert-detail">Render 免费版服务在空闲后会休眠，首次访问可能需要等待 30-60 秒</span>
+      </template>
+    </el-alert>
+
+    <el-alert
+      v-if="backendStatus === 'error'"
+      type="error"
+      :closable="false"
+      show-icon
+      class="status-alert"
+    >
+      <template #title>后端服务连接失败</template>
+      <template #default>
+        <div class="alert-content">
+          <span class="alert-detail">{{ connectionError }}</span>
+          <el-button type="primary" size="small" @click="retryConnection" :loading="isRetrying">
+            重试连接
+          </el-button>
+        </div>
+      </template>
+    </el-alert>
+
+    <el-alert
+      v-if="backendStatus === 'ready' && showSuccessAlert"
+      type="success"
+      closable
+      show-icon
+      class="status-alert"
+      @close="showSuccessAlert = false"
+    >
+      <template #title>后端服务已就绪</template>
+    </el-alert>
+
     <!-- 欢迎区域 -->
     <div class="welcome-section">
       <div class="welcome-card">
         <div class="welcome-content">
           <h1>法务文本审阅系统</h1>
           <p>使用 AI 技术从法务角度审阅合同、营销材料等文本，自动识别风险点并提供专业的修改建议。</p>
-          <el-button type="primary" size="large" @click="goToNewReview">
-            <el-icon><Plus /></el-icon>
-            新建审阅任务
+          <el-button
+            type="primary"
+            size="large"
+            @click="goToNewReview"
+            :loading="isCreatingTask"
+            :disabled="backendStatus !== 'ready'"
+          >
+            <el-icon v-if="!isCreatingTask"><Plus /></el-icon>
+            {{ isCreatingTask ? creatingTaskMessage : '新建审阅任务' }}
           </el-button>
+          <div v-if="backendStatus !== 'ready'" class="backend-hint">
+            {{ backendStatus === 'connecting' ? '等待后端服务就绪...' : '请先连接后端服务' }}
+          </div>
         </div>
         <div class="welcome-features">
           <div class="feature-item">
@@ -108,10 +165,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
@@ -119,9 +177,62 @@ const store = useReviewStore()
 const loading = ref(false)
 const tasks = ref([])
 
+// 后端连接状态
+const backendStatus = ref('unknown') // 'unknown' | 'connecting' | 'ready' | 'error'
+const connectionMessage = ref('')
+const connectionError = ref('')
+const isRetrying = ref(false)
+const showSuccessAlert = ref(false)
+let successAlertTimer = null
+
+// 任务创建状态
+const isCreatingTask = ref(false)
+const creatingTaskMessage = ref('')
+
+// 计算属性
+const isOperationInProgress = computed(() => store.isOperationInProgress)
+
 onMounted(async () => {
-  await refreshTasks()
+  // 首先检查后端连接
+  await checkBackendConnection()
 })
+
+onUnmounted(() => {
+  if (successAlertTimer) {
+    clearTimeout(successAlertTimer)
+  }
+})
+
+// 检查后端连接
+async function checkBackendConnection() {
+  backendStatus.value = 'connecting'
+  connectionMessage.value = '正在连接后端服务...'
+
+  const success = await store.checkBackendStatus((progress) => {
+    connectionMessage.value = progress.message
+  })
+
+  if (success) {
+    backendStatus.value = 'ready'
+    showSuccessAlert.value = true
+    // 3秒后自动隐藏成功提示
+    successAlertTimer = setTimeout(() => {
+      showSuccessAlert.value = false
+    }, 3000)
+    // 连接成功后加载任务列表
+    await refreshTasks()
+  } else {
+    backendStatus.value = 'error'
+    connectionError.value = store.operationError?.message || '无法连接到后端服务'
+  }
+}
+
+// 重试连接
+async function retryConnection() {
+  isRetrying.value = true
+  await checkBackendConnection()
+  isRetrying.value = false
+}
 
 async function refreshTasks() {
   loading.value = true
@@ -129,15 +240,37 @@ async function refreshTasks() {
     await store.fetchTasks()
     tasks.value = store.tasks
   } catch (error) {
-    ElMessage.error('获取任务列表失败')
+    const errorInfo = error.errorInfo
+    if (errorInfo?.retryable) {
+      ElMessage.warning({
+        message: errorInfo.message,
+        duration: 5000
+      })
+    } else {
+      ElMessage.error(errorInfo?.message || '获取任务列表失败')
+    }
   } finally {
     loading.value = false
   }
 }
 
-function goToNewReview() {
-  store.resetState()
-  router.push('/review')
+async function goToNewReview() {
+  if (backendStatus.value !== 'ready') {
+    ElMessage.warning('请等待后端服务就绪')
+    return
+  }
+
+  isCreatingTask.value = true
+  creatingTaskMessage.value = '正在准备...'
+
+  try {
+    store.resetState()
+    router.push('/review')
+  } catch (error) {
+    ElMessage.error('跳转失败，请重试')
+  } finally {
+    isCreatingTask.value = false
+  }
 }
 
 function goToTask(task) {
@@ -206,6 +339,35 @@ function formatTime(isoString) {
 .home-view {
   max-width: 1200px;
   margin: 0 auto;
+}
+
+/* 状态提示样式 */
+.status-alert {
+  margin-bottom: 16px;
+}
+
+.status-alert :deep(.el-alert__title) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alert-detail {
+  color: #909399;
+  font-size: 13px;
+}
+
+.alert-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backend-hint {
+  margin-top: 12px;
+  color: #909399;
+  font-size: 13px;
 }
 
 .welcome-section {

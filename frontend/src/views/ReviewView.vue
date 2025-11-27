@@ -1,5 +1,25 @@
 <template>
   <div class="review-view">
+    <!-- 全局操作状态提示 -->
+    <transition name="fade">
+      <div v-if="store.isOperationInProgress" class="operation-status-bar">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>{{ store.currentOperationMessage }}</span>
+      </div>
+    </transition>
+
+    <!-- 错误提示 -->
+    <el-alert
+      v-if="store.operationError && !store.isOperationInProgress"
+      type="error"
+      :title="store.operationError.message"
+      :description="store.operationError.detail"
+      show-icon
+      closable
+      class="error-alert"
+      @close="clearError"
+    />
+
     <el-row :gutter="24">
       <!-- 左侧面板：配置区 -->
       <el-col :span="10">
@@ -364,6 +384,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const route = useRoute()
@@ -549,6 +570,10 @@ function goToResult() {
   router.push(`/result/${taskId.value}`)
 }
 
+function clearError() {
+  store.operationState.lastError = null
+}
+
 // ==================== 标准库相关函数 ====================
 
 // 获取文档内容（用于推荐）
@@ -717,6 +742,40 @@ watch(standardTab, (newTab) => {
 .review-view {
   max-width: 1400px;
   margin: 0 auto;
+}
+
+/* 操作状态提示栏 */
+.operation-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  font-size: 14px;
+  box-shadow: 0 2px 12px rgba(102, 126, 234, 0.4);
+}
+
+.operation-status-bar .el-icon {
+  font-size: 18px;
+}
+
+.error-alert {
+  margin-bottom: 16px;
+}
+
+/* 过渡动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
 }
 
 .config-card,

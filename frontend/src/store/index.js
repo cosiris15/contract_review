@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import api from '@/api'
+import api, { connectionState } from '@/api'
 
 export const useReviewStore = defineStore('review', {
   state: () => ({
@@ -13,7 +13,23 @@ export const useReviewStore = defineStore('review', {
       percentage: 0,
       message: ''
     },
-    pollTimer: null
+    pollTimer: null,
+
+    // 新增：详细的操作状态追踪
+    operationState: {
+      // 当前正在进行的操作
+      currentOperation: null, // 'creating_task' | 'loading_tasks' | 'uploading_document' | 'uploading_standard' | 'starting_review' | null
+      // 操作开始时间（用于显示耗时）
+      operationStartTime: null,
+      // 操作进度消息
+      operationMessage: '',
+      // 是否正在加载
+      isLoading: false,
+      // 最后一次错误
+      lastError: null,
+      // 后端连接状态
+      backendStatus: 'unknown' // 'unknown' | 'connecting' | 'ready' | 'error'
+    }
   }),
 
   getters: {
@@ -26,108 +42,193 @@ export const useReviewStore = defineStore('review', {
              state.currentTask.status !== 'reviewing'
     },
     isCompleted: (state) => state.currentTask?.status === 'completed',
-    isFailed: (state) => state.currentTask?.status === 'failed'
+    isFailed: (state) => state.currentTask?.status === 'failed',
+
+    // 新增 getters
+    isOperationInProgress: (state) => state.operationState.isLoading,
+    currentOperationMessage: (state) => state.operationState.operationMessage,
+    operationError: (state) => state.operationState.lastError,
+    isBackendReady: (state) => state.operationState.backendStatus === 'ready'
   },
 
   actions: {
+    // 辅助方法：开始操作
+    _startOperation(operation, message) {
+      this.operationState.currentOperation = operation
+      this.operationState.operationStartTime = Date.now()
+      this.operationState.operationMessage = message
+      this.operationState.isLoading = true
+      this.operationState.lastError = null
+    },
+
+    // 辅助方法：结束操作
+    _endOperation(error = null) {
+      this.operationState.currentOperation = null
+      this.operationState.operationStartTime = null
+      this.operationState.operationMessage = ''
+      this.operationState.isLoading = false
+      if (error) {
+        this.operationState.lastError = error.errorInfo || {
+          type: 'unknown',
+          message: error.message || '操作失败',
+          detail: null
+        }
+      }
+    },
+
+    // 辅助方法：更新操作消息
+    _updateOperationMessage(message) {
+      this.operationState.operationMessage = message
+    },
+
+    // 检查后端连接状态
+    async checkBackendStatus(onProgress) {
+      this.operationState.backendStatus = 'connecting'
+      this._startOperation('checking_backend', '正在检查后端服务状态...')
+
+      const result = await api.warmupBackend(onProgress)
+
+      if (result.success) {
+        this.operationState.backendStatus = 'ready'
+        this._endOperation()
+        return true
+      } else {
+        this.operationState.backendStatus = 'error'
+        this._endOperation({ message: result.error })
+        return false
+      }
+    },
+
     async fetchTasks() {
+      this._startOperation('loading_tasks', '正在加载任务列表...')
       try {
         const response = await api.getTasks()
         this.tasks = response.data
+        this._endOperation()
       } catch (error) {
         console.error('获取任务列表失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async fetchTemplates() {
+      this._startOperation('loading_templates', '正在加载审核模板...')
       try {
         const response = await api.getTemplates()
         this.templates = response.data
+        this._endOperation()
       } catch (error) {
         console.error('获取模板列表失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async createTask(payload) {
+      this._startOperation('creating_task', '正在创建审阅任务...')
       try {
         const response = await api.createTask(payload)
         this.currentTask = response.data
+        this._updateOperationMessage('任务创建成功，正在刷新任务列表...')
         await this.fetchTasks()
+        this._endOperation()
         return response.data
       } catch (error) {
         console.error('创建任务失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async loadTask(taskId) {
+      this._startOperation('loading_task', '正在加载任务详情...')
       try {
         const response = await api.getTask(taskId)
         this.currentTask = response.data
+        this._endOperation()
         return response.data
       } catch (error) {
         console.error('加载任务失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async deleteTask(taskId) {
+      this._startOperation('deleting_task', '正在删除任务...')
       try {
         await api.deleteTask(taskId)
         if (this.currentTask?.id === taskId) {
           this.currentTask = null
         }
         await this.fetchTasks()
+        this._endOperation()
       } catch (error) {
         console.error('删除任务失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async uploadDocument(taskId, file) {
+      this._startOperation('uploading_document', `正在上传文档: ${file.name}...`)
       try {
         await api.uploadDocument(taskId, file)
+        this._updateOperationMessage('上传成功，正在刷新任务状态...')
         await this.loadTask(taskId)
+        this._endOperation()
       } catch (error) {
         console.error('上传文档失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async uploadStandard(taskId, file) {
+      this._startOperation('uploading_standard', `正在上传审核标准: ${file.name}...`)
       try {
         await api.uploadStandard(taskId, file)
+        this._updateOperationMessage('上传成功，正在刷新任务状态...')
         await this.loadTask(taskId)
+        this._endOperation()
       } catch (error) {
         console.error('上传审核标准失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async useTemplate(taskId, templateName) {
+      this._startOperation('applying_template', `正在应用模板: ${templateName}...`)
       try {
         await api.useTemplate(taskId, templateName)
+        this._updateOperationMessage('模板应用成功，正在刷新任务状态...')
         await this.loadTask(taskId)
+        this._endOperation()
       } catch (error) {
         console.error('应用模板失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
 
     async startReview(taskId) {
+      this._startOperation('starting_review', '正在启动审阅任务...')
       try {
         this.isReviewing = true
         this.progress = { stage: 'analyzing', percentage: 0, message: '正在启动...' }
 
         await api.startReview(taskId)
+        this._updateOperationMessage('审阅任务已启动，正在处理中...')
+        this._endOperation()
 
         // 开始轮询进度
         this.startPolling(taskId)
       } catch (error) {
         this.isReviewing = false
         console.error('启动审阅失败:', error)
+        this._endOperation(error)
         throw error
       }
     },
