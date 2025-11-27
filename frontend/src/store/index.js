@@ -292,18 +292,38 @@ export const useReviewStore = defineStore('review', {
     async updateModification(taskId, modificationId, updates) {
       try {
         await api.updateModification(taskId, modificationId, updates)
-        // 重新加载结果
-        await this.loadResult(taskId)
+        // 本地更新，避免重新加载覆盖UI状态
+        if (this.reviewResult?.modifications) {
+          const mod = this.reviewResult.modifications.find(m => m.id === modificationId)
+          if (mod) {
+            if (updates.user_modified_text !== undefined) {
+              mod.user_modified_text = updates.user_modified_text
+            }
+            if (updates.user_confirmed !== undefined) {
+              mod.user_confirmed = updates.user_confirmed
+            }
+          }
+        }
       } catch (error) {
         console.error('更新修改建议失败:', error)
         throw error
       }
     },
 
-    async updateAction(taskId, actionId, confirmed) {
+    async updateAction(taskId, actionId, updates) {
       try {
-        await api.updateAction(taskId, actionId, confirmed)
-        await this.loadResult(taskId)
+        await api.updateAction(taskId, actionId, updates)
+        // 本地更新，避免重新加载
+        if (this.reviewResult?.actions) {
+          const action = this.reviewResult.actions.find(a => a.id === actionId)
+          if (action) {
+            if (typeof updates === 'object') {
+              Object.assign(action, updates)
+            } else if (typeof updates === 'boolean') {
+              action.user_confirmed = updates
+            }
+          }
+        }
       } catch (error) {
         console.error('更新行动建议失败:', error)
         throw error

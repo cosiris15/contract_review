@@ -166,6 +166,15 @@ class UpdateModificationRequest(BaseModel):
     user_modified_text: Optional[str] = None
 
 
+class UpdateActionRequest(BaseModel):
+    user_confirmed: Optional[bool] = None
+    description: Optional[str] = None
+    action_type: Optional[str] = None
+    urgency: Optional[str] = None
+    responsible_party: Optional[str] = None
+    deadline_suggestion: Optional[str] = None
+
+
 class TemplateInfo(BaseModel):
     name: str
     filename: str
@@ -537,8 +546,13 @@ async def update_modification(
 
 
 @app.patch("/api/tasks/{task_id}/result/actions/{action_id}")
-async def update_action(task_id: str, action_id: str, user_confirmed: bool):
-    """更新行动建议状态"""
+async def update_action(
+    task_id: str,
+    action_id: str,
+    request: UpdateActionRequest = None,
+    user_confirmed: Optional[bool] = Query(None)  # 保持向后兼容
+):
+    """更新行动建议（支持编辑所有字段）"""
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -553,7 +567,23 @@ async def update_action(task_id: str, action_id: str, user_confirmed: bool):
     found = False
     for action in result.actions:
         if action.id == action_id:
-            action.user_confirmed = user_confirmed
+            # 支持旧的query参数方式（向后兼容）
+            if user_confirmed is not None:
+                action.user_confirmed = user_confirmed
+            # 支持新的body方式
+            if request:
+                if request.user_confirmed is not None:
+                    action.user_confirmed = request.user_confirmed
+                if request.description is not None:
+                    action.description = request.description
+                if request.action_type is not None:
+                    action.action_type = request.action_type
+                if request.urgency is not None:
+                    action.urgency = request.urgency
+                if request.responsible_party is not None:
+                    action.responsible_party = request.responsible_party
+                if request.deadline_suggestion is not None:
+                    action.deadline_suggestion = request.deadline_suggestion
             found = True
             break
 
@@ -707,7 +737,7 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
         redline_result = generate_redline_document(
             docx_path=doc_path,
             modifications=modifications,
-            author="AI审阅助手",
+            author="十行助理",
             filter_confirmed=filter_confirmed,
             actions=result.actions if include_comments else None,
             risks=result.risks if include_comments else None,

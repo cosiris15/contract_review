@@ -270,7 +270,7 @@ class RedlineGenerator:
     def apply_modifications(
         self,
         modifications: List[ModificationSuggestion],
-        author: str = "AI审阅助手",
+        author: str = "十行助理",
         filter_confirmed: bool = True,
     ) -> RedlineResult:
         """
@@ -785,7 +785,7 @@ class RedlineGenerator:
         self,
         actions: List[ActionRecommendation],
         risks: List[RiskPoint],
-        author: str = "AI审阅助手",
+        author: str = "十行助理",
         initials: str = "AI",
         filter_confirmed: bool = True,
     ) -> Tuple[int, int, List[str]]:
@@ -1109,7 +1109,7 @@ class RedlineGenerator:
 def generate_redline_document(
     docx_path: Path,
     modifications: List[ModificationSuggestion],
-    author: str = "AI审阅助手",
+    author: str = "十行助理",
     filter_confirmed: bool = True,
     actions: Optional[List[ActionRecommendation]] = None,
     risks: Optional[List[RiskPoint]] = None,

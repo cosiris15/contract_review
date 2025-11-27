@@ -222,10 +222,15 @@ export default {
     return api.patch(`/tasks/${taskId}/result/modifications/${modificationId}`, data)
   },
 
-  updateAction(taskId, actionId, confirmed) {
-    return api.patch(`/tasks/${taskId}/result/actions/${actionId}`, null, {
-      params: { user_confirmed: confirmed }
-    })
+  updateAction(taskId, actionId, updates) {
+    // 如果只是boolean，保持向后兼容
+    if (typeof updates === 'boolean') {
+      return api.patch(`/tasks/${taskId}/result/actions/${actionId}`, null, {
+        params: { user_confirmed: updates }
+      })
+    }
+    // 否则发送完整的更新对象
+    return api.patch(`/tasks/${taskId}/result/actions/${actionId}`, updates)
   },
 
   // 导出

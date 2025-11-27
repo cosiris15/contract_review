@@ -275,12 +275,20 @@
                     v-else-if="!getModUIState(mod.id).isEditing"
                     class="text-box suggested"
                   >{{ getModUIState(mod.id).editText || mod.suggested_text }}</div>
-                  <el-input
-                    v-else
-                    type="textarea"
-                    :rows="4"
-                    v-model="getModUIState(mod.id).editText"
-                  />
+                  <template v-else>
+                    <el-input
+                      type="textarea"
+                      :rows="4"
+                      v-model="getModUIState(mod.id).editText"
+                    />
+                    <!-- 编辑时的实时diff预览 -->
+                    <div
+                      v-if="getModUIState(mod.id).showDiff"
+                      class="text-box diff-view suggested preview-box"
+                      v-html="getDiffHtml(mod).modifiedHtml"
+                      style="margin-top: 8px; opacity: 0.9; font-size: 12px;"
+                    ></div>
+                  </template>
                 </el-col>
               </el-row>
             </el-card>
@@ -312,12 +320,16 @@
                 {{ row.deadline_suggestion || '-' }}
               </template>
             </el-table-column>
-            <el-table-column label="确认" width="80" align="center">
+            <el-table-column label="操作" width="130" align="center">
               <template #default="{ row }">
                 <el-checkbox
                   v-model="row.user_confirmed"
                   @change="(val) => updateAction(row, val)"
-                />
+                  style="margin-right: 8px;"
+                >确认</el-checkbox>
+                <el-button type="primary" link size="small" @click="openActionEditDialog(row)">
+                  编辑
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -325,6 +337,53 @@
         </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <!-- 行动建议编辑弹窗 -->
+    <el-dialog
+      v-model="actionEditDialogVisible"
+      title="编辑行动建议"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="actionEditForm" label-width="80px">
+        <el-form-item label="具体行动">
+          <el-input
+            v-model="actionEditForm.description"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入具体行动描述"
+          />
+        </el-form-item>
+        <el-form-item label="行动类型">
+          <el-select v-model="actionEditForm.action_type" style="width: 100%">
+            <el-option label="沟通协商" value="沟通协商" />
+            <el-option label="补充材料" value="补充材料" />
+            <el-option label="法务确认" value="法务确认" />
+            <el-option label="内部审批" value="内部审批" />
+            <el-option label="核实信息" value="核实信息" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="紧急程度">
+          <el-select v-model="actionEditForm.urgency" style="width: 100%">
+            <el-option label="立即处理" value="immediate" />
+            <el-option label="尽快处理" value="soon" />
+            <el-option label="一般" value="normal" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="负责方">
+          <el-input v-model="actionEditForm.responsible_party" placeholder="请输入负责方" />
+        </el-form-item>
+        <el-form-item label="建议时限">
+          <el-input v-model="actionEditForm.deadline_suggestion" placeholder="如：签署前、3个工作日内" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="actionEditDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveActionFromDialog" :loading="actionSaving">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -351,6 +410,18 @@ const includeComments = ref(false)
 
 // 独立存储 UI 状态，不受 store 重载影响
 const modificationUIStates = ref({}) // { modId: { showDiff: true, isEditing: false, editText: '' } }
+
+// 行动建议编辑弹窗状态
+const actionEditDialogVisible = ref(false)
+const actionSaving = ref(false)
+const editingActionId = ref(null)
+const actionEditForm = ref({
+  description: '',
+  action_type: '',
+  urgency: 'normal',
+  responsible_party: '',
+  deadline_suggestion: ''
+})
 
 const result = computed(() => store.reviewResult)
 const summary = computed(() => result.value?.summary || {
@@ -626,11 +697,21 @@ function getDiffHtml(mod) {
 async function saveModification(mod) {
   const uiState = getModUIState(mod.id)
   try {
-    await store.updateModification(taskId.value, mod.id, { user_modified_text: uiState.editText })
+    // 同时更新文本和确认状态（编辑后自动确认）
+    await store.updateModification(taskId.value, mod.id, {
+      user_modified_text: uiState.editText,
+      user_confirmed: true
+    })
     uiState.isEditing = false
+    // 同步更新本地状态
+    mod.user_confirmed = true
+    mod.user_modified_text = uiState.editText
     ElMessage.success('保存成功')
+    // 刷新 Redline 预览
+    loadRedlinePreview()
   } catch (error) {
-    ElMessage.error('保存失败')
+    console.error('保存失败详情:', error)
+    ElMessage.error('保存失败: ' + (error?.response?.data?.detail || error.message || '请检查网络连接'))
   }
 }
 
@@ -655,6 +736,44 @@ async function updateAction(action, confirmed) {
     // 如果失败，回滚 UI 状态
     action.user_confirmed = !confirmed
     ElMessage.error('更新失败')
+  }
+}
+
+// 打开行动建议编辑弹窗
+function openActionEditDialog(action) {
+  editingActionId.value = action.id
+  actionEditForm.value = {
+    description: action.description || '',
+    action_type: action.action_type || '',
+    urgency: action.urgency || 'normal',
+    responsible_party: action.responsible_party || '',
+    deadline_suggestion: action.deadline_suggestion || ''
+  }
+  actionEditDialogVisible.value = true
+}
+
+// 保存行动建议编辑
+async function saveActionFromDialog() {
+  actionSaving.value = true
+  try {
+    await store.updateAction(taskId.value, editingActionId.value, {
+      ...actionEditForm.value,
+      user_confirmed: true  // 编辑后自动确认
+    })
+    // 更新本地数据
+    const action = result.value?.actions?.find(a => a.id === editingActionId.value)
+    if (action) {
+      Object.assign(action, actionEditForm.value)
+      action.user_confirmed = true
+    }
+    actionEditDialogVisible.value = false
+    ElMessage.success('保存成功')
+    loadRedlinePreview()
+  } catch (error) {
+    console.error('保存失败详情:', error)
+    ElMessage.error('保存失败: ' + (error?.response?.data?.detail || error.message || '请检查网络连接'))
+  } finally {
+    actionSaving.value = false
   }
 }
 
