@@ -100,6 +100,20 @@ export default {
     return `https://contract-review-z9te.onrender.com/api/tasks/${taskId}/export/report`
   },
 
+  // Redline 导出
+  exportRedline(taskId, modificationIds = null, includeComments = false) {
+    return api.post(`/tasks/${taskId}/export/redline`, {
+      modification_ids: modificationIds,
+      include_comments: includeComments
+    }, {
+      responseType: 'blob'
+    })
+  },
+
+  getRedlinePreview(taskId) {
+    return api.get(`/tasks/${taskId}/export/redline/preview`)
+  },
+
   // 模板
   getTemplates() {
     return api.get('/templates')

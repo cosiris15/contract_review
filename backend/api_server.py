@@ -30,6 +30,7 @@ from src.contract_review.models import (
 from src.contract_review.result_formatter import ResultFormatter, generate_summary_report
 from src.contract_review.review_engine import ReviewEngine
 from src.contract_review.standard_library import StandardLibraryManager
+from src.contract_review.redline_generator import generate_redline_document
 from src.contract_review.standard_parser import parse_standard_file
 from src.contract_review.storage import StorageManager
 from src.contract_review.tasks import TaskManager
@@ -602,6 +603,160 @@ async def export_report(task_id: str):
             "Content-Disposition": f'attachment; filename="review_report_{task_id}.md"'
         },
     )
+
+
+class ExportRedlineRequest(BaseModel):
+    """导出 Redline 文档请求"""
+    modification_ids: Optional[List[str]] = None  # 要应用的修改 ID，空则使用已确认的
+    include_comments: bool = False  # 是否将行动建议作为批注添加
+
+
+@app.post("/api/tasks/{task_id}/export/redline")
+async def export_redline(task_id: str, request: ExportRedlineRequest = None):
+    """
+    导出带修订标记的 Word 文档
+
+    将用户确认的修改建议以 Track Changes 形式应用到原始文档。
+    可选择将行动建议作为批注添加到对应风险点位置。
+    只支持 .docx 格式的原始文档。
+    """
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 检查原始文档
+    doc_path = task_manager.get_document_path(task_id)
+    if not doc_path:
+        raise HTTPException(status_code=400, detail="未找到原始文档")
+
+    if doc_path.suffix.lower() != '.docx':
+        raise HTTPException(
+            status_code=400,
+            detail=f"Redline 导出只支持 .docx 格式，当前文档格式为 {doc_path.suffix}"
+        )
+
+    # 获取审阅结果
+    task_dir = settings.review.tasks_dir / task_id
+    result = storage_manager.load_result(task_dir)
+
+    if not result:
+        raise HTTPException(status_code=404, detail="暂无审阅结果")
+
+    # 筛选要应用的修改
+    if request and request.modification_ids:
+        # 使用指定的修改 ID
+        modifications = [
+            m for m in result.modifications
+            if m.id in request.modification_ids
+        ]
+        filter_confirmed = False
+    else:
+        # 使用已确认的修改
+        modifications = result.modifications
+        filter_confirmed = True
+
+    # 是否包含批注
+    include_comments = request.include_comments if request else False
+
+    # 检查是否有内容可导出
+    confirmed_mods = [m for m in modifications if m.user_confirmed] if filter_confirmed else modifications
+    has_actions = bool(result.actions) if include_comments else False
+
+    if not confirmed_mods and not has_actions:
+        raise HTTPException(status_code=400, detail="没有已确认的修改建议或行动建议")
+
+    # 生成 Redline 文档
+    redline_result = generate_redline_document(
+        docx_path=doc_path,
+        modifications=modifications,
+        author="AI审阅助手",
+        filter_confirmed=filter_confirmed,
+        actions=result.actions if include_comments else None,
+        risks=result.risks if include_comments else None,
+        include_comments=include_comments,
+    )
+
+    if not redline_result.success:
+        error_msg = "; ".join(redline_result.skipped_reasons[:3])
+        raise HTTPException(
+            status_code=400,
+            detail=f"生成 Redline 文档失败: {error_msg}"
+        )
+
+    # 生成文件名
+    original_name = doc_path.stem
+    filename = f"{original_name}_redline.docx"
+
+    logger.info(
+        f"任务 {task_id} 导出 Redline: 应用 {redline_result.applied_count} 条修改，"
+        f"添加 {redline_result.comments_added} 条批注，"
+        f"跳过 {redline_result.skipped_count + redline_result.comments_skipped} 条"
+    )
+
+    return Response(
+        content=redline_result.document_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Redline-Applied": str(redline_result.applied_count),
+            "X-Redline-Skipped": str(redline_result.skipped_count),
+            "X-Comments-Added": str(redline_result.comments_added),
+            "X-Comments-Skipped": str(redline_result.comments_skipped),
+        },
+    )
+
+
+@app.get("/api/tasks/{task_id}/export/redline/preview")
+async def preview_redline(task_id: str):
+    """
+    预览 Redline 导出信息
+
+    返回可以导出的修改建议数量、行动建议数量和状态。
+    """
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 检查原始文档格式
+    doc_path = task_manager.get_document_path(task_id)
+    can_export = doc_path and doc_path.suffix.lower() == '.docx'
+
+    # 获取审阅结果
+    task_dir = settings.review.tasks_dir / task_id
+    result = storage_manager.load_result(task_dir)
+
+    if not result:
+        return {
+            "can_export": False,
+            "reason": "暂无审阅结果",
+            "total_modifications": 0,
+            "confirmed_modifications": 0,
+            "total_actions": 0,
+        }
+
+    confirmed_count = sum(1 for m in result.modifications if m.user_confirmed)
+    actions_count = len(result.actions) if result.actions else 0
+
+    # 检查有多少行动建议可以作为批注（有关联风险点且风险点有原文）
+    commentable_actions = 0
+    if result.actions and result.risks:
+        risk_map = {r.id: r for r in result.risks}
+        for action in result.actions:
+            for risk_id in action.related_risk_ids:
+                risk = risk_map.get(risk_id)
+                if risk and risk.location and risk.location.original_text:
+                    commentable_actions += 1
+                    break
+
+    return {
+        "can_export": can_export and (confirmed_count > 0 or commentable_actions > 0),
+        "reason": None if can_export else "原始文档不是 .docx 格式",
+        "total_modifications": len(result.modifications),
+        "confirmed_modifications": confirmed_count,
+        "total_actions": actions_count,
+        "commentable_actions": commentable_actions,
+        "document_format": doc_path.suffix.lower() if doc_path else None,
+    }
 
 
 # ==================== 模板 API ====================

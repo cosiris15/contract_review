@@ -15,6 +15,14 @@
         </div>
       </div>
       <div class="header-actions">
+        <el-button
+          type="success"
+          @click="showRedlineDialog = true"
+          :disabled="!canExportRedline"
+        >
+          <el-icon><EditPen /></el-icon>
+          导出修订版 Word
+        </el-button>
         <el-dropdown @command="handleExport">
           <el-button type="primary">
             <el-icon><Download /></el-icon>
@@ -32,6 +40,74 @@
         </el-dropdown>
       </div>
     </div>
+
+    <!-- Redline 导出对话框 -->
+    <el-dialog
+      v-model="showRedlineDialog"
+      title="导出修订版 Word"
+      width="500px"
+    >
+      <div class="redline-dialog-content">
+        <el-alert
+          v-if="!redlinePreview?.can_export && redlinePreview?.reason"
+          :title="redlinePreview.reason"
+          type="warning"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 16px;"
+        />
+
+        <div class="export-option">
+          <div class="option-header">
+            <el-icon><Document /></el-icon>
+            <span>修改建议（修订标记）</span>
+          </div>
+          <div class="option-desc">
+            将已确认的修改建议以删除线和插入标记形式显示
+          </div>
+          <div class="option-count">
+            已确认 <strong>{{ confirmedCount }}</strong> 条 / 共 {{ redlinePreview?.total_modifications || 0 }} 条
+          </div>
+        </div>
+
+        <el-divider />
+
+        <div class="export-option">
+          <div class="option-header">
+            <el-checkbox v-model="includeComments" :disabled="!hasCommentableActions">
+              <el-icon><ChatLineSquare /></el-icon>
+              <span>行动建议（批注）</span>
+            </el-checkbox>
+          </div>
+          <div class="option-desc">
+            将行动建议作为批注添加到对应风险点的文本位置
+          </div>
+          <div class="option-count" v-if="redlinePreview">
+            可添加 <strong>{{ redlinePreview.commentable_actions || 0 }}</strong> 条批注 / 共 {{ redlinePreview.total_actions || 0 }} 条行动建议
+          </div>
+          <el-alert
+            v-if="redlinePreview?.total_actions > 0 && redlinePreview?.commentable_actions === 0"
+            title="行动建议未关联风险点原文，无法生成批注"
+            type="info"
+            show-icon
+            :closable="false"
+            style="margin-top: 8px;"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="showRedlineDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          @click="handleExportRedline"
+          :loading="redlineExporting"
+          :disabled="confirmedCount === 0 && (!includeComments || !hasCommentableActions)"
+        >
+          导出
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 统计卡片 -->
     <el-row :gutter="16" class="stat-cards">
@@ -216,6 +292,12 @@ const loading = ref(false)
 const activeTab = ref('risks')
 const taskId = computed(() => route.params.taskId)
 
+// Redline 相关
+const redlineExporting = ref(false)
+const redlinePreview = ref(null)
+const showRedlineDialog = ref(false)
+const includeComments = ref(false)
+
 const result = computed(() => store.reviewResult)
 const summary = computed(() => result.value?.summary || {
   total_risks: 0,
@@ -233,6 +315,25 @@ const materialTypeText = computed(() => {
   return result.value?.material_type === 'contract' ? '合同' : '营销材料'
 })
 
+// 已确认的修改建议数量
+const confirmedCount = computed(() => {
+  if (!result.value?.modifications) return 0
+  return result.value.modifications.filter(m => m.user_confirmed).length
+})
+
+// 是否有可添加批注的行动建议
+const hasCommentableActions = computed(() => {
+  return redlinePreview.value?.commentable_actions > 0
+})
+
+// 是否可以导出 Redline
+const canExportRedline = computed(() => {
+  // 需要有已确认的修改或可批注的行动建议，且原文档为 docx 格式
+  if (redlinePreview.value && !redlinePreview.value.can_export) return false
+  if (confirmedCount.value === 0 && !hasCommentableActions.value) return false
+  return true
+})
+
 onMounted(async () => {
   if (taskId.value) {
     loading.value = true
@@ -244,6 +345,8 @@ onMounted(async () => {
           mod.editText = mod.user_modified_text || mod.suggested_text
         })
       }
+      // 获取 Redline 预览信息
+      await loadRedlinePreview()
     } catch (error) {
       ElMessage.error('加载结果失败')
     } finally {
@@ -251,6 +354,15 @@ onMounted(async () => {
     }
   }
 })
+
+async function loadRedlinePreview() {
+  try {
+    const res = await api.getRedlinePreview(taskId.value)
+    redlinePreview.value = res.data
+  } catch (error) {
+    console.error('获取 Redline 预览失败:', error)
+  }
+}
 
 function goBack() {
   router.push('/')
@@ -326,6 +438,54 @@ function handleExport(command) {
     window.open(url, '_blank')
   }
 }
+
+async function handleExportRedline() {
+  redlineExporting.value = true
+  try {
+    const res = await api.exportRedline(taskId.value, null, includeComments.value)
+
+    // 从响应头获取文件名
+    const contentDisposition = res.headers['content-disposition']
+    let filename = 'document_redline.docx'
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename="?([^"]+)"?/)
+      if (match) filename = match[1]
+    }
+
+    // 创建下载链接
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    // 显示成功信息
+    const applied = res.headers['x-redline-applied'] || 0
+    const commentsAdded = res.headers['x-comments-added'] || 0
+    let message = '导出成功！'
+    if (applied > 0) {
+      message += `已应用 ${applied} 条修改`
+    }
+    if (commentsAdded > 0) {
+      message += `${applied > 0 ? '，' : ''}添加 ${commentsAdded} 条批注`
+    }
+    ElMessage.success(message)
+
+    // 关闭对话框
+    showRedlineDialog.value = false
+  } catch (error) {
+    console.error('导出 Redline 失败:', error)
+    ElMessage.error(error.message || '导出失败，请重试')
+  } finally {
+    redlineExporting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -357,6 +517,12 @@ function handleExport(command) {
   gap: 16px;
   color: #909399;
   font-size: 14px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .stat-cards {
@@ -452,5 +618,45 @@ function handleExport(command) {
 .text-box.original {
   color: #909399;
   text-decoration: line-through;
+}
+
+/* Redline 导出对话框样式 */
+.redline-dialog-content {
+  padding: 8px 0;
+}
+
+.export-option {
+  padding: 12px 0;
+}
+
+.option-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.option-header .el-icon {
+  color: #409eff;
+}
+
+.option-desc {
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 8px;
+  padding-left: 24px;
+}
+
+.option-count {
+  font-size: 13px;
+  color: #606266;
+  padding-left: 24px;
+}
+
+.option-count strong {
+  color: #409eff;
 }
 </style>
