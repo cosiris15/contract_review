@@ -458,8 +458,13 @@ async def use_template(task_id: str, template_name: str = Query(...)):
 
 # ==================== 审阅执行 API ====================
 
-async def run_review(task_id: str):
-    """后台执行审阅任务"""
+async def run_review(task_id: str, llm_provider: str = "deepseek"):
+    """后台执行审阅任务
+
+    Args:
+        task_id: 任务 ID
+        llm_provider: LLM 提供者，可选 "deepseek" 或 "gemini"
+    """
     task = task_manager.get_task(task_id)
     if not task:
         return
@@ -490,8 +495,8 @@ async def run_review(task_id: str):
             task.update_progress(stage, percentage, message)
             task_manager.update_task(task)
 
-        # 执行审阅
-        engine = ReviewEngine(settings)
+        # 执行审阅（根据 llm_provider 选择模型）
+        engine = ReviewEngine(settings, llm_provider=llm_provider)
         result = await engine.review_document(
             document=document,
             standards=standard_set.standards,
@@ -520,8 +525,17 @@ async def run_review(task_id: str):
 
 
 @app.post("/api/tasks/{task_id}/review")
-async def start_review(task_id: str, background_tasks: BackgroundTasks):
-    """开始审阅"""
+async def start_review(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    llm_provider: str = Query(default="deepseek", regex="^(deepseek|gemini)$"),
+):
+    """开始审阅
+
+    Args:
+        task_id: 任务 ID
+        llm_provider: LLM 提供者，可选 "deepseek"（初级）或 "gemini"（高级）
+    """
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -535,8 +549,12 @@ async def start_review(task_id: str, background_tasks: BackgroundTasks):
     if not task.standard_filename:
         raise HTTPException(status_code=400, detail="请先上传审核标准")
 
-    # 启动后台任务
-    background_tasks.add_task(run_review, task_id)
+    # 如果选择 Gemini，检查 API Key 是否配置
+    if llm_provider == "gemini" and not settings.gemini.api_key:
+        raise HTTPException(status_code=400, detail="高级智能模式未配置，请联系管理员")
+
+    # 启动后台任务，传递 llm_provider 参数
+    background_tasks.add_task(run_review, task_id, llm_provider)
 
     task.update_status("reviewing", "审阅任务已启动")
     task.update_progress("analyzing", 0, "正在启动...")

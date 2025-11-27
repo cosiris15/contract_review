@@ -199,9 +199,9 @@
                       @click="mergeSpecialRequirements"
                     >
                       <el-icon><MagicStick /></el-icon>
-                      整合到标准
+                      整合到本次审核
                     </el-button>
-                    <span class="special-tip">AI 将根据特殊要求调整审核标准</span>
+                    <span class="special-tip">AI 将根据特殊要求调整本次审核使用的标准（不影响标准库）</span>
                   </div>
                 </div>
               </el-collapse-transition>
@@ -293,7 +293,7 @@
                     <div class="collection-info">
                       <span class="collection-name">{{ collection.name }}</span>
                       <span class="collection-meta">
-                        <el-tag size="small" type="info">{{ collection.standard_count }} 条风险点</el-tag>
+                        <el-tag size="small" type="info">{{ collection.standard_count }} 条审核条目</el-tag>
                         <el-tag v-if="collection.is_preset" size="small" type="success">预设</el-tag>
                       </span>
                     </div>
@@ -314,7 +314,7 @@
               <!-- 当前选择状态 -->
               <div v-if="selectedCollection" class="selection-summary">
                 <el-icon><InfoFilled /></el-icon>
-                <span>已选择「{{ selectedCollection.name }}」，共 {{ selectedCollection.standard_count }} 条风险点</span>
+                <span>已选择「{{ selectedCollection.name }}」，共 {{ selectedCollection.standard_count }} 条审核条目</span>
               </div>
             </div>
 
@@ -989,7 +989,7 @@ function applyMergedStandards() {
 
   showMergePreview.value = false
   mergeResult.value = null
-  ElMessage.success('已应用整合后的标准')
+  ElMessage.success('已应用到本次审核')
 }
 
 // 应用选中的标准到任务

@@ -20,9 +20,22 @@
             </nav>
           </div>
           <div class="header-right">
+            <!-- 设置按钮 -->
+            <el-tooltip content="设置" placement="bottom">
+              <el-button
+                text
+                class="settings-btn"
+                @click="settingsStore.openSettingsDrawer"
+              >
+                <el-icon :size="18"><Tools /></el-icon>
+              </el-button>
+            </el-tooltip>
             <el-tag type="info" effect="plain" size="small" class="version-tag">v1.0.0</el-tag>
           </div>
         </el-header>
+
+        <!-- 设置抽屉 -->
+        <SettingsDrawer />
         <el-main class="app-main">
           <router-view />
         </el-main>
@@ -32,8 +45,18 @@
 </template>
 
 <script setup>
+import { onMounted } from 'vue'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
-import { HomeFilled, Setting } from '@element-plus/icons-vue'
+import { HomeFilled, Setting, Tools } from '@element-plus/icons-vue'
+import SettingsDrawer from '@/components/common/SettingsDrawer.vue'
+import { useSettingsStore } from '@/store/settings'
+
+const settingsStore = useSettingsStore()
+
+// 初始化设置（从 localStorage 加载）
+onMounted(() => {
+  settingsStore.init()
+})
 </script>
 
 <style>
@@ -133,6 +156,17 @@ html, body {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.settings-btn {
+  padding: 8px;
+  border-radius: 6px;
+  color: #606266;
+}
+
+.settings-btn:hover {
+  background-color: #f0f5ff;
+  color: #2563eb;
 }
 
 .version-tag {

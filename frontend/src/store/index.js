@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import api, { connectionState } from '@/api'
+import { useSettingsStore } from './settings'
 
 export const useReviewStore = defineStore('review', {
   state: () => ({
@@ -219,7 +220,11 @@ export const useReviewStore = defineStore('review', {
         this.isReviewing = true
         this.progress = { stage: 'analyzing', percentage: 0, message: '正在启动...' }
 
-        await api.startReview(taskId)
+        // 获取设置 Store 中的 LLM 提供者
+        const settingsStore = useSettingsStore()
+        const llmProvider = settingsStore.llmProvider
+
+        await api.startReview(taskId, llmProvider)
         this._updateOperationMessage('审阅任务已启动，正在处理中...')
         this._endOperation()
 

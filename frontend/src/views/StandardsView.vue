@@ -6,7 +6,7 @@
       <div class="page-header">
         <div class="header-left">
           <h1>审核标准管理</h1>
-          <p class="subtitle">管理审核标准集，每套标准包含若干风险点</p>
+          <p class="subtitle">管理审核标准，每套标准包含若干审核条目</p>
         </div>
         <div class="header-actions">
           <el-dropdown trigger="click" @command="handleNewStandardCommand">
@@ -86,7 +86,7 @@
               </div>
               <div class="collection-desc">{{ col.description || '暂无描述' }}</div>
               <div class="collection-meta">
-                <span>{{ col.standard_count }} 条风险点</span>
+                <span>{{ col.standard_count }} 条审核条目</span>
                 <span class="meta-sep">|</span>
                 <span>{{ formatMaterialType(col.material_type) }}</span>
                 <span class="meta-sep">|</span>
@@ -141,22 +141,22 @@
             <span class="info-value">{{ formatMaterialType(selectedCollection.material_type) }}</span>
           </div>
           <div class="info-item">
-            <span class="info-label">风险点数量：</span>
+            <span class="info-label">审核条目数量：</span>
             <span class="info-value">{{ standards.length }} 条</span>
           </div>
         </div>
         <el-button type="primary" text size="small" @click="editCollectionInfo(selectedCollection)">
           <el-icon><Edit /></el-icon>
-          编辑集合信息
+          编辑标准信息
         </el-button>
       </el-card>
 
-      <!-- 风险点筛选和操作 -->
+      <!-- 审核条目筛选和操作 -->
       <el-card class="filter-card">
         <div class="filter-row">
           <el-input
             v-model="searchKeyword"
-            placeholder="搜索风险点..."
+            placeholder="搜索审核条目..."
             clearable
             style="width: 300px"
             @input="handleSearch"
@@ -195,12 +195,12 @@
 
           <el-button type="primary" @click="showAddDialog = true">
             <el-icon><Plus /></el-icon>
-            添加风险点
+            添加审核条目
           </el-button>
         </div>
       </el-card>
 
-      <!-- 风险点列表表格 -->
+      <!-- 审核条目列表表格 -->
       <el-card class="table-card">
         <el-table
           :data="standards"
@@ -251,15 +251,15 @@
         </el-table>
 
         <div class="table-footer">
-          <span>共 {{ standards.length }} 条风险点</span>
+          <span>共 {{ standards.length }} 条审核条目</span>
         </div>
       </el-card>
     </template>
 
-    <!-- 添加风险点对话框 -->
+    <!-- 添加审核条目对话框 -->
     <el-dialog
       v-model="showAddDialog"
-      :title="editingStandard ? '编辑风险点' : '添加风险点'"
+      :title="editingStandard ? '编辑审核条目' : '添加审核条目'"
       width="600px"
       @close="resetStandardForm"
     >
@@ -309,14 +309,14 @@
       </template>
     </el-dialog>
 
-    <!-- 编辑集合信息对话框 -->
+    <!-- 编辑标准信息对话框 -->
     <el-dialog
       v-model="showCollectionEditDialog"
-      title="编辑集合信息"
+      title="编辑标准信息"
       width="500px"
     >
       <el-form :model="collectionForm" label-width="100px">
-        <el-form-item label="集合名称" required>
+        <el-form-item label="标准名称" required>
           <el-input v-model="collectionForm.name" placeholder="如：电商平台合作协议审核标准" />
         </el-form-item>
         <el-form-item label="适用场景">
@@ -352,9 +352,9 @@
       @close="resetImportDialog"
     >
       <div v-if="importStep === 1">
-        <!-- 第一步：输入集合信息 -->
+        <!-- 第一步：输入标准信息 -->
         <el-form :model="newCollectionForm" label-width="100px">
-          <el-form-item label="集合名称" required>
+          <el-form-item label="标准名称" required>
             <el-input v-model="newCollectionForm.name" placeholder="如：电商平台合作协议审核标准" />
           </el-form-item>
           <el-form-item label="适用场景">
@@ -563,7 +563,7 @@
                 v-model="creationForm.special_risks"
                 type="textarea"
                 :rows="2"
-                placeholder="如有特殊的风险点需要关注，请在此说明"
+                placeholder="如有特殊的审核要求，请在此说明"
               />
             </el-form-item>
 
@@ -733,6 +733,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Upload, Download, Search, Plus, UploadFilled, MagicStick, InfoFilled, ArrowDown,
@@ -740,7 +741,10 @@ import {
 } from '@element-plus/icons-vue'
 import api from '@/api'
 
-// ==================== 集合列表相关 ====================
+// ==================== 路由参数 ====================
+const route = useRoute()
+
+// ==================== 标准列表相关 ====================
 const loadingCollections = ref(false)
 const collections = ref([])
 const collectionSearch = ref('')
@@ -1280,8 +1284,12 @@ function handleNewStandardCommand(command) {
 }
 
 // ==================== 初始化 ====================
-onMounted(() => {
-  loadCollections()
+onMounted(async () => {
+  await loadCollections()
+  // 检查是否需要自动打开 AI 制作对话框（从 ReviewView 跳转过来）
+  if (route.query.action === 'ai-create') {
+    showCreateDialog.value = true
+  }
 })
 </script>
 

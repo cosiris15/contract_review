@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Callable, List, Optional
 
 from .config import Settings
+from .gemini_client import GeminiClient
 from .llm_client import LLMClient
 from .models import (
     ActionRecommendation,
@@ -44,9 +45,31 @@ logger = logging.getLogger(__name__)
 class ReviewEngine:
     """审阅引擎"""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, llm_provider: str = "deepseek"):
+        """
+        初始化审阅引擎
+
+        Args:
+            settings: 配置对象
+            llm_provider: LLM 提供者，可选 "deepseek" 或 "gemini"
+        """
         self.settings = settings
-        self.llm = LLMClient(settings.llm)
+        self.llm_provider = llm_provider
+
+        if llm_provider == "gemini":
+            # 使用 Gemini 进行审阅
+            if not settings.gemini.api_key:
+                raise ValueError("Gemini API Key 未配置")
+            self.llm = GeminiClient(
+                api_key=settings.gemini.api_key,
+                model=settings.gemini.model,
+                timeout=settings.gemini.timeout,
+            )
+            logger.info(f"审阅引擎使用 Gemini 模型: {settings.gemini.model}")
+        else:
+            # 默认使用 DeepSeek
+            self.llm = LLMClient(settings.llm)
+            logger.info(f"审阅引擎使用 DeepSeek 模型: {settings.llm.model}")
 
     async def review_document(
         self,
@@ -157,7 +180,7 @@ class ReviewEngine:
             modifications=modifications,
             actions=actions,
             reviewed_at=datetime.now(),
-            llm_model=self.settings.llm.model,
+            llm_model=self.settings.gemini.model if self.llm_provider == "gemini" else self.settings.llm.model,
             prompt_version=PROMPT_VERSION,
         )
 

@@ -215,8 +215,10 @@ export default {
   },
 
   // 审阅
-  startReview(taskId) {
-    return api.post(`/tasks/${taskId}/review`)
+  startReview(taskId, llmProvider = 'deepseek') {
+    return api.post(`/tasks/${taskId}/review`, null, {
+      params: { llm_provider: llmProvider }
+    })
   },
 
   // 结果

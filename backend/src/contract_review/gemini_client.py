@@ -115,6 +115,126 @@ class GeminiClient:
             logger.error(f"Gemini API 请求错误: {e}")
             raise Exception(f"Gemini API 请求错误: {str(e)}")
 
+    async def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        与 LLMClient 兼容的 chat 接口
+
+        将 OpenAI 格式的 messages 转换为 Gemini 格式进行调用。
+
+        Args:
+            messages: 消息列表，格式为 [{"role": "system/user/assistant", "content": "..."}]
+            temperature: 可选的温度参数
+            max_output_tokens: 可选的最大输出 token 数
+
+        Returns:
+            LLM 响应的文本内容
+        """
+        # 提取 system message 作为 system_instruction
+        system_instruction = None
+        conversation_parts = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            if role == "system":
+                system_instruction = content
+            elif role == "user":
+                conversation_parts.append(f"User: {content}")
+            elif role == "assistant":
+                conversation_parts.append(f"Assistant: {content}")
+
+        # 组合非系统消息为 prompt
+        prompt = "\n\n".join(conversation_parts)
+
+        # 调用 generate_content（但不强制 JSON 响应）
+        return await self._generate_content_text(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=temperature if temperature is not None else 0.1,
+            max_tokens=max_output_tokens or 4000,
+        )
+
+    async def _generate_content_text(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 4000,
+    ) -> str:
+        """
+        调用 Gemini 生成纯文本内容（不强制 JSON 格式）
+
+        Args:
+            prompt: 用户提示词
+            system_instruction: 系统指令
+            temperature: 温度参数
+            max_tokens: 最大生成 token 数
+
+        Returns:
+            生成的文本内容
+        """
+        url = f"{self.BASE_URL}/models/{self.model}:generateContent"
+
+        # 构建请求体 - 不指定 responseMimeType，返回纯文本
+        request_body: Dict[str, Any] = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
+            },
+        }
+
+        # 添加系统指令
+        if system_instruction:
+            request_body["systemInstruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    params={"key": self.api_key},
+                    json=request_body,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                if response.status_code != 200:
+                    error_detail = response.text
+                    logger.error(f"Gemini API 错误: {response.status_code} - {error_detail}")
+                    raise Exception(f"Gemini API 请求失败: {response.status_code}")
+
+                result = response.json()
+
+                # 提取生成的文本
+                candidates = result.get("candidates", [])
+                if not candidates:
+                    raise Exception("Gemini API 返回空结果")
+
+                content = candidates[0].get("content", {})
+                parts = content.get("parts", [])
+                if not parts:
+                    raise Exception("Gemini API 返回内容为空")
+
+                return parts[0].get("text", "")
+
+        except httpx.TimeoutException:
+            logger.error("Gemini API 请求超时")
+            raise Exception("Gemini API 请求超时，请稍后重试")
+        except httpx.RequestError as e:
+            logger.error(f"Gemini API 请求错误: {e}")
+            raise Exception(f"Gemini API 请求错误: {str(e)}")
+
     async def generate_standards(
         self,
         business_info: Dict[str, Any],

@@ -849,6 +849,7 @@ STANDARD_CREATION_PROMPTS = {
 ## 输出格式
 必须输出有效的 JSON 对象：
 {
+  "collection_name": "简洁的标准集名称，如'XX行业XX合同审核标准'，不超过20字",
   "standards": [
     {
       "category": "分类名称",
@@ -861,6 +862,15 @@ STANDARD_CREATION_PROMPTS = {
   ],
   "generation_summary": "本次生成了X条审阅标准，重点覆盖了XX、XX等方面，其中高风险X条、中风险X条、低风险X条。"
 }
+
+## collection_name 命名规则
+- 格式：[行业/业务类型] + [合同/材料类型] + 审核标准
+- 示例：
+  - "在线旅游OTA代理合同审核标准"
+  - "AI客户服务采购合同审核标准"
+  - "电商平台合作协议审核标准"
+  - "金融科技软件许可审核标准"
+- 不要直接复制用户输入的业务场景描述作为名称
 
 只输出 JSON 对象，不要添加 markdown 代码块或额外说明。""",
         "user": """## 业务信息
@@ -900,6 +910,7 @@ Each standard must contain the following fields:
 ## Output Format
 Must output a valid JSON object:
 {
+  "collection_name": "Concise standard set name, e.g., 'XX Industry XX Contract Review Standards', max 50 characters",
   "standards": [
     {
       "category": "Category Name",
@@ -912,6 +923,15 @@ Must output a valid JSON object:
   ],
   "generation_summary": "Generated X review standards, focusing on XX, XX areas, including X high-risk, X medium-risk, X low-risk."
 }
+
+## collection_name Naming Rules
+- Format: [Industry/Business Type] + [Contract/Material Type] + Review Standards
+- Examples:
+  - "Online Travel OTA Agency Contract Review Standards"
+  - "AI Customer Service Procurement Contract Review Standards"
+  - "E-commerce Platform Partnership Agreement Review Standards"
+  - "FinTech Software License Review Standards"
+- Do not directly copy user's business scenario description as the name
 
 Output only JSON object, do not add markdown code blocks or extra explanations.""",
         "user": """## Business Information
