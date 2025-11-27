@@ -141,6 +141,7 @@ class CreateTaskRequest(BaseModel):
     name: str
     our_party: str
     material_type: MaterialType = "contract"
+    language: str = "zh-CN"  # 审阅语言: "zh-CN" 或 "en"
 
 
 class TaskResponse(BaseModel):
@@ -148,6 +149,7 @@ class TaskResponse(BaseModel):
     name: str
     our_party: str
     material_type: str
+    language: str = "zh-CN"
     status: str
     message: Optional[str] = None
     document_filename: Optional[str] = None
@@ -162,6 +164,7 @@ class TaskResponse(BaseModel):
             name=task.name,
             our_party=task.our_party,
             material_type=task.material_type,
+            language=getattr(task, 'language', 'zh-CN'),
             status=task.status,
             message=task.message,
             document_filename=task.document_filename,
@@ -202,6 +205,7 @@ class StandardCreationRequest(BaseModel):
     industry: Optional[str] = None  # 行业领域
     special_risks: Optional[str] = None  # 特殊风险提示
     reference_material: Optional[str] = None  # 参考材料文本
+    language: str = "zh-CN"  # 语言: "zh-CN" 或 "en"
 
 
 class GeneratedStandard(BaseModel):
@@ -282,6 +286,7 @@ class SaveToLibraryRequest(BaseModel):
     collection_name: str  # 集合名称（必填）
     collection_description: str = ""  # 集合描述
     material_type: str = "both"  # 材料类型
+    language: str = "zh-CN"  # 语言 ("zh-CN" 或 "en")
     standards: List[CreateStandardRequest]
 
 
@@ -329,8 +334,9 @@ async def create_task(request: CreateTaskRequest):
         name=request.name,
         our_party=request.our_party,
         material_type=request.material_type,
+        language=request.language,
     )
-    logger.info(f"创建任务: {task.id} - {task.name}")
+    logger.info(f"创建任务: {task.id} - {task.name} (language={request.language})")
     return TaskResponse.from_task(task)
 
 
@@ -492,6 +498,7 @@ async def run_review(task_id: str):
             our_party=task.our_party,
             material_type=task.material_type,
             task_id=task_id,
+            language=getattr(task, 'language', 'zh-CN'),
             progress_callback=progress_callback,
         )
 
@@ -536,6 +543,48 @@ async def start_review(task_id: str, background_tasks: BackgroundTasks):
     task_manager.update_task(task)
 
     return {"message": "审阅任务已启动"}
+
+
+# ==================== 语言检测 API ====================
+
+class LanguageDetectionRequest(BaseModel):
+    text: str
+
+
+class LanguageDetectionResponse(BaseModel):
+    detected_language: str
+    confidence: float
+
+
+@app.post("/api/detect-language", response_model=LanguageDetectionResponse)
+async def detect_language(request: LanguageDetectionRequest):
+    """检测文档语言（基于中文字符比例）"""
+    text = request.text[:5000]  # 只检测前5000字符
+
+    # 统计中文字符数量
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    # 统计非空白字符总数
+    total_chars = len([c for c in text if c.strip()])
+
+    if total_chars == 0:
+        return LanguageDetectionResponse(
+            detected_language="zh-CN",
+            confidence=0.5
+        )
+
+    chinese_ratio = chinese_chars / total_chars
+
+    # 阈值：15%以上中文字符判定为中文
+    if chinese_ratio > 0.15:
+        return LanguageDetectionResponse(
+            detected_language="zh-CN",
+            confidence=min(chinese_ratio * 2, 0.95)
+        )
+    else:
+        return LanguageDetectionResponse(
+            detected_language="en",
+            confidence=min((1 - chinese_ratio), 0.95)
+        )
 
 
 # ==================== 结果管理 API ====================
@@ -1130,6 +1179,7 @@ class CollectionResponse(BaseModel):
     description: str
     material_type: str
     is_preset: bool
+    language: str = "zh-CN"
     standard_count: int
     standards: Optional[List[StandardResponse]] = None
 
@@ -1141,6 +1191,7 @@ class CollectionWithStandardsResponse(BaseModel):
     description: str
     material_type: str
     is_preset: bool
+    language: str = "zh-CN"
     standard_count: int
     standards: List[StandardResponse]
 
@@ -1157,6 +1208,7 @@ def _collection_to_response(collection, standards: list = None) -> CollectionRes
         description=collection.description,
         material_type=collection.material_type,
         is_preset=collection.is_preset,
+        language=getattr(collection, 'language', 'zh-CN'),
         standard_count=standard_count,
         standards=None,
     )
@@ -1166,9 +1218,12 @@ def _collection_to_response(collection, standards: list = None) -> CollectionRes
 
 
 @app.get("/api/standard-library/collections", response_model=List[CollectionResponse])
-async def list_collections(material_type: Optional[str] = None):
+async def list_collections(
+    material_type: Optional[str] = None,
+    language: Optional[str] = Query(default=None, description="按语言筛选 (zh-CN 或 en)")
+):
     """获取所有标准集合"""
-    collections = standard_library_manager.list_collections()
+    collections = standard_library_manager.list_collections(language=language)
 
     # 按材料类型筛选
     if material_type:
@@ -1193,6 +1248,7 @@ async def get_collection(collection_id: str):
         description=collection.description,
         material_type=collection.material_type,
         is_preset=collection.is_preset,
+        language=getattr(collection, 'language', 'zh-CN'),
         standard_count=len(standards),
         standards=[_standard_to_response(s) for s in standards],
     )
@@ -1205,6 +1261,7 @@ class CreateCollectionRequest(BaseModel):
     name: str
     description: str = ""
     material_type: str = "both"
+    language: str = "zh-CN"  # "zh-CN" 或 "en"
 
 
 class UpdateCollectionRequest(BaseModel):
@@ -1212,6 +1269,7 @@ class UpdateCollectionRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     material_type: Optional[str] = None
+    language: Optional[str] = None
 
 
 @app.post("/api/standard-library/collections", response_model=CollectionResponse)
@@ -1222,8 +1280,9 @@ async def create_collection(request: CreateCollectionRequest):
         description=request.description,
         material_type=request.material_type,
         is_preset=False,
+        language=request.language,
     )
-    logger.info(f"创建标准集合: {collection.id} - {collection.name}")
+    logger.info(f"创建标准集合: {collection.id} - {collection.name} (language={request.language})")
     return _collection_to_response(collection)
 
 
@@ -1312,10 +1371,7 @@ async def get_collection_categories(collection_id: str):
 async def create_standards_from_business(request: StandardCreationRequest):
     """根据业务信息生成审阅标准（使用 Gemini）"""
     from src.contract_review.gemini_client import GeminiClient
-    from src.contract_review.prompts import (
-        STANDARD_CREATION_SYSTEM_PROMPT,
-        STANDARD_CREATION_USER_PROMPT,
-    )
+    from src.contract_review.prompts import get_standard_creation_prompts
 
     # 检查 Gemini API Key 是否配置
     if not settings.gemini.api_key:
@@ -1329,6 +1385,10 @@ async def create_standards_from_business(request: StandardCreationRequest):
         raise HTTPException(status_code=400, detail="业务场景描述不能为空")
     if not request.focus_areas:
         raise HTTPException(status_code=400, detail="请至少选择一个核心关注点")
+
+    # 获取语言对应的提示词
+    language = request.language if request.language in ("zh-CN", "en") else "zh-CN"
+    prompts = get_standard_creation_prompts(language)
 
     # 创建 Gemini 客户端
     gemini_client = GeminiClient(
@@ -1346,14 +1406,15 @@ async def create_standards_from_business(request: StandardCreationRequest):
         "industry": request.industry,
         "special_risks": request.special_risks,
         "reference_material": request.reference_material,
+        "language": language,
     }
 
     try:
         # 调用 Gemini 生成标准
         result = await gemini_client.generate_standards(
             business_info=business_info,
-            system_prompt=STANDARD_CREATION_SYSTEM_PROMPT,
-            user_prompt_template=STANDARD_CREATION_USER_PROMPT,
+            system_prompt=prompts["system"],
+            user_prompt_template=prompts["user"],
         )
 
         # 转换为响应格式
@@ -1461,6 +1522,7 @@ async def save_standards_to_library(request: SaveToLibraryRequest):
         description=request.collection_description,
         material_type=request.material_type,
         is_preset=False,
+        language=request.language,
     )
 
     # 2. 创建标准并关联到集合

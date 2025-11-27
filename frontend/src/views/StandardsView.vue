@@ -53,6 +53,16 @@
             <el-option label="合同" value="contract" />
             <el-option label="营销材料" value="marketing" />
           </el-select>
+          <el-select
+            v-model="filterLanguage"
+            placeholder="标准语言"
+            clearable
+            style="width: 150px"
+            @change="loadCollections"
+          >
+            <el-option label="中文" value="zh-CN" />
+            <el-option label="English" value="en" />
+          </el-select>
         </div>
       </el-card>
 
@@ -72,12 +82,15 @@
               <div class="collection-name">
                 {{ col.name }}
                 <el-tag v-if="col.is_preset" size="small" type="info">系统预设</el-tag>
+                <el-tag v-if="col.language === 'en'" size="small" type="success">EN</el-tag>
               </div>
               <div class="collection-desc">{{ col.description || '暂无描述' }}</div>
               <div class="collection-meta">
                 <span>{{ col.standard_count }} 条风险点</span>
                 <span class="meta-sep">|</span>
                 <span>{{ formatMaterialType(col.material_type) }}</span>
+                <span class="meta-sep">|</span>
+                <span>{{ formatLanguage(col.language) }}</span>
               </div>
             </div>
           </div>
@@ -359,6 +372,12 @@
               <el-option label="两者都适用" value="both" />
             </el-select>
           </el-form-item>
+          <el-form-item label="标准语言">
+            <el-radio-group v-model="newCollectionForm.language">
+              <el-radio value="zh-CN">中文</el-radio>
+              <el-radio value="en">English</el-radio>
+            </el-radio-group>
+          </el-form-item>
         </el-form>
 
         <el-divider />
@@ -462,6 +481,13 @@
                 <el-radio value="contract">合同</el-radio>
                 <el-radio value="marketing">营销材料</el-radio>
                 <el-radio value="both">两者都有</el-radio>
+              </el-radio-group>
+            </el-form-item>
+
+            <el-form-item label="标准语言" required>
+              <el-radio-group v-model="creationForm.language">
+                <el-radio value="zh-CN">中文（中国法律体系）</el-radio>
+                <el-radio value="en">English (Common Law)</el-radio>
               </el-radio-group>
             </el-form-item>
 
@@ -719,6 +745,7 @@ const loadingCollections = ref(false)
 const collections = ref([])
 const collectionSearch = ref('')
 const filterMaterialType = ref('')
+const filterLanguage = ref('')  // 语言筛选
 const selectedCollection = ref(null)
 
 // 筛选后的集合
@@ -746,7 +773,9 @@ const filteredCollections = computed(() => {
 async function loadCollections() {
   loadingCollections.value = true
   try {
-    const response = await api.getCollections()
+    const params = {}
+    if (filterLanguage.value) params.language = filterLanguage.value
+    const response = await api.getCollections(params)
     collections.value = response.data
   } catch (error) {
     ElMessage.error('加载标准集失败: ' + error.message)
@@ -1009,7 +1038,8 @@ const previewing = ref(false)
 const newCollectionForm = reactive({
   name: '',
   description: '',
-  material_type: 'both'
+  material_type: 'both',
+  language: 'zh-CN'
 })
 
 function handleFileChange(file) {
@@ -1045,6 +1075,7 @@ async function saveToLibrary() {
       collection_name: newCollectionForm.name,
       collection_description: newCollectionForm.description,
       material_type: newCollectionForm.material_type,
+      language: newCollectionForm.language,
       standards: previewStandards.value,
     })
     ElMessage.success(response.data.message)
@@ -1065,7 +1096,8 @@ function resetImportDialog() {
   Object.assign(newCollectionForm, {
     name: '',
     description: '',
-    material_type: 'both'
+    material_type: 'both',
+    language: 'zh-CN'
   })
 }
 
@@ -1087,7 +1119,8 @@ const creationForm = reactive({
   special_risks: '',
   reference_material: '',
   custom_focus: '',
-  custom_industry: ''
+  custom_industry: '',
+  language: 'zh-CN'  // 语言选择
 })
 
 const focusAreaOptions = [
@@ -1146,6 +1179,7 @@ async function generateStandardsFromBusiness() {
       industry: industry || null,
       special_risks: creationForm.special_risks || null,
       reference_material: creationForm.reference_material || null,
+      language: creationForm.language,
     })
 
     generatedStandards.value = response.data.standards
@@ -1180,6 +1214,7 @@ async function saveGeneratedStandards() {
       collection_name: generatedCollectionName.value,
       collection_description: creationForm.business_scenario,
       material_type: creationForm.document_type === 'both' ? 'both' : creationForm.document_type,
+      language: creationForm.language,
       standards: generatedStandards.value,
     })
     ElMessage.success(response.data.message || '标准保存成功')
@@ -1204,7 +1239,8 @@ function resetCreateDialog() {
     special_risks: '',
     reference_material: '',
     custom_focus: '',
-    custom_industry: ''
+    custom_industry: '',
+    language: 'zh-CN'
   })
   generatedStandards.value = []
   generatedCollectionName.value = ''
@@ -1228,6 +1264,11 @@ function formatApplicableTo(types) {
 function formatMaterialType(type) {
   const map = { contract: '合同', marketing: '营销材料', both: '合同/营销' }
   return map[type] || type
+}
+
+function formatLanguage(lang) {
+  const map = { 'zh-CN': '中文', 'en': 'English' }
+  return map[lang] || lang || '中文'
 }
 
 function handleNewStandardCommand(command) {

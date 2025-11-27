@@ -22,6 +22,9 @@ ModificationPriority = Literal["must", "should", "may"]
 ActionUrgency = Literal["immediate", "soon", "normal"]
 TaskStatus = Literal["created", "uploading", "reviewing", "completed", "failed"]
 
+# 支持的语言（简化为两种：中文-中国法律体系，英文-普通法体系）
+Language = Literal["zh-CN", "en"]
+
 
 def generate_id() -> str:
     """生成短 UUID"""
@@ -85,6 +88,7 @@ class StandardCollection(BaseModel):
     description: str = ""  # 适用场景说明
     material_type: str = "both"  # contract/marketing/both
     is_preset: bool = False  # 是否为系统预设（预设集合不可删除）
+    language: Language = "zh-CN"  # 标准集的语言
     # 注意：不再存储 standard_ids，改为通过 ReviewStandard.collection_id 关联
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
@@ -230,6 +234,7 @@ class ReviewResult(BaseModel):
     material_type: MaterialType
     our_party: str  # 我方身份
     review_standards_used: str  # 使用的标准集名称
+    language: Language = "zh-CN"  # 审阅语言
 
     # 审阅产出
     risks: List[RiskPoint] = Field(default_factory=list)
@@ -282,6 +287,7 @@ class ReviewTask(BaseModel):
     # 输入配置
     our_party: str  # 我方身份
     material_type: MaterialType = "contract"
+    language: Language = "zh-CN"  # 审阅语言
 
     # 文件路径
     document_filename: Optional[str] = None  # 上传的文档文件名

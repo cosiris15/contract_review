@@ -64,6 +64,7 @@ class TaskManager:
         name: str,
         our_party: str,
         material_type: str = "contract",
+        language: str = "zh-CN",
     ) -> ReviewTask:
         """
         创建新任务
@@ -72,6 +73,7 @@ class TaskManager:
             name: 任务名称
             our_party: 我方身份
             material_type: 材料类型
+            language: 审阅语言 ("zh-CN" 或 "en")
 
         Returns:
             创建的任务对象
@@ -81,6 +83,7 @@ class TaskManager:
             name=name,
             our_party=our_party,
             material_type=material_type,
+            language=language,
         )
 
         # 创建任务目录

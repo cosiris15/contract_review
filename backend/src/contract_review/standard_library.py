@@ -374,10 +374,23 @@ class StandardLibraryManager:
 
     # ==================== 集合管理 ====================
 
-    def list_collections(self) -> List[StandardCollection]:
-        """获取所有集合"""
+    def list_collections(self, language: Optional[str] = None) -> List[StandardCollection]:
+        """
+        获取所有集合
+
+        Args:
+            language: 按语言过滤 ("zh-CN" 或 "en")，None 表示返回所有
+
+        Returns:
+            集合列表
+        """
         library = self._load_library()
-        return library.collections
+        collections = library.collections
+
+        if language:
+            collections = [c for c in collections if getattr(c, 'language', 'zh-CN') == language]
+
+        return collections
 
     def get_collection(self, collection_id: str) -> Optional[StandardCollection]:
         """获取单个集合"""
@@ -403,6 +416,7 @@ class StandardLibraryManager:
         description: str = "",
         material_type: str = "both",
         is_preset: bool = False,
+        language: str = "zh-CN",
     ) -> StandardCollection:
         """
         添加集合（空集合，标准通过 collection_id 关联）
@@ -412,6 +426,7 @@ class StandardLibraryManager:
             description: 集合描述
             material_type: 适用材料类型
             is_preset: 是否为系统预设
+            language: 集合语言 ("zh-CN" 或 "en")
 
         Returns:
             创建的集合对象
@@ -423,6 +438,7 @@ class StandardLibraryManager:
             description=description,
             material_type=material_type,
             is_preset=is_preset,
+            language=language,
         )
 
         library.collections.append(collection)
@@ -535,12 +551,22 @@ class StandardLibraryManager:
                 else:
                     material_type = "both"
 
+                # 根据文件名判断语言（包含中文字符或中文关键词则为中文）
+                has_chinese = any('\u4e00' <= c <= '\u9fff' for c in template_name)
+                if has_chinese:
+                    language = "zh-CN"
+                elif "_EN" in template_name or template_name.startswith("General_") or template_name.startswith("Marketing_"):
+                    language = "en"
+                else:
+                    language = "zh-CN"  # 默认中文
+
                 # 先创建集合
                 collection = StandardCollection(
                     name=template_name,
-                    description=f"系统预设模板: {template_name}",
+                    description=f"系统预设模板: {template_name}" if language == "zh-CN" else f"Preset template: {template_name}",
                     material_type=material_type,
                     is_preset=True,
+                    language=language,
                 )
                 library.collections.append(collection)
 

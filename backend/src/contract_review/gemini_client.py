@@ -132,24 +132,33 @@ class GeminiClient:
         Returns:
             包含 standards 和 generation_summary 的字典
         """
+        # 获取语言设置
+        language = business_info.get("language", "zh-CN")
+
         # 处理参考材料部分
         reference_section = ""
         if business_info.get("reference_material"):
+            reference_label = "参考材料" if language == "zh-CN" else "Reference Material"
             reference_section = f"""
-**参考材料**:
+**{reference_label}**:
 ```
 {business_info['reference_material']}
 ```
 """
 
+        # 根据语言设置默认值
+        default_not_provided = "未提供" if language == "zh-CN" else "Not provided"
+        default_not_specified = "未指定" if language == "zh-CN" else "Not specified"
+        default_none = "无" if language == "zh-CN" else "None"
+
         # 格式化用户提示词
         user_prompt = user_prompt_template.format(
-            document_type=self._format_document_type(business_info.get("document_type", "")),
-            business_scenario=business_info.get("business_scenario", "未提供"),
-            focus_areas="、".join(business_info.get("focus_areas", [])) or "未指定",
-            our_role=business_info.get("our_role") or "未指定",
-            industry=business_info.get("industry") or "未指定",
-            special_risks=business_info.get("special_risks") or "无",
+            document_type=self._format_document_type(business_info.get("document_type", ""), language),
+            business_scenario=business_info.get("business_scenario", default_not_provided),
+            focus_areas=self._format_focus_areas(business_info.get("focus_areas", []), language),
+            our_role=business_info.get("our_role") or default_not_specified,
+            industry=business_info.get("industry") or default_not_specified,
+            special_risks=business_info.get("special_risks") or default_none,
             reference_section=reference_section,
         )
 
@@ -188,14 +197,28 @@ class GeminiClient:
         logger.info(f"成功生成 {len(result['standards'])} 条审阅标准")
         return result
 
-    def _format_document_type(self, doc_type: str) -> str:
+    def _format_document_type(self, doc_type: str, language: str = "zh-CN") -> str:
         """格式化文档类型显示"""
-        mapping = {
-            "contract": "合同",
-            "marketing": "营销材料",
-            "both": "合同和营销材料",
-        }
+        if language == "en":
+            mapping = {
+                "contract": "Contract",
+                "marketing": "Marketing Material",
+                "both": "Contract and Marketing Material",
+            }
+        else:
+            mapping = {
+                "contract": "合同",
+                "marketing": "营销材料",
+                "both": "合同和营销材料",
+            }
         return mapping.get(doc_type, doc_type)
+
+    def _format_focus_areas(self, focus_areas: List[str], language: str = "zh-CN") -> str:
+        """格式化关注点列表"""
+        if not focus_areas:
+            return "未指定" if language == "zh-CN" else "Not specified"
+        separator = "、" if language == "zh-CN" else ", "
+        return separator.join(focus_areas)
 
 
 # 单例实例

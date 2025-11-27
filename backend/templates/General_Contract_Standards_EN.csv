@@ -1,0 +1,29 @@
+Category,Review Item,Description,Risk Level,Material Type
+Party Qualification,Signatory Authority,Verify if the counterparty has valid business registration and operating licenses within their scope of business,High,Contract
+Party Qualification,Authorization to Sign,Check if the signatory has proper authorization with valid power of attorney or authorization documents,High,Contract
+Party Qualification,Performance Capability,Assess if the counterparty has sufficient financial resources and technical and personnel capabilities to perform,Medium,Contract
+Rights and Obligations,Balance of Rights,Examine if rights and obligations are balanced between parties without obviously unfair terms,High,Contract
+Rights and Obligations,Core Rights Protection,Verify that our core rights are clearly defined and effectively protected,High,Contract
+Rights and Obligations,Obligation Scope Clarity,Check if our obligation scope is clearly defined avoiding ambiguous language,Medium,Contract
+Rights and Obligations,Unilateral Amendment Clause,Check for clauses allowing counterparty to unilaterally modify the contract,High,Contract
+Payment Terms,Price and Payment Method,Verify price is clearly stated with payment method timing and conditions specified,Medium,Contract
+Payment Terms,Price Adjustment Mechanism,Check for price adjustment clauses and whether adjustment conditions are reasonable,Medium,Contract
+Payment Terms,Cost Allocation,Verify responsibility for various costs (taxes shipping etc) is clearly assigned,Low,Contract
+Term Provisions,Contract Duration,Check if contract term is clearly specified with clear start and end dates,Medium,Contract
+Term Provisions,Renewal Conditions,Check if renewal conditions are clear and whether automatic renewal risks exist,Medium,Contract
+Term Provisions,Termination Conditions,Verify termination conditions are clear and we have reasonable exit mechanisms,High,Contract
+Term Provisions,Early Termination,Check if conditions procedures and consequences for early termination are specified,Medium,Contract
+Liability Provisions,Breach of Contract,Verify breach liabilities are clear proportionate and penalties are reasonable,High,Contract
+Liability Provisions,Compensation Scope,Check if damage compensation scope is defined including indirect losses,Medium,Contract
+Liability Provisions,Limitation of Liability,Check for liability caps and whether limits are reasonable,Medium,Contract
+Liability Provisions,Exclusion Clauses,Review exclusion clauses for reasonableness and protection of our interests,High,Contract
+Dispute Resolution,Jurisdiction and Arbitration,Check if dispute resolution method favors us and venue selection is appropriate,Medium,Contract
+Dispute Resolution,Governing Law,Verify governing law is specified and favorable to our position,Medium,Contract
+Confidentiality,Scope of Confidential Information,Check if confidential information scope is clearly defined including necessary trade secrets,Medium,Contract
+Confidentiality,Confidentiality Period,Check if confidentiality period is reasonable and aligns with contract term,Low,Contract
+Intellectual Property,IP Ownership,Verify intellectual property ownership is clearly defined and our rights protected,High,Contract
+Intellectual Property,License Grant,Check if IP usage scope method and duration are clearly specified,Medium,Contract
+Intellectual Property,Infringement Liability,Verify IP infringement liability is clearly addressed,Medium,Contract
+Miscellaneous,Force Majeure,Check if force majeure clause is comprehensive with reasonable scope,Low,Contract
+Miscellaneous,Notice and Service,Verify notice methods and addresses are clearly specified,Low,Contract
+Miscellaneous,Contract Amendment,Check if conditions and procedures for contract amendment are specified,Low,Contract

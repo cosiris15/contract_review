@@ -166,6 +166,7 @@ api.interceptors.response.use(
 export default {
   // 任务管理
   createTask(data) {
+    // data 应包含 name, our_party, material_type, language
     return api.post('/tasks', data)
   },
 
@@ -183,6 +184,11 @@ export default {
 
   getTaskStatus(taskId) {
     return api.get(`/tasks/${taskId}/status`)
+  },
+
+  // 语言检测
+  detectLanguage(text) {
+    return api.post('/detect-language', { text })
   },
 
   // 文件上传
@@ -415,6 +421,7 @@ export default {
   // ==================== 标准集合 ====================
 
   // 获取所有标准集合
+  // params: { material_type?, language? }
   getCollections(params = {}) {
     return api.get('/standard-library/collections', { params })
   },

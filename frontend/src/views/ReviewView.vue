@@ -59,6 +59,18 @@
                 <el-radio value="marketing">营销材料</el-radio>
               </el-radio-group>
             </el-form-item>
+
+            <el-form-item label="审阅语言" prop="language">
+              <el-radio-group v-model="form.language" :disabled="!!taskId">
+                <el-radio value="zh-CN">中文（中国法律体系）</el-radio>
+                <el-radio value="en">English (Common Law)</el-radio>
+              </el-radio-group>
+              <div v-if="detectedLanguage" class="language-detection-hint">
+                <el-icon><InfoFilled /></el-icon>
+                自动检测：{{ detectedLanguage === 'zh-CN' ? '中文' : 'English' }}
+                (置信度 {{ Math.round(detectedConfidence * 100) }}%)
+              </div>
+            </el-form-item>
           </el-form>
 
           <el-divider />
@@ -510,7 +522,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
-import { Loading, Search, Folder, CircleCheck } from '@element-plus/icons-vue'
+import { Loading, Search, Folder, CircleCheck, InfoFilled } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const route = useRoute()
@@ -524,8 +536,13 @@ const taskId = ref(route.params.taskId || null)
 const form = ref({
   name: '',
   our_party: '',
-  material_type: 'contract'
+  material_type: 'contract',
+  language: 'zh-CN'
 })
+
+// 语言检测相关状态
+const detectedLanguage = ref(null)
+const detectedConfidence = ref(0)
 
 const rules = {
   name: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
@@ -644,7 +661,8 @@ async function handleDocumentChange(file) {
       const task = await store.createTask({
         name: form.value.name,
         our_party: form.value.our_party,
-        material_type: form.value.material_type
+        material_type: form.value.material_type,
+        language: form.value.language
       })
       taskId.value = task.id
       router.replace(`/review/${task.id}`)
@@ -658,9 +676,55 @@ async function handleDocumentChange(file) {
   try {
     await store.uploadDocument(taskId.value, file.raw)
     ElMessage.success('文档上传成功')
+
+    // 文档上传成功后，尝试检测语言
+    await detectDocumentLanguage(file.raw)
   } catch (error) {
     ElMessage.error(error.message || '上传失败')
   }
+}
+
+// 检测文档语言
+async function detectDocumentLanguage(file) {
+  try {
+    // 读取文件文本内容
+    const text = await readFileAsText(file)
+    if (!text || text.length < 50) return // 文本太短则跳过检测
+
+    // 调用语言检测API
+    const result = await api.detectLanguage(text.slice(0, 5000))
+    if (result.data) {
+      detectedLanguage.value = result.data.detected_language
+      detectedConfidence.value = result.data.confidence
+
+      // 如果置信度足够高且当前语言与检测结果不同，自动切换
+      if (result.data.confidence > 0.7 && form.value.language !== result.data.detected_language) {
+        form.value.language = result.data.detected_language
+        ElMessage.info(`已根据文档内容自动切换为${result.data.detected_language === 'zh-CN' ? '中文' : 'English'}审阅模式`)
+      }
+    }
+  } catch (error) {
+    console.log('语言检测失败，使用默认语言:', error)
+  }
+}
+
+// 读取文件为文本
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve(e.target.result)
+    reader.onerror = reject
+    // 对于 docx 和 pdf 文件，只读取部分内容
+    if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+      // PDF 文件暂不支持客户端读取，跳过检测
+      resolve('')
+    } else if (file.name.endsWith('.docx')) {
+      // docx 文件暂不支持客户端读取，跳过检测
+      resolve('')
+    } else {
+      reader.readAsText(file)
+    }
+  })
 }
 
 // ==================== 标准选择相关函数 ====================
@@ -1025,6 +1089,18 @@ async function applyStandards() {
   margin-bottom: 12px;
   font-size: 14px;
   color: #303133;
+}
+
+.language-detection-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f0f9eb;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #67c23a;
 }
 
 .upload-box {

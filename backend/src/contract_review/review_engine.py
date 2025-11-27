@@ -20,6 +20,7 @@ from .config import Settings
 from .llm_client import LLMClient
 from .models import (
     ActionRecommendation,
+    Language,
     LoadedDocument,
     MaterialType,
     ModificationSuggestion,
@@ -54,6 +55,7 @@ class ReviewEngine:
         our_party: str,
         material_type: MaterialType,
         task_id: str,
+        language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
     ) -> ReviewResult:
         """
@@ -65,16 +67,20 @@ class ReviewEngine:
             our_party: 我方身份
             material_type: 材料类型
             task_id: 任务 ID
+            language: 审阅语言
             progress_callback: 进度回调函数 (stage, percentage, message)
 
         Returns:
             ReviewResult 审阅结果
         """
+        # 根据语言设置进度消息
+        analyzing_msg = "正在分析文档..." if language == "zh-CN" else "Analyzing document..."
+
         def update_progress(stage: str, percentage: int, message: str = ""):
             if progress_callback:
                 progress_callback(stage, percentage, message)
 
-        update_progress("analyzing", 10, "正在分析文档...")
+        update_progress("analyzing", 10, analyzing_msg)
 
         # 过滤适用于当前材料类型的审核标准
         applicable_standards = [
@@ -85,46 +91,68 @@ class ReviewEngine:
             logger.warning(f"没有适用于 {material_type} 的审核标准，使用全部标准")
             applicable_standards = standards
 
+        # 根据语言设置进度消息
+        if language == "zh-CN":
+            risk_msg = "正在识别风险点..."
+            mod_msg_tpl = "正在生成修改建议（共 {} 个风险点）..."
+            action_msg = "正在生成行动建议..."
+            result_msg = "正在整理结果..."
+        else:
+            risk_msg = "Identifying risks..."
+            mod_msg_tpl = "Generating modification suggestions ({} risks)..."
+            action_msg = "Generating action recommendations..."
+            result_msg = "Compiling results..."
+
         # Stage 1: 风险识别
-        update_progress("analyzing", 20, "正在识别风险点...")
+        update_progress("analyzing", 20, risk_msg)
         risks = await self._identify_risks(
             document.text,
             our_party,
             material_type,
             applicable_standards,
+            language,
         )
         logger.info(f"识别到 {len(risks)} 个风险点")
 
         # Stage 2: 生成修改建议
-        update_progress("generating", 40, f"正在生成修改建议（共 {len(risks)} 个风险点）...")
+        update_progress("generating", 40, mod_msg_tpl.format(len(risks)))
         modifications = await self._generate_modifications(
             risks,
             document.text,
             our_party,
             material_type,
+            language,
             progress_callback,
         )
         logger.info(f"生成 {len(modifications)} 条修改建议")
 
         # Stage 3: 生成行动建议
-        update_progress("generating", 80, "正在生成行动建议...")
+        update_progress("generating", 80, action_msg)
         actions = await self._generate_actions(
             risks,
             document.text,
             our_party,
             material_type,
+            language,
         )
         logger.info(f"生成 {len(actions)} 条行动建议")
 
         # 构建审阅结果
-        update_progress("generating", 95, "正在整理结果...")
+        update_progress("generating", 95, result_msg)
+        # 根据语言设置标准使用描述
+        standards_desc = (
+            f"共 {len(applicable_standards)} 条标准"
+            if language == "zh-CN"
+            else f"{len(applicable_standards)} standards applied"
+        )
         result = ReviewResult(
             task_id=task_id,
             document_name=document.metadata.get("filename", "unknown"),
             document_path=str(document.path),
             material_type=material_type,
             our_party=our_party,
-            review_standards_used=f"共 {len(applicable_standards)} 条标准",
+            review_standards_used=standards_desc,
+            language=language,
             risks=risks,
             modifications=modifications,
             actions=actions,
@@ -136,7 +164,8 @@ class ReviewEngine:
         # 计算统计摘要
         result.calculate_summary()
 
-        update_progress("completed", 100, "审阅完成")
+        complete_msg = "审阅完成" if language == "zh-CN" else "Review completed"
+        update_progress("completed", 100, complete_msg)
         return result
 
     async def _identify_risks(
@@ -145,6 +174,7 @@ class ReviewEngine:
         our_party: str,
         material_type: MaterialType,
         standards: List[ReviewStandard],
+        language: Language = "zh-CN",
     ) -> List[RiskPoint]:
         """Stage 1: 风险识别"""
         messages = build_risk_identification_messages(
@@ -152,6 +182,7 @@ class ReviewEngine:
             our_party=our_party,
             material_type=material_type,
             review_standards=standards,
+            language=language,
         )
 
         response = await self.llm.chat(messages, max_output_tokens=4000)
@@ -201,6 +232,7 @@ class ReviewEngine:
         document_text: str,
         our_party: str,
         material_type: MaterialType,
+        language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
     ) -> List[ModificationSuggestion]:
         """Stage 2: 生成修改建议"""
@@ -210,11 +242,19 @@ class ReviewEngine:
         modifications = []
         total = len(risks)
 
+        # 根据语言设置进度消息模板
+        if language == "zh-CN":
+            progress_tpl = "正在生成修改建议 ({}/{})..."
+            no_text_msg = "风险点 {} 没有可修改的原文"
+        else:
+            progress_tpl = "Generating modification suggestions ({}/{})..."
+            no_text_msg = "Risk {} has no original text to modify"
+
         for i, risk in enumerate(risks):
             # 更新进度
             if progress_callback:
                 progress = 40 + int((i / total) * 40)
-                progress_callback("generating", progress, f"正在生成修改建议 ({i+1}/{total})...")
+                progress_callback("generating", progress, progress_tpl.format(i+1, total))
 
             # 获取原文
             original_text = ""
@@ -225,7 +265,7 @@ class ReviewEngine:
                 original_text = self._extract_relevant_text(document_text, risk.description)
 
             if not original_text:
-                logger.warning(f"风险点 {risk.id} 没有可修改的原文")
+                logger.warning(no_text_msg.format(risk.id))
                 continue
 
             messages = build_modification_suggestion_messages(
@@ -233,6 +273,7 @@ class ReviewEngine:
                 original_text=original_text,
                 our_party=our_party,
                 material_type=material_type,
+                language=language,
             )
 
             try:
@@ -272,13 +313,14 @@ class ReviewEngine:
         document_text: str,
         our_party: str,
         material_type: MaterialType,
+        language: Language = "zh-CN",
     ) -> List[ActionRecommendation]:
         """Stage 3: 生成行动建议"""
         if not risks:
             return []
 
         # 先生成文档摘要
-        summary_messages = build_document_summary_messages(document_text, material_type)
+        summary_messages = build_document_summary_messages(document_text, material_type, language)
         try:
             document_summary = await self.llm.chat(summary_messages, max_output_tokens=500)
         except Exception as e:
@@ -291,6 +333,7 @@ class ReviewEngine:
             document_summary=document_summary,
             our_party=our_party,
             material_type=material_type,
+            language=language,
         )
 
         response = await self.llm.chat(messages, max_output_tokens=3000)

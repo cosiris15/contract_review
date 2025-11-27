@@ -11,38 +11,102 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .models import MaterialType, ReviewStandard, RiskPoint
+from .models import Language, MaterialType, ReviewStandard, RiskPoint
 
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "1.1"
+
+# ==================== 多语言文本映射 ====================
+
+TEXTS = {
+    "zh-CN": {
+        "material_type": {"contract": "合同", "marketing": "营销材料"},
+        "risk_level": {"high": "高", "medium": "中", "low": "低"},
+        "priority": {"must": "必须修改", "should": "应该修改", "may": "可以修改"},
+        "urgency": {"immediate": "立即处理", "soon": "尽快处理", "normal": "一般优先级"},
+    },
+    "en": {
+        "material_type": {"contract": "Contract", "marketing": "Marketing Material"},
+        "risk_level": {"high": "High", "medium": "Medium", "low": "Low"},
+        "priority": {"must": "Must", "should": "Should", "may": "May"},
+        "urgency": {"immediate": "Immediate", "soon": "Soon", "normal": "Normal"},
+    }
+}
+
+# ==================== 法域相关指令 ====================
+
+JURISDICTION_INSTRUCTIONS = {
+    "zh-CN": """
+【法律框架】
+适用中华人民共和国法律，包括但不限于：
+- 《中华人民共和国民法典》合同编
+- 《中华人民共和国公司法》
+- 相关司法解释和行业规范
+
+【审阅重点】
+- 关注合同效力、违约责任条款
+- 注意格式条款的效力问题
+- 检查争议解决条款是否合法
+""",
+    "en": """
+【Legal Framework】
+Apply common law principles, including but not limited to:
+- Contract formation (offer, acceptance, consideration)
+- Implied terms and conditions
+- Remedies for breach (damages, specific performance)
+
+【Review Focus】
+- Examine clarity of terms and conditions
+- Check for unconscionable or unfair terms
+- Verify dispute resolution mechanisms
+- Review limitation and exclusion clauses
+"""
+}
 
 
-def format_standards_for_prompt(standards: List[ReviewStandard]) -> str:
+def format_standards_for_prompt(
+    standards: List[ReviewStandard],
+    language: Language = "zh-CN",
+) -> str:
     """将审核标准格式化为 Prompt 文本"""
     lines = []
     current_category = None
+    texts = TEXTS[language]
 
     for s in standards:
         if s.category != current_category:
             current_category = s.category
             lines.append(f"\n【{current_category}】")
 
-        risk_label = {"high": "高", "medium": "中", "low": "低"}.get(s.risk_level, "中")
-        lines.append(f"- [{s.id}] {s.item}（风险等级：{risk_label}）")
-        if s.description:
-            lines.append(f"  说明：{s.description}")
+        risk_label = texts["risk_level"].get(s.risk_level, texts["risk_level"]["medium"])
+        if language == "zh-CN":
+            lines.append(f"- [{s.id}] {s.item}（风险等级：{risk_label}）")
+            if s.description:
+                lines.append(f"  说明：{s.description}")
+        else:
+            lines.append(f"- [{s.id}] {s.item} (Risk Level: {risk_label})")
+            if s.description:
+                lines.append(f"  Description: {s.description}")
 
     return "\n".join(lines)
 
 
-def format_risks_summary(risks: List[RiskPoint]) -> str:
+def format_risks_summary(
+    risks: List[RiskPoint],
+    language: Language = "zh-CN",
+) -> str:
     """将风险点列表格式化为摘要文本"""
+    texts = TEXTS[language]
+
     if not risks:
-        return "无风险点"
+        return "无风险点" if language == "zh-CN" else "No risks identified"
 
     lines = []
     for r in risks:
-        level_label = {"high": "高", "medium": "中", "low": "低"}.get(r.risk_level, "中")
-        lines.append(f"- [{r.id}] {r.risk_type}（{level_label}风险）：{r.description}")
+        level_label = texts["risk_level"].get(r.risk_level, texts["risk_level"]["medium"])
+        if language == "zh-CN":
+            lines.append(f"- [{r.id}] {r.risk_type}（{level_label}风险）：{r.description}")
+        else:
+            lines.append(f"- [{r.id}] {r.risk_type} ({level_label} Risk): {r.description}")
 
     return "\n".join(lines)
 
@@ -54,6 +118,7 @@ def build_risk_identification_messages(
     our_party: str,
     material_type: MaterialType,
     review_standards: List[ReviewStandard],
+    language: Language = "zh-CN",
 ) -> List[Dict[str, Any]]:
     """
     构建风险识别 Prompt
@@ -63,16 +128,20 @@ def build_risk_identification_messages(
         our_party: 我方身份
         material_type: 材料类型（contract/marketing）
         review_standards: 审核标准列表
+        language: 审阅语言
 
     Returns:
         消息列表
     """
-    material_type_cn = "合同" if material_type == "contract" else "营销材料"
-    standards_text = format_standards_for_prompt(review_standards)
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
+    standards_text = format_standards_for_prompt(review_standards, language)
+    jurisdiction_instruction = JURISDICTION_INSTRUCTIONS.get(language, "")
 
-    system = f"""你是一位资深法务审阅专家，专门负责审阅{material_type_cn}文本。
+    if language == "zh-CN":
+        system = f"""你是一位资深法务审阅专家，专门负责审阅{material_type_label}文本。
 你的任务是根据给定的审核标准，识别文档中的风险点。
-
+{jurisdiction_instruction}
 【审阅原则】
 1. 严格站在"{our_party}"的立场进行审阅，以保护我方利益为核心目标
 2. 严格按照审核标准逐项检查，不要遗漏任何可能的风险
@@ -95,16 +164,53 @@ def build_risk_identification_messages(
 - 只输出 JSON 数组，不要添加任何额外的解释或说明文字
 - 确保 JSON 格式正确，可以被直接解析"""
 
-    user = f"""【我方身份】
+        user = f"""【我方身份】
 {our_party}
 
 【审核标准】
 {standards_text}
 
-【待审阅{material_type_cn}全文】
+【待审阅{material_type_label}全文】
 {document_text}
 
 请根据上述审核标准，识别文档中的所有风险点。以纯 JSON 数组格式输出，不要添加 markdown 代码块。"""
+
+    else:  # English
+        system = f"""You are a senior legal review expert specializing in {material_type_label} review.
+Your task is to identify risk points in the document based on the given review standards.
+{jurisdiction_instruction}
+【Review Principles】
+1. Review strictly from the perspective of "{our_party}" to protect our interests
+2. Check each review standard thoroughly, do not miss any potential risks
+3. Provide clear and specific reasons for each risk identification
+4. Accurately label risk levels (high/medium/low)
+5. Extract relevant original text as evidence
+
+【Output Format】
+Output a pure JSON array without markdown code block markers. Each element should contain:
+- standard_id: Associated review standard ID (null if no direct match)
+- risk_level: "high" | "medium" | "low"
+- risk_type: Risk type/category
+- description: Risk description (max 100 words, clearly explain what the risk is)
+- reason: Justification (max 150 words, explain why this is identified as a risk)
+- original_text: Relevant original text excerpt (max 200 words, use "Entire Document" if no specific clause)
+
+【Important Notes】
+- If a review standard has no corresponding risk in the document, do not output it
+- If there are risks not covered by the standards, identify and output them (standard_id = null)
+- Output only the JSON array, do not add any extra explanation
+- Ensure JSON format is correct and can be parsed directly"""
+
+        user = f"""【Our Party】
+{our_party}
+
+【Review Standards】
+{standards_text}
+
+【{material_type_label} Full Text】
+{document_text}
+
+Please identify all risk points in the document based on the review standards. Output in pure JSON array format without markdown code blocks."""
 
     return [
         {"role": "system", "content": system},
@@ -120,6 +226,7 @@ def build_modification_suggestion_messages(
     our_party: str,
     material_type: MaterialType,
     document_context: str = "",
+    language: Language = "zh-CN",
 ) -> List[Dict[str, Any]]:
     """
     构建修改建议 Prompt
@@ -130,14 +237,17 @@ def build_modification_suggestion_messages(
         our_party: 我方身份
         material_type: 材料类型
         document_context: 上下文片段（可选）
+        language: 审阅语言
 
     Returns:
         消息列表
     """
-    material_type_cn = "合同" if material_type == "contract" else "营销材料"
-    risk_level_cn = {"high": "高", "medium": "中", "low": "低"}.get(risk_point.risk_level, "中")
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
+    risk_level_label = texts["risk_level"].get(risk_point.risk_level, texts["risk_level"]["medium"])
 
-    system = f"""你是一位资深法务文本修改专家。
+    if language == "zh-CN":
+        system = f"""你是一位资深法务文本修改专家。
 针对已识别的风险点，你需要提供具体、可操作的文本修改建议。
 
 【核心原则：最小改动（奥卡姆剃刀原则）】
@@ -177,16 +287,16 @@ def build_modification_suggestion_messages(
 
 只输出 JSON 对象，不要添加任何额外的解释或说明文字。"""
 
-    context_section = ""
-    if document_context:
-        context_section = f"""
+        context_section = ""
+        if document_context:
+            context_section = f"""
 【上下文参考】
 {document_context}
 """
 
-    user = f"""【风险信息】
+        user = f"""【风险信息】
 - 风险类型: {risk_point.risk_type}
-- 风险等级: {risk_level_cn}
+- 风险等级: {risk_level_label}
 - 风险描述: {risk_point.description}
 - 判定理由: {risk_point.reason}
 
@@ -194,6 +304,59 @@ def build_modification_suggestion_messages(
 {original_text}
 {context_section}
 请针对上述风险，提供具体的文本修改建议。以纯 JSON 对象格式输出。"""
+
+    else:  # English
+        system = f"""You are a senior legal text modification expert.
+For identified risk points, you need to provide specific, actionable text modification suggestions.
+
+【Core Principle: Minimal Changes (Occam's Razor)】
+In legal practice, text modifications should follow the "minimal change principle":
+- Only modify words or phrases that must be changed, do not replace entire sentences or paragraphs
+- If one word suffices, do not change two; if adding one sentence works, do not rewrite the paragraph
+- Preserve the original sentence structure, phrasing habits, and word choices
+- Modifications should be "surgical precision" rather than "wholesale rewriting"
+
+【Modification Principles】
+1. Strictly protect the interests of "{our_party}" in the modified text
+2. The modified text should eliminate or significantly reduce the identified risk
+3. Maintain professionalism and rigor of legal text
+4. Minimize modification scope:
+   - If only a qualifier needs adding (e.g., "written", "reasonable"), add only that word
+   - If only a word needs deletion, delete only that word
+   - If only a word needs replacement, replace only that word
+   - Never "optimize" other parts just because you're modifying one section
+5. Ensure the modified text is logically clear and accurately expressed
+
+【Output Format】
+Output a pure JSON object without markdown code block markers, containing:
+- suggested_text: Complete text after modification (preserve unchanged parts, only modify necessary words/phrases)
+- modification_reason: Reason for modification (max 100 words, explain what was changed and why it reduces risk)
+- priority: "must" (must modify) | "should" (should modify) | "may" (may modify)
+
+【Priority Criteria】
+- must: Not modifying will lead to significant legal risk or direct loss
+- should: Modification significantly improves protection of our interests
+- may: Modification further improves the clause, but acceptable without it
+
+Output only the JSON object, do not add any extra explanation."""
+
+        context_section = ""
+        if document_context:
+            context_section = f"""
+【Context Reference】
+{document_context}
+"""
+
+        user = f"""【Risk Information】
+- Risk Type: {risk_point.risk_type}
+- Risk Level: {risk_level_label}
+- Risk Description: {risk_point.description}
+- Justification: {risk_point.reason}
+
+【Original Text to Modify】
+{original_text}
+{context_section}
+Please provide specific text modification suggestions for the above risk. Output in pure JSON object format."""
 
     return [
         {"role": "system", "content": system},
@@ -208,6 +371,7 @@ def build_action_recommendation_messages(
     document_summary: str,
     our_party: str,
     material_type: MaterialType,
+    language: Language = "zh-CN",
 ) -> List[Dict[str, Any]]:
     """
     构建行动建议 Prompt
@@ -217,14 +381,17 @@ def build_action_recommendation_messages(
         document_summary: 文档摘要
         our_party: 我方身份
         material_type: 材料类型
+        language: 审阅语言
 
     Returns:
         消息列表
     """
-    material_type_cn = "合同" if material_type == "contract" else "营销材料"
-    risks_summary = format_risks_summary(risks)
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
+    risks_summary = format_risks_summary(risks, language)
 
-    system = f"""你是一位资深法务顾问。
+    if language == "zh-CN":
+        system = f"""你是一位资深法务顾问。
 基于已识别的风险点，你需要提供除文本修改之外的行动建议。
 
 【建议范围】
@@ -254,16 +421,58 @@ def build_action_recommendation_messages(
 - 如果风险较小或已通过文本修改解决，可不提供额外行动建议
 - 只输出 JSON 数组，如无需行动建议则输出空数组 []"""
 
-    user = f"""【我方身份】
+        user = f"""【我方身份】
 {our_party}
 
-【{material_type_cn}概要】
+【{material_type_label}概要】
 {document_summary}
 
 【已识别的风险点】
 {risks_summary}
 
 请基于上述风险点，提供除文本修改外应采取的行动建议。以纯 JSON 数组格式输出。"""
+
+    else:  # English
+        system = f"""You are a senior legal consultant.
+Based on the identified risk points, you need to provide action recommendations beyond text modifications.
+
+【Recommendation Scope】
+1. Matters to negotiate with the counterparty
+2. Documents or evidence to supplement
+3. Issues requiring further confirmation from internal legal or other departments
+4. Matters to verify before signing/publishing
+5. Other risk prevention measures
+6. Follow-up items
+
+【Output Format】
+Output a pure JSON array without markdown code block markers. Each element should contain:
+- related_risk_ids: List of related risk point IDs (array format)
+- action_type: Action type (e.g., "Negotiation", "Documentation", "Legal Review", "Internal Approval", "Verification", etc.)
+- description: Specific action description (max 150 words, explain what to do and how)
+- urgency: "immediate" | "soon" | "normal"
+- responsible_party: Suggested responsible party (e.g., "Our Legal Team", "Our Business Team", "Counterparty", etc.)
+- deadline_suggestion: Suggested deadline (e.g., "Before signing", "Within 3 business days", can be null)
+
+【Urgency Criteria】
+- immediate: Must be addressed before proceeding
+- soon: Should be prioritized in the near term
+- normal: Can be handled in normal workflow
+
+【Important Notes】
+- Action recommendations should be specific and actionable, avoid vague suggestions
+- If risks are minor or resolved through text modifications, additional actions may not be needed
+- Output only the JSON array, output empty array [] if no action recommendations"""
+
+        user = f"""【Our Party】
+{our_party}
+
+【{material_type_label} Summary】
+{document_summary}
+
+【Identified Risk Points】
+{risks_summary}
+
+Please provide action recommendations beyond text modifications based on the above risk points. Output in pure JSON array format."""
 
     return [
         {"role": "system", "content": system},
@@ -276,6 +485,7 @@ def build_action_recommendation_messages(
 def build_document_summary_messages(
     document_text: str,
     material_type: MaterialType,
+    language: Language = "zh-CN",
 ) -> List[Dict[str, Any]]:
     """
     构建文档摘要 Prompt（用于生成行动建议前的文档概要）
@@ -283,16 +493,19 @@ def build_document_summary_messages(
     Args:
         document_text: 文档全文
         material_type: 材料类型
+        language: 审阅语言
 
     Returns:
         消息列表
     """
-    material_type_cn = "合同" if material_type == "contract" else "营销材料"
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
 
-    system = f"""你是一位法务助理。请对提供的{material_type_cn}进行简要概述。
+    if language == "zh-CN":
+        system = f"""你是一位法务助理。请对提供的{material_type_label}进行简要概述。
 
 【概述要求】
-1. 简要说明{material_type_cn}的主要内容和目的
+1. 简要说明{material_type_label}的主要内容和目的
 2. 列出主要的权利义务条款
 3. 指出关键的时间节点和金额
 4. 总结最重要的条款
@@ -300,7 +513,23 @@ def build_document_summary_messages(
 【输出格式】
 直接输出概述文本，不超过300字。"""
 
-    user = f"""请对以下{material_type_cn}进行概述：
+        user = f"""请对以下{material_type_label}进行概述：
+
+{document_text[:8000]}"""
+
+    else:  # English
+        system = f"""You are a legal assistant. Please provide a brief summary of the provided {material_type_label}.
+
+【Summary Requirements】
+1. Briefly describe the main content and purpose of the {material_type_label}
+2. List the main rights and obligations clauses
+3. Identify key timelines and amounts
+4. Summarize the most important terms
+
+【Output Format】
+Output the summary text directly, not exceeding 300 words."""
+
+        user = f"""Please summarize the following {material_type_label}:
 
 {document_text[:8000]}"""
 
@@ -593,7 +822,9 @@ def build_standard_modification_messages(
 
 # ==================== 标准制作 Prompt ====================
 
-STANDARD_CREATION_SYSTEM_PROMPT = """你是一位资深法务专家，擅长根据业务场景制定合同/营销材料审阅标准。
+STANDARD_CREATION_PROMPTS = {
+    "zh-CN": {
+        "system": """你是一位资深法务专家，擅长根据业务场景制定合同/营销材料审阅标准。
 
 ## 任务
 根据用户提供的业务信息，生成一套完整、专业、可操作的审阅标准。
@@ -631,9 +862,8 @@ STANDARD_CREATION_SYSTEM_PROMPT = """你是一位资深法务专家，擅长根�
   "generation_summary": "本次生成了X条审阅标准，重点覆盖了XX、XX等方面，其中高风险X条、中风险X条、低风险X条。"
 }
 
-只输出 JSON 对象，不要添加 markdown 代码块或额外说明。"""
-
-STANDARD_CREATION_USER_PROMPT = """## 业务信息
+只输出 JSON 对象，不要添加 markdown 代码块或额外说明。""",
+        "user": """## 业务信息
 
 **文档类型**: {document_type}
 **业务场景**: {business_scenario}
@@ -643,3 +873,65 @@ STANDARD_CREATION_USER_PROMPT = """## 业务信息
 **特殊风险提示**: {special_risks}
 {reference_section}
 请根据以上业务信息，生成一套专业的审阅标准。"""
+    },
+    "en": {
+        "system": """You are a senior legal expert skilled in creating contract/marketing material review standards based on business scenarios.
+
+## Task
+Based on the business information provided by the user, generate a complete, professional, and actionable set of review standards.
+
+## Output Format Requirements
+Each standard must contain the following fields:
+1. category (Review Category): e.g., "Party Qualification", "Rights and Obligations", "Payment Terms", "Breach of Contract", "Intellectual Property", "Confidentiality", "Dispute Resolution", etc.
+2. item (Review Item): Concise description of the check point, 10-30 words
+3. description (Detailed Description): Specific review standards and judgment criteria, including how to check, what to check, and judgment criteria, 50-200 words
+4. risk_level (Risk Level): "high" | "medium" | "low"
+5. applicable_to (Applicable Type): Based on user selection, ["contract"] or ["marketing"] or ["contract", "marketing"]
+6. usage_instruction (Usage Instruction): Describe specific scenarios, considerations, and conditions where this standard applies, 50-100 words
+
+## Generation Principles
+1. **Specific and Actionable**: Standards must be clear and specific, allowing reviewers to directly perform checks, avoiding vague descriptions like "pay attention to XX"
+2. **Focus on Key Areas**: Focus on generating standards around user-specified core concerns
+3. **Role Perspective**: Adjust review focus based on user's role (Party A/Party B) to protect user's interests
+4. **Industry Characteristics**: Consider special requirements and practices of user's industry
+5. **Risk Distribution**: Risk levels should be reasonably distributed, high-risk standards not exceeding 30%
+6. **Appropriate Quantity**: Recommend generating 8-15 standards, covering main risk points without being redundant
+
+## Output Format
+Must output a valid JSON object:
+{
+  "standards": [
+    {
+      "category": "Category Name",
+      "item": "Review Item Title",
+      "description": "Detailed review description and judgment criteria",
+      "risk_level": "high/medium/low",
+      "applicable_to": ["contract"],
+      "usage_instruction": "Applicable scenarios and considerations for this standard"
+    }
+  ],
+  "generation_summary": "Generated X review standards, focusing on XX, XX areas, including X high-risk, X medium-risk, X low-risk."
+}
+
+Output only JSON object, do not add markdown code blocks or extra explanations.""",
+        "user": """## Business Information
+
+**Document Type**: {document_type}
+**Business Scenario**: {business_scenario}
+**Core Focus Areas**: {focus_areas}
+**Our Role**: {our_role}
+**Industry**: {industry}
+**Special Risk Notes**: {special_risks}
+{reference_section}
+Please generate a professional set of review standards based on the above business information."""
+    }
+}
+
+# 保持向后兼容
+STANDARD_CREATION_SYSTEM_PROMPT = STANDARD_CREATION_PROMPTS["zh-CN"]["system"]
+STANDARD_CREATION_USER_PROMPT = STANDARD_CREATION_PROMPTS["zh-CN"]["user"]
+
+
+def get_standard_creation_prompts(language: Language = "zh-CN") -> dict:
+    """获取指定语言的标准创建提示词"""
+    return STANDARD_CREATION_PROMPTS.get(language, STANDARD_CREATION_PROMPTS["zh-CN"])

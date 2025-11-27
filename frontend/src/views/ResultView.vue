@@ -5,13 +5,14 @@
       <div class="header-info">
         <el-button text @click="goBack">
           <el-icon><ArrowLeft /></el-icon>
-          返回
+          {{ i18n.labels.back }}
         </el-button>
-        <h2>{{ result?.document_name || '审阅结果' }}</h2>
+        <h2>{{ result?.document_name || i18n.labels.reviewResult }}</h2>
         <div class="header-meta">
           <el-tag>{{ materialTypeText }}</el-tag>
-          <span>我方: {{ result?.our_party }}</span>
-          <span>审阅时间: {{ formatTime(result?.reviewed_at) }}</span>
+          <el-tag v-if="isEnglish" type="success" size="small">EN</el-tag>
+          <span>{{ i18n.labels.ourParty }} {{ result?.our_party }}</span>
+          <span>{{ i18n.labels.reviewTime }} {{ formatTime(result?.reviewed_at) }}</span>
         </div>
       </div>
       <div class="header-actions">
@@ -21,20 +22,20 @@
           :disabled="!canExportRedline"
         >
           <el-icon><EditPen /></el-icon>
-          导出修订版 Word
+          {{ i18n.labels.exportRedline }}
         </el-button>
         <el-dropdown @command="handleExport">
           <el-button type="primary">
             <el-icon><Download /></el-icon>
-            导出
+            {{ i18n.labels.export }}
             <el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="excel">导出 Excel</el-dropdown-item>
-              <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
-              <el-dropdown-item command="json">导出 JSON</el-dropdown-item>
-              <el-dropdown-item command="report">导出报告</el-dropdown-item>
+              <el-dropdown-item command="excel">{{ isEnglish ? 'Export Excel' : '导出 Excel' }}</el-dropdown-item>
+              <el-dropdown-item command="csv">{{ isEnglish ? 'Export CSV' : '导出 CSV' }}</el-dropdown-item>
+              <el-dropdown-item command="json">{{ isEnglish ? 'Export JSON' : '导出 JSON' }}</el-dropdown-item>
+              <el-dropdown-item command="report">{{ isEnglish ? 'Export Report' : '导出报告' }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -122,34 +123,34 @@
       <el-col :span="6">
         <el-card class="stat-card danger">
           <div class="stat-value">{{ summary.total_risks }}</div>
-          <div class="stat-label">风险总数</div>
+          <div class="stat-label">{{ i18n.labels.totalRisks }}</div>
           <div class="stat-detail">
-            高 {{ summary.high_risks }} / 中 {{ summary.medium_risks }} / 低 {{ summary.low_risks }}
+            {{ i18n.labels.highDetail }} {{ summary.high_risks }} / {{ i18n.labels.mediumDetail }} {{ summary.medium_risks }} / {{ i18n.labels.lowDetail }} {{ summary.low_risks }}
           </div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card class="stat-card warning">
           <div class="stat-value">{{ summary.high_risks }}</div>
-          <div class="stat-label">高风险</div>
-          <div class="stat-detail">需优先处理</div>
+          <div class="stat-label">{{ i18n.labels.highRisks }}</div>
+          <div class="stat-detail">{{ i18n.labels.priorityNeeded }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card class="stat-card primary">
           <div class="stat-value">{{ summary.total_modifications }}</div>
-          <div class="stat-label">修改建议</div>
+          <div class="stat-label">{{ i18n.labels.modifications }}</div>
           <div class="stat-detail">
-            必须 {{ summary.must_modify }} / 应该 {{ summary.should_modify }}
+            {{ i18n.labels.mustModify }} {{ summary.must_modify }} / {{ i18n.labels.shouldModify }} {{ summary.should_modify }}
           </div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card class="stat-card success">
           <div class="stat-value">{{ summary.total_actions }}</div>
-          <div class="stat-label">行动建议</div>
+          <div class="stat-label">{{ i18n.labels.actions }}</div>
           <div class="stat-detail">
-            立即处理 {{ summary.immediate_actions }}
+            {{ i18n.labels.immediateActions }} {{ summary.immediate_actions }}
           </div>
         </el-card>
       </el-col>
@@ -159,25 +160,25 @@
     <el-card class="content-card">
       <el-tabs v-model="activeTab">
         <!-- 风险点列表 -->
-        <el-tab-pane label="风险点" name="risks">
+        <el-tab-pane :label="i18n.labels.risks" name="risks">
           <template #label>
             <span>
-              风险点
+              {{ i18n.labels.risks }}
               <el-badge :value="result?.risks?.length || 0" type="danger" />
             </span>
           </template>
           <el-table :data="result?.risks || []" stripe border>
-            <el-table-column label="风险等级" width="100" align="center">
+            <el-table-column :label="i18n.labels.riskLevelCol" width="100" align="center">
               <template #default="{ row }">
                 <el-tag :type="riskLevelType(row.risk_level)">
                   {{ riskLevelText(row.risk_level) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="risk_type" label="风险类型" width="120" />
-            <el-table-column prop="description" label="风险描述" min-width="200" />
-            <el-table-column prop="reason" label="判定理由" min-width="200" />
-            <el-table-column label="原文摘录" width="200">
+            <el-table-column prop="risk_type" :label="i18n.labels.riskType" width="120" />
+            <el-table-column prop="description" :label="i18n.labels.riskDescription" min-width="200" />
+            <el-table-column prop="reason" :label="i18n.labels.reason" min-width="200" />
+            <el-table-column :label="i18n.labels.originalText" width="200">
               <template #default="{ row }">
                 <el-popover
                   v-if="row.location?.original_text"
@@ -199,10 +200,10 @@
         </el-tab-pane>
 
         <!-- 修改建议列表 -->
-        <el-tab-pane label="修改建议" name="modifications">
+        <el-tab-pane :label="i18n.labels.modifications" name="modifications">
           <template #label>
             <span>
-              修改建议
+              {{ i18n.labels.modifications }}
               <el-badge :value="result?.modifications?.length || 0" type="primary" />
             </span>
           </template>
@@ -221,8 +222,8 @@
                 <div class="mod-actions">
                   <el-switch
                     v-model="getModUIState(mod.id).showDiff"
-                    active-text="差异"
-                    inactive-text="全文"
+                    :active-text="i18n.labels.diff"
+                    :inactive-text="i18n.labels.fullText"
                     size="small"
                     style="margin-right: 12px;"
                   />
@@ -230,13 +231,13 @@
                     v-model="mod.user_confirmed"
                     @change="(val) => updateModification(mod, { user_confirmed: val })"
                   >
-                    确认采纳
+                    {{ i18n.labels.confirmAdopt }}
                   </el-checkbox>
                 </div>
               </div>
               <el-row :gutter="20" class="mod-content">
                 <el-col :span="12">
-                  <div class="text-label">当前文本</div>
+                  <div class="text-label">{{ i18n.labels.currentText }}</div>
                   <div
                     v-if="getModUIState(mod.id).showDiff"
                     class="text-box diff-view"
@@ -246,7 +247,7 @@
                 </el-col>
                 <el-col :span="12">
                   <div class="text-label">
-                    建议修改为
+                    {{ i18n.labels.suggestedText }}
                     <el-button
                       v-if="!getModUIState(mod.id).isEditing"
                       type="primary"
@@ -254,7 +255,7 @@
                       size="small"
                       @click="getModUIState(mod.id).isEditing = true"
                     >
-                      编辑
+                      {{ i18n.labels.edit }}
                     </el-button>
                     <el-button
                       v-else
@@ -263,7 +264,7 @@
                       size="small"
                       @click="saveModification(mod)"
                     >
-                      保存
+                      {{ i18n.labels.save }}
                     </el-button>
                   </div>
                   <div
@@ -292,48 +293,48 @@
                 </el-col>
               </el-row>
             </el-card>
-            <el-empty v-if="!result?.modifications?.length" description="无修改建议" />
+            <el-empty v-if="!result?.modifications?.length" :description="i18n.labels.noModifications" />
           </div>
         </el-tab-pane>
 
         <!-- 行动建议列表 -->
-        <el-tab-pane label="行动建议" name="actions">
+        <el-tab-pane :label="i18n.labels.actions" name="actions">
           <template #label>
             <span>
-              行动建议
+              {{ i18n.labels.actions }}
               <el-badge :value="result?.actions?.length || 0" type="success" />
             </span>
           </template>
           <el-table :data="result?.actions || []" stripe border>
-            <el-table-column label="紧急程度" width="100" align="center">
+            <el-table-column :label="i18n.labels.urgencyCol" width="100" align="center">
               <template #default="{ row }">
                 <el-tag :type="urgencyType(row.urgency)">
                   {{ urgencyText(row.urgency) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="action_type" label="行动类型" width="120" />
-            <el-table-column prop="description" label="具体行动" min-width="250" />
-            <el-table-column prop="responsible_party" label="负责方" width="100" />
-            <el-table-column prop="deadline_suggestion" label="建议时限" width="120">
+            <el-table-column prop="action_type" :label="i18n.labels.actionType" width="120" />
+            <el-table-column prop="description" :label="i18n.labels.specificAction" min-width="250" />
+            <el-table-column prop="responsible_party" :label="i18n.labels.responsibleParty" width="100" />
+            <el-table-column prop="deadline_suggestion" :label="i18n.labels.deadline" width="120">
               <template #default="{ row }">
                 {{ row.deadline_suggestion || '-' }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="130" align="center">
+            <el-table-column :label="i18n.labels.operation" width="130" align="center">
               <template #default="{ row }">
                 <el-checkbox
                   v-model="row.user_confirmed"
                   @change="(val) => updateAction(row, val)"
                   style="margin-right: 8px;"
-                >确认</el-checkbox>
+                >{{ i18n.labels.confirm }}</el-checkbox>
                 <el-button type="primary" link size="small" @click="openActionEditDialog(row)">
-                  编辑
+                  {{ i18n.labels.edit }}
                 </el-button>
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="!result?.actions?.length" description="无行动建议" />
+          <el-empty v-if="!result?.actions?.length" :description="i18n.labels.noActions" />
         </el-tab-pane>
       </el-tabs>
     </el-card>
@@ -436,8 +437,113 @@ const summary = computed(() => result.value?.summary || {
   immediate_actions: 0
 })
 
+// 获取当前结果的语言
+const resultLanguage = computed(() => result.value?.language || 'zh-CN')
+const isEnglish = computed(() => resultLanguage.value === 'en')
+
+// 多语言文本映射
+const i18n = computed(() => {
+  if (isEnglish.value) {
+    return {
+      materialType: { contract: 'Contract', marketing: 'Marketing Material' },
+      riskLevel: { high: 'High', medium: 'Medium', low: 'Low' },
+      priority: { must: 'Must', should: 'Should', may: 'May' },
+      urgency: { immediate: 'Immediate', soon: 'Soon', normal: 'Normal' },
+      labels: {
+        back: 'Back',
+        reviewResult: 'Review Result',
+        ourParty: 'Our Party:',
+        reviewTime: 'Review Time:',
+        exportRedline: 'Export Redline Word',
+        export: 'Export',
+        totalRisks: 'Total Risks',
+        highRisks: 'High Risks',
+        priorityNeeded: 'Priority needed',
+        modifications: 'Modifications',
+        actions: 'Actions',
+        risks: 'Risks',
+        highDetail: 'H',
+        mediumDetail: 'M',
+        lowDetail: 'L',
+        mustModify: 'must',
+        shouldModify: 'should',
+        immediateActions: 'immediate',
+        riskLevelCol: 'Risk Level',
+        riskType: 'Risk Type',
+        riskDescription: 'Description',
+        reason: 'Reason',
+        originalText: 'Original Text',
+        urgencyCol: 'Urgency',
+        actionType: 'Action Type',
+        specificAction: 'Specific Action',
+        responsibleParty: 'Responsible Party',
+        deadline: 'Deadline',
+        operation: 'Operation',
+        confirm: 'Confirm',
+        edit: 'Edit',
+        currentText: 'Current Text',
+        suggestedText: 'Suggested Modification',
+        save: 'Save',
+        confirmAdopt: 'Confirm',
+        diff: 'Diff',
+        fullText: 'Full',
+        noModifications: 'No modification suggestions',
+        noActions: 'No action recommendations'
+      }
+    }
+  }
+  return {
+    materialType: { contract: '合同', marketing: '营销材料' },
+    riskLevel: { high: '高', medium: '中', low: '低' },
+    priority: { must: '必须', should: '应该', may: '可以' },
+    urgency: { immediate: '立即', soon: '尽快', normal: '一般' },
+    labels: {
+      back: '返回',
+      reviewResult: '审阅结果',
+      ourParty: '我方:',
+      reviewTime: '审阅时间:',
+      exportRedline: '导出修订版 Word',
+      export: '导出',
+      totalRisks: '风险总数',
+      highRisks: '高风险',
+      priorityNeeded: '需优先处理',
+      modifications: '修改建议',
+      actions: '行动建议',
+      risks: '风险点',
+      highDetail: '高',
+      mediumDetail: '中',
+      lowDetail: '低',
+      mustModify: '必须',
+      shouldModify: '应该',
+      immediateActions: '立即处理',
+      riskLevelCol: '风险等级',
+      riskType: '风险类型',
+      riskDescription: '风险描述',
+      reason: '判定理由',
+      originalText: '原文摘录',
+      urgencyCol: '紧急程度',
+      actionType: '行动类型',
+      specificAction: '具体行动',
+      responsibleParty: '负责方',
+      deadline: '建议时限',
+      operation: '操作',
+      confirm: '确认',
+      edit: '编辑',
+      currentText: '当前文本',
+      suggestedText: '建议修改为',
+      save: '保存',
+      confirmAdopt: '确认采纳',
+      diff: '差异',
+      fullText: '全文',
+      noModifications: '无修改建议',
+      noActions: '无行动建议'
+    }
+  }
+})
+
 const materialTypeText = computed(() => {
-  return result.value?.material_type === 'contract' ? '合同' : '营销材料'
+  const type = result.value?.material_type
+  return i18n.value.materialType[type] || type
 })
 
 // 已确认的修改建议数量
@@ -526,7 +632,8 @@ function goBack() {
 function formatTime(isoString) {
   if (!isoString) return '-'
   const date = new Date(isoString)
-  return date.toLocaleString('zh-CN')
+  const locale = isEnglish.value ? 'en-US' : 'zh-CN'
+  return date.toLocaleString(locale)
 }
 
 function riskLevelType(level) {
@@ -535,8 +642,7 @@ function riskLevelType(level) {
 }
 
 function riskLevelText(level) {
-  const texts = { high: '高', medium: '中', low: '低' }
-  return texts[level] || level
+  return i18n.value.riskLevel[level] || level
 }
 
 function priorityType(priority) {
@@ -545,8 +651,7 @@ function priorityType(priority) {
 }
 
 function priorityText(priority) {
-  const texts = { must: '必须', should: '应该', may: '可以' }
-  return texts[priority] || priority
+  return i18n.value.priority[priority] || priority
 }
 
 function urgencyType(urgency) {
@@ -555,8 +660,7 @@ function urgencyType(urgency) {
 }
 
 function urgencyText(urgency) {
-  const texts = { immediate: '立即', soon: '尽快', normal: '一般' }
-  return texts[urgency] || urgency
+  return i18n.value.urgency[urgency] || urgency
 }
 
 /**
