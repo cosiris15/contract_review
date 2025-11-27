@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: 'https://contract-review-z9te.onrender.com/api',
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
@@ -85,19 +85,19 @@ export default {
 
   // 导出
   exportJson(taskId) {
-    return `/api/tasks/${taskId}/export/json`
+    return `https://contract-review-z9te.onrender.com/api/tasks/${taskId}/export/json`
   },
 
   exportExcel(taskId) {
-    return `/api/tasks/${taskId}/export/excel`
+    return `https://contract-review-z9te.onrender.com/api/tasks/${taskId}/export/excel`
   },
 
   exportCsv(taskId) {
-    return `/api/tasks/${taskId}/export/csv`
+    return `https://contract-review-z9te.onrender.com/api/tasks/${taskId}/export/csv`
   },
 
   exportReport(taskId) {
-    return `/api/tasks/${taskId}/export/report`
+    return `https://contract-review-z9te.onrender.com/api/tasks/${taskId}/export/report`
   },
 
   // 模板
@@ -106,7 +106,7 @@ export default {
   },
 
   downloadTemplate(templateName) {
-    return `/api/templates/${templateName}`
+    return `https://contract-review-z9te.onrender.com/api/templates/${templateName}`
   },
 
   // 健康检查
