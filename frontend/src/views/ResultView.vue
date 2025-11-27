@@ -80,14 +80,22 @@
             </el-checkbox>
           </div>
           <div class="option-desc">
-            将行动建议作为批注添加到对应风险点的文本位置
+            将已确认的行动建议作为批注添加到对应风险点的文本位置
           </div>
           <div class="option-count" v-if="redlinePreview">
-            可添加 <strong>{{ redlinePreview.commentable_actions || 0 }}</strong> 条批注 / 共 {{ redlinePreview.total_actions || 0 }} 条行动建议
+            已确认 <strong>{{ confirmedActionsCount }}</strong> 条，可添加 <strong>{{ redlinePreview.commentable_actions || 0 }}</strong> 条批注 / 共 {{ redlinePreview.total_actions || 0 }} 条行动建议
           </div>
           <el-alert
-            v-if="redlinePreview?.total_actions > 0 && redlinePreview?.commentable_actions === 0"
-            title="行动建议未关联风险点原文，无法生成批注"
+            v-if="redlinePreview?.confirmed_actions > 0 && redlinePreview?.commentable_actions === 0"
+            title="已确认的行动建议未关联风险点原文，无法生成批注"
+            type="info"
+            show-icon
+            :closable="false"
+            style="margin-top: 8px;"
+          />
+          <el-alert
+            v-else-if="redlinePreview?.total_actions > 0 && (redlinePreview?.confirmed_actions || 0) === 0"
+            title="请先在行动建议列表中勾选确认要导出的建议"
             type="info"
             show-icon
             :closable="false"
@@ -210,25 +218,68 @@
                   {{ priorityText(mod.priority) }}
                 </el-tag>
                 <span class="mod-reason">{{ mod.modification_reason }}</span>
-                <el-checkbox
-                  v-model="mod.user_confirmed"
-                  @change="(val) => updateModification(mod, { user_confirmed: val })"
-                >
-                  确认采纳
-                </el-checkbox>
+                <div class="mod-actions">
+                  <el-switch
+                    v-model="mod.showDiff"
+                    active-text="差异"
+                    inactive-text="全文"
+                    size="small"
+                    style="margin-right: 12px;"
+                  />
+                  <el-checkbox
+                    v-model="mod.user_confirmed"
+                    @change="(val) => updateModification(mod, { user_confirmed: val })"
+                  >
+                    确认采纳
+                  </el-checkbox>
+                </div>
               </div>
               <el-row :gutter="20" class="mod-content">
                 <el-col :span="12">
                   <div class="text-label">当前文本</div>
-                  <div class="text-box original">{{ mod.original_text }}</div>
+                  <div
+                    v-if="mod.showDiff"
+                    class="text-box diff-view"
+                    v-html="getDiffHtml(mod).originalHtml"
+                  ></div>
+                  <div v-else class="text-box original">{{ mod.original_text }}</div>
                 </el-col>
                 <el-col :span="12">
-                  <div class="text-label">建议修改为</div>
+                  <div class="text-label">
+                    建议修改为
+                    <el-button
+                      v-if="!mod.isEditing"
+                      type="primary"
+                      link
+                      size="small"
+                      @click="mod.isEditing = true"
+                    >
+                      编辑
+                    </el-button>
+                    <el-button
+                      v-else
+                      type="success"
+                      link
+                      size="small"
+                      @click="saveModification(mod)"
+                    >
+                      保存
+                    </el-button>
+                  </div>
+                  <div
+                    v-if="mod.showDiff && !mod.isEditing"
+                    class="text-box diff-view suggested"
+                    v-html="getDiffHtml(mod).modifiedHtml"
+                  ></div>
+                  <div
+                    v-else-if="!mod.isEditing"
+                    class="text-box suggested"
+                  >{{ mod.editText || mod.suggested_text }}</div>
                   <el-input
+                    v-else
                     type="textarea"
                     :rows="4"
                     v-model="mod.editText"
-                    @blur="updateModification(mod, { user_modified_text: mod.editText })"
                   />
                 </el-col>
               </el-row>
@@ -321,7 +372,13 @@ const confirmedCount = computed(() => {
   return result.value.modifications.filter(m => m.user_confirmed).length
 })
 
-// 是否有可添加批注的行动建议
+// 已确认的行动建议数量
+const confirmedActionsCount = computed(() => {
+  if (!result.value?.actions) return 0
+  return result.value.actions.filter(a => a.user_confirmed).length
+})
+
+// 是否有可添加批注的行动建议（需要用户已确认且有关联风险点原文）
 const hasCommentableActions = computed(() => {
   return redlinePreview.value?.commentable_actions > 0
 })
@@ -339,10 +396,12 @@ onMounted(async () => {
     loading.value = true
     try {
       await store.loadResult(taskId.value)
-      // 初始化编辑文本
+      // 初始化编辑文本和UI状态
       if (result.value?.modifications) {
         result.value.modifications.forEach(mod => {
           mod.editText = mod.user_modified_text || mod.suggested_text
+          mod.showDiff = true  // 默认显示差异视图
+          mod.isEditing = false
         })
       }
       // 获取 Redline 预览信息
@@ -404,6 +463,150 @@ function urgencyText(urgency) {
   return texts[urgency] || urgency
 }
 
+/**
+ * 计算两个文本之间的词级别 diff
+ * 返回 HTML 字符串，删除的部分用 <del> 标记，新增的部分用 <ins> 标记
+ */
+function computeWordDiff(original, modified) {
+  if (!original || !modified) return { originalHtml: original || '', modifiedHtml: modified || '' }
+  if (original === modified) return { originalHtml: original, modifiedHtml: modified }
+
+  // 按字符分割（中文）或按词分割（英文混合）
+  const splitText = (text) => {
+    // 使用更细粒度的分割：按中文字符、英文单词、标点符号分割
+    const tokens = []
+    let current = ''
+    let currentType = null // 'cn' | 'en' | 'space' | 'punct'
+
+    for (const char of text) {
+      const isChinese = /[\u4e00-\u9fa5]/.test(char)
+      const isEnglish = /[a-zA-Z0-9]/.test(char)
+      const isSpace = /\s/.test(char)
+
+      let charType
+      if (isChinese) charType = 'cn'
+      else if (isEnglish) charType = 'en'
+      else if (isSpace) charType = 'space'
+      else charType = 'punct'
+
+      // 中文每个字符单独处理
+      if (charType === 'cn') {
+        if (current) tokens.push(current)
+        tokens.push(char)
+        current = ''
+        currentType = null
+      } else if (charType === currentType && charType === 'en') {
+        // 英文字母和数字连续
+        current += char
+      } else {
+        if (current) tokens.push(current)
+        current = char
+        currentType = charType
+      }
+    }
+    if (current) tokens.push(current)
+    return tokens
+  }
+
+  const origTokens = splitText(original)
+  const modTokens = splitText(modified)
+
+  // 使用简化的 LCS (最长公共子序列) 算法找出相同部分
+  const m = origTokens.length
+  const n = modTokens.length
+
+  // 创建 DP 表
+  const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0))
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (origTokens[i - 1] === modTokens[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+      }
+    }
+  }
+
+  // 回溯找出 LCS
+  const lcs = []
+  let i = m, j = n
+  while (i > 0 && j > 0) {
+    if (origTokens[i - 1] === modTokens[j - 1]) {
+      lcs.unshift({ origIdx: i - 1, modIdx: j - 1, token: origTokens[i - 1] })
+      i--
+      j--
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--
+    } else {
+      j--
+    }
+  }
+
+  // 根据 LCS 生成 diff 结果
+  const escapeHtml = (str) => {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+  }
+
+  // 生成原文的 HTML（标记删除部分）
+  let originalHtml = ''
+  let lastOrigIdx = -1
+  for (const item of lcs) {
+    // 添加删除的部分
+    for (let k = lastOrigIdx + 1; k < item.origIdx; k++) {
+      originalHtml += `<del class="diff-del">${escapeHtml(origTokens[k])}</del>`
+    }
+    // 添加相同的部分
+    originalHtml += escapeHtml(item.token)
+    lastOrigIdx = item.origIdx
+  }
+  // 处理剩余的删除部分
+  for (let k = lastOrigIdx + 1; k < m; k++) {
+    originalHtml += `<del class="diff-del">${escapeHtml(origTokens[k])}</del>`
+  }
+
+  // 生成修改后文本的 HTML（标记新增部分）
+  let modifiedHtml = ''
+  let lastModIdx = -1
+  for (const item of lcs) {
+    // 添加新增的部分
+    for (let k = lastModIdx + 1; k < item.modIdx; k++) {
+      modifiedHtml += `<ins class="diff-ins">${escapeHtml(modTokens[k])}</ins>`
+    }
+    // 添加相同的部分
+    modifiedHtml += escapeHtml(item.token)
+    lastModIdx = item.modIdx
+  }
+  // 处理剩余的新增部分
+  for (let k = lastModIdx + 1; k < n; k++) {
+    modifiedHtml += `<ins class="diff-ins">${escapeHtml(modTokens[k])}</ins>`
+  }
+
+  return { originalHtml, modifiedHtml }
+}
+
+// 获取 diff HTML
+function getDiffHtml(mod) {
+  const original = mod.original_text || ''
+  const modified = mod.editText || mod.user_modified_text || mod.suggested_text || ''
+  return computeWordDiff(original, modified)
+}
+
+// 保存修改
+async function saveModification(mod) {
+  try {
+    await store.updateModification(taskId.value, mod.id, { user_modified_text: mod.editText })
+    mod.isEditing = false
+    ElMessage.success('保存成功')
+  } catch (error) {
+    ElMessage.error('保存失败')
+  }
+}
+
 async function updateModification(mod, updates) {
   try {
     await store.updateModification(taskId.value, mod.id, updates)
@@ -421,6 +624,8 @@ async function updateModification(mod, updates) {
 async function updateAction(action, confirmed) {
   try {
     await store.updateAction(taskId.value, action.id, confirmed)
+    // 重新加载 Redline 预览信息以更新可批注数量
+    await loadRedlinePreview()
   } catch (error) {
     ElMessage.error('更新失败')
   }
@@ -618,6 +823,41 @@ async function handleExportRedline() {
 .text-box.original {
   color: #909399;
   text-decoration: line-through;
+}
+
+.text-box.suggested {
+  color: #303133;
+}
+
+.text-box.diff-view {
+  color: #303133;
+  text-decoration: none;
+  line-height: 1.8;
+}
+
+/* Diff 样式 */
+.text-box :deep(.diff-del),
+.text-box.diff-view :deep(.diff-del) {
+  background-color: #fde2e2;
+  color: #f56c6c;
+  text-decoration: line-through;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.text-box :deep(.diff-ins),
+.text-box.diff-view :deep(.diff-ins) {
+  background-color: #e1f3d8;
+  color: #67c23a;
+  text-decoration: none;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 500;
+}
+
+.mod-actions {
+  display: flex;
+  align-items: center;
 }
 
 /* Redline 导出对话框样式 */

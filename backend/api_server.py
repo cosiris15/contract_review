@@ -780,12 +780,16 @@ async def preview_redline(task_id: str):
 
     confirmed_count = sum(1 for m in result.modifications if m.user_confirmed)
     actions_count = len(result.actions) if result.actions else 0
+    confirmed_actions_count = sum(1 for a in result.actions if a.user_confirmed) if result.actions else 0
 
-    # 检查有多少行动建议可以作为批注（有关联风险点且风险点有原文）
+    # 检查有多少已确认的行动建议可以作为批注（有关联风险点且风险点有原文）
     commentable_actions = 0
     if result.actions and result.risks:
         risk_map = {r.id: r for r in result.risks}
         for action in result.actions:
+            # 只统计用户已确认的行动建议
+            if not action.user_confirmed:
+                continue
             for risk_id in action.related_risk_ids:
                 risk = risk_map.get(risk_id)
                 if risk and risk.location and risk.location.original_text:
@@ -798,6 +802,7 @@ async def preview_redline(task_id: str):
         "total_modifications": len(result.modifications),
         "confirmed_modifications": confirmed_count,
         "total_actions": actions_count,
+        "confirmed_actions": confirmed_actions_count,
         "commentable_actions": commentable_actions,
         "document_format": doc_path.suffix.lower() if doc_path else None,
     }

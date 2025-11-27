@@ -23,6 +23,128 @@ from .models import ModificationSuggestion, ActionRecommendation, RiskPoint
 
 logger = logging.getLogger(__name__)
 
+
+def compute_word_level_diff(original: str, modified: str) -> List[Tuple[str, str]]:
+    """
+    计算词级别的 diff，返回操作列表
+
+    Args:
+        original: 原始文本
+        modified: 修改后文本
+
+    Returns:
+        操作列表，每个元素为 (操作类型, 文本)
+        操作类型: 'keep' | 'delete' | 'insert'
+    """
+    if original == modified:
+        return [('keep', original)]
+
+    def tokenize(text: str) -> List[str]:
+        """按字符/词分割文本"""
+        tokens = []
+        current = ''
+        current_type = None  # 'cn' | 'en' | 'space' | 'punct'
+
+        for char in text:
+            is_chinese = '\u4e00' <= char <= '\u9fa5'
+            is_english = char.isalnum() and not is_chinese
+            is_space = char.isspace()
+
+            if is_chinese:
+                char_type = 'cn'
+            elif is_english:
+                char_type = 'en'
+            elif is_space:
+                char_type = 'space'
+            else:
+                char_type = 'punct'
+
+            # 中文每个字符单独处理
+            if char_type == 'cn':
+                if current:
+                    tokens.append(current)
+                tokens.append(char)
+                current = ''
+                current_type = None
+            elif char_type == current_type and char_type == 'en':
+                # 英文字母和数字连续
+                current += char
+            else:
+                if current:
+                    tokens.append(current)
+                current = char
+                current_type = char_type
+
+        if current:
+            tokens.append(current)
+        return tokens
+
+    orig_tokens = tokenize(original)
+    mod_tokens = tokenize(modified)
+
+    m = len(orig_tokens)
+    n = len(mod_tokens)
+
+    # 使用 LCS 动态规划
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if orig_tokens[i - 1] == mod_tokens[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    # 回溯找出 LCS
+    lcs = []
+    i, j = m, n
+    while i > 0 and j > 0:
+        if orig_tokens[i - 1] == mod_tokens[j - 1]:
+            lcs.append((i - 1, j - 1, orig_tokens[i - 1]))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] > dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    lcs.reverse()
+
+    # 根据 LCS 生成 diff 操作
+    operations = []
+    last_orig_idx = -1
+    last_mod_idx = -1
+
+    for orig_idx, mod_idx, token in lcs:
+        # 添加原文中被删除的部分
+        for k in range(last_orig_idx + 1, orig_idx):
+            operations.append(('delete', orig_tokens[k]))
+
+        # 添加修改文本中新增的部分
+        for k in range(last_mod_idx + 1, mod_idx):
+            operations.append(('insert', mod_tokens[k]))
+
+        # 添加保留的部分
+        operations.append(('keep', token))
+
+        last_orig_idx = orig_idx
+        last_mod_idx = mod_idx
+
+    # 处理剩余部分
+    for k in range(last_orig_idx + 1, m):
+        operations.append(('delete', orig_tokens[k]))
+    for k in range(last_mod_idx + 1, n):
+        operations.append(('insert', mod_tokens[k]))
+
+    # 合并连续相同操作
+    merged = []
+    for op_type, text in operations:
+        if merged and merged[-1][0] == op_type:
+            merged[-1] = (op_type, merged[-1][1] + text)
+        else:
+            merged.append((op_type, text))
+
+    return merged
+
 # OpenXML 命名空间
 NAMESPACES = {
     'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -455,7 +577,7 @@ class RedlineGenerator:
         timestamp: str,
     ) -> None:
         """
-        在单个 run 中应用修订
+        在单个 run 中应用词级别修订
         """
         w = NAMESPACES['w']
         original_text = run.text
@@ -484,25 +606,35 @@ class RedlineGenerator:
             parent.insert(insert_index, prefix_run)
             insert_index += 1
 
-        # 2. 添加删除标记
-        del_elem = etree.Element(f"{{{w}}}del")
-        del_elem.set(f"{{{w}}}author", author)
-        del_elem.set(f"{{{w}}}date", timestamp)
-        del_run = self._create_text_run(replaced, rPr_copy, is_delete=True)
-        del_elem.append(del_run)
-        parent.insert(insert_index, del_elem)
-        insert_index += 1
+        # 2. 使用词级别 diff 算法
+        diff_ops = compute_word_level_diff(replaced, new_text)
 
-        # 3. 添加插入标记
-        ins_elem = etree.Element(f"{{{w}}}ins")
-        ins_elem.set(f"{{{w}}}author", author)
-        ins_elem.set(f"{{{w}}}date", timestamp)
-        ins_run = self._create_text_run(new_text, rPr_copy)
-        ins_elem.append(ins_run)
-        parent.insert(insert_index, ins_elem)
-        insert_index += 1
+        for op_type, text in diff_ops:
+            if op_type == 'keep':
+                # 保留的文本
+                keep_run = self._create_text_run(text, rPr_copy)
+                parent.insert(insert_index, keep_run)
+                insert_index += 1
+            elif op_type == 'delete':
+                # 删除的文本
+                del_elem = etree.Element(f"{{{w}}}del")
+                del_elem.set(f"{{{w}}}author", author)
+                del_elem.set(f"{{{w}}}date", timestamp)
+                del_run = self._create_text_run(text, rPr_copy, is_delete=True)
+                del_elem.append(del_run)
+                parent.insert(insert_index, del_elem)
+                insert_index += 1
+            elif op_type == 'insert':
+                # 插入的文本
+                ins_elem = etree.Element(f"{{{w}}}ins")
+                ins_elem.set(f"{{{w}}}author", author)
+                ins_elem.set(f"{{{w}}}date", timestamp)
+                ins_run = self._create_text_run(text, rPr_copy)
+                ins_elem.append(ins_run)
+                parent.insert(insert_index, ins_elem)
+                insert_index += 1
 
-        # 4. 添加后缀（如果有）
+        # 3. 添加后缀（如果有）
         if suffix:
             suffix_run = self._create_text_run(suffix, rPr_copy)
             parent.insert(insert_index, suffix_run)
@@ -515,7 +647,7 @@ class RedlineGenerator:
         timestamp: str,
     ) -> None:
         """
-        跨多个 run 应用修订
+        跨多个 run 应用词级别修订
         """
         w = NAMESPACES['w']
         runs = match.runs
@@ -561,25 +693,35 @@ class RedlineGenerator:
             parent.insert(insert_index, prefix_run)
             insert_index += 1
 
-        # 2. 添加删除标记
-        del_elem = etree.Element(f"{{{w}}}del")
-        del_elem.set(f"{{{w}}}author", author)
-        del_elem.set(f"{{{w}}}date", timestamp)
-        del_run = self._create_text_run(full_replaced, rPr_copy, is_delete=True)
-        del_elem.append(del_run)
-        parent.insert(insert_index, del_elem)
-        insert_index += 1
+        # 2. 使用词级别 diff 算法
+        diff_ops = compute_word_level_diff(full_replaced, new_text)
 
-        # 3. 添加插入标记
-        ins_elem = etree.Element(f"{{{w}}}ins")
-        ins_elem.set(f"{{{w}}}author", author)
-        ins_elem.set(f"{{{w}}}date", timestamp)
-        ins_run = self._create_text_run(new_text, rPr_copy)
-        ins_elem.append(ins_run)
-        parent.insert(insert_index, ins_elem)
-        insert_index += 1
+        for op_type, text in diff_ops:
+            if op_type == 'keep':
+                # 保留的文本
+                keep_run = self._create_text_run(text, rPr_copy)
+                parent.insert(insert_index, keep_run)
+                insert_index += 1
+            elif op_type == 'delete':
+                # 删除的文本
+                del_elem = etree.Element(f"{{{w}}}del")
+                del_elem.set(f"{{{w}}}author", author)
+                del_elem.set(f"{{{w}}}date", timestamp)
+                del_run = self._create_text_run(text, rPr_copy, is_delete=True)
+                del_elem.append(del_run)
+                parent.insert(insert_index, del_elem)
+                insert_index += 1
+            elif op_type == 'insert':
+                # 插入的文本
+                ins_elem = etree.Element(f"{{{w}}}ins")
+                ins_elem.set(f"{{{w}}}author", author)
+                ins_elem.set(f"{{{w}}}date", timestamp)
+                ins_run = self._create_text_run(text, rPr_copy)
+                ins_elem.append(ins_run)
+                parent.insert(insert_index, ins_elem)
+                insert_index += 1
 
-        # 4. 添加后缀
+        # 3. 添加后缀
         if suffix:
             suffix_run = self._create_text_run(suffix, rPr_copy)
             parent.insert(insert_index, suffix_run)
@@ -645,6 +787,7 @@ class RedlineGenerator:
         risks: List[RiskPoint],
         author: str = "AI审阅助手",
         initials: str = "AI",
+        filter_confirmed: bool = True,
     ) -> Tuple[int, int, List[str]]:
         """
         将行动建议作为批注添加到文档
@@ -654,12 +797,22 @@ class RedlineGenerator:
             risks: 风险点列表（用于定位）
             author: 批注作者
             initials: 作者缩写
+            filter_confirmed: 是否只处理用户已确认的行动建议
 
         Returns:
             (添加数量, 跳过数量, 跳过原因列表)
         """
         if not actions:
             return 0, 0, []
+
+        # 筛选要处理的行动建议：只处理用户确认的
+        if filter_confirmed:
+            actions_to_process = [a for a in actions if a.user_confirmed]
+        else:
+            actions_to_process = actions
+
+        if not actions_to_process:
+            return 0, 0, ["没有已确认的行动建议"]
 
         # 构建风险点 ID 到风险点的映射
         risk_map: Dict[str, RiskPoint] = {r.id: r for r in risks}
@@ -670,7 +823,7 @@ class RedlineGenerator:
 
         timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        for action in actions:
+        for action in actions_to_process:
             # 找到关联的风险点
             target_text = None
             for risk_id in action.related_risk_ids:
@@ -993,6 +1146,7 @@ def generate_redline_document(
                 actions=actions,
                 risks=risks,
                 author=author,
+                filter_confirmed=True,  # 只导出用户确认的行动建议
             )
             result.comments_added = comments_added
             result.comments_skipped = comments_skipped
