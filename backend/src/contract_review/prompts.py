@@ -291,3 +291,122 @@ def build_document_summary_messages(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+# ==================== 标准库相关 Prompt ====================
+
+def build_usage_instruction_messages(
+    standard: ReviewStandard,
+    sample_document_text: str = "",
+) -> List[Dict[str, Any]]:
+    """
+    构建生成适用说明的 Prompt
+
+    Args:
+        standard: 审核标准
+        sample_document_text: 参考文档片段（可选）
+
+    Returns:
+        消息列表
+    """
+    risk_level_cn = {"high": "高", "medium": "中", "low": "低"}.get(standard.risk_level, "中")
+    applicable_to_cn = "、".join([
+        "合同" if t == "contract" else "营销材料"
+        for t in standard.applicable_to
+    ])
+
+    system = """你是一位资深法务专家。根据给定的审核标准，生成一段简洁的"适用说明"。
+
+【输出要求】
+1. 说明应简洁明了，50-100字
+2. 重点说明：
+   - 适用的文档类型（合同、营销材料等）
+   - 适用的业务场景
+   - 需要重点关注的情况
+3. 使用专业但易懂的语言
+
+直接输出适用说明文本，不要添加任何前缀、标记或解释。"""
+
+    sample_section = ""
+    if sample_document_text:
+        sample_section = f"""
+
+【参考文档片段】
+{sample_document_text[:800]}"""
+
+    user = f"""【审核标准信息】
+- 分类：{standard.category}
+- 审核要点：{standard.item}
+- 详细说明：{standard.description}
+- 风险等级：{risk_level_cn}
+- 适用类型：{applicable_to_cn}
+{sample_section}
+
+请为这条审核标准生成适用说明。"""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def build_standard_recommendation_messages(
+    document_text: str,
+    material_type: MaterialType,
+    available_standards: List[ReviewStandard],
+) -> List[Dict[str, Any]]:
+    """
+    构建标准推荐 Prompt
+
+    Args:
+        document_text: 待审阅文档文本
+        material_type: 材料类型
+        available_standards: 可用的审核标准列表
+
+    Returns:
+        消息列表
+    """
+    material_type_cn = "合同" if material_type == "contract" else "营销材料"
+
+    # 格式化可用标准
+    standards_lines = []
+    for s in available_standards:
+        risk_cn = {"high": "高", "medium": "中", "low": "低"}.get(s.risk_level, "中")
+        line = f"- [{s.id}] {s.category}/{s.item}（{risk_cn}风险）: {s.description}"
+        if s.usage_instruction:
+            line += f" [适用说明: {s.usage_instruction}]"
+        standards_lines.append(line)
+
+    standards_text = "\n".join(standards_lines)
+
+    system = f"""你是一位资深法务审阅专家。根据给定的{material_type_cn}文本，从审核标准库中推荐最相关的审核标准。
+
+【任务说明】
+1. 分析文档内容，理解其业务场景和关键条款
+2. 从提供的审核标准中选择最适用的标准
+3. 为每个推荐的标准说明推荐理由
+
+【输出格式】
+输出纯 JSON 数组，每个元素包含：
+- standard_id: 推荐的标准 ID
+- relevance_score: 相关性评分（0-1，1 表示非常相关）
+- match_reason: 推荐理由（不超过 50 字）
+
+【注意事项】
+- 只推荐真正相关的标准，不要为了凑数而推荐
+- 按相关性从高到低排序
+- 相关性低于 0.3 的标准不要推荐
+- 只输出 JSON 数组，不要添加 markdown 代码块或额外说明"""
+
+    user = f"""【待分析的{material_type_cn}】
+{document_text[:5000]}
+
+【可用的审核标准】
+{standards_text}
+
+请分析文档并推荐最相关的审核标准。"""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]

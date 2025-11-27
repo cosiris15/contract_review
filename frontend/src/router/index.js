@@ -18,6 +18,12 @@ const routes = [
     name: 'Result',
     component: () => import('@/views/ResultView.vue'),
     meta: { title: '审阅结果' }
+  },
+  {
+    path: '/standards',
+    name: 'Standards',
+    component: () => import('@/views/StandardsView.vue'),
+    meta: { title: '标准管理' }
   }
 ]
 

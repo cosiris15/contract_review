@@ -8,6 +8,10 @@
               <el-icon :size="24"><Document /></el-icon>
               <span>法务文本审阅系统</span>
             </router-link>
+            <nav class="nav-links">
+              <router-link to="/" class="nav-link">首页</router-link>
+              <router-link to="/standards" class="nav-link">标准管理</router-link>
+            </nav>
           </div>
           <div class="header-right">
             <el-tag type="info" size="small">v1.0.0</el-tag>
@@ -58,6 +62,30 @@ html, body {
 .header-left {
   display: flex;
   align-items: center;
+  gap: 32px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 24px;
+}
+
+.nav-link {
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 4px 0;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.nav-link:hover {
+  color: white;
+}
+
+.nav-link.router-link-active {
+  color: white;
+  border-bottom-color: white;
 }
 
 .logo {

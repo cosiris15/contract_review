@@ -23,13 +23,21 @@ from src.contract_review.models import (
     MaterialType,
     ModificationSuggestion,
     ReviewResult,
+    ReviewStandard,
     ReviewTask,
+    StandardRecommendation,
 )
 from src.contract_review.result_formatter import ResultFormatter, generate_summary_report
 from src.contract_review.review_engine import ReviewEngine
+from src.contract_review.standard_library import StandardLibraryManager
 from src.contract_review.standard_parser import parse_standard_file
 from src.contract_review.storage import StorageManager
 from src.contract_review.tasks import TaskManager
+from src.contract_review.prompts import (
+    build_usage_instruction_messages,
+    build_standard_recommendation_messages,
+)
+from src.contract_review.llm_client import LLMClient
 
 # 配置日志
 logging.basicConfig(
@@ -61,6 +69,13 @@ app.add_middleware(
 task_manager = TaskManager(settings.review.tasks_dir)
 storage_manager = StorageManager(settings.review.tasks_dir)
 formatter = ResultFormatter()
+
+# 标准库目录
+STANDARD_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "standard_library"
+standard_library_manager = StandardLibraryManager(STANDARD_LIBRARY_DIR)
+
+# LLM 客户端
+llm_client = LLMClient(settings.llm)
 
 # 默认模板目录
 TEMPLATES_DIR = settings.review.templates_dir
@@ -117,6 +132,97 @@ class TemplateInfo(BaseModel):
     name: str
     filename: str
     description: str
+
+
+# ---------- 标准库相关模型 ----------
+
+class StandardResponse(BaseModel):
+    """标准响应"""
+    id: str
+    category: str
+    item: str
+    description: str
+    risk_level: str
+    applicable_to: List[str]
+    usage_instruction: Optional[str] = None
+    tags: List[str] = []
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class CreateStandardRequest(BaseModel):
+    """创建标准请求"""
+    category: str
+    item: str
+    description: str
+    risk_level: str = "medium"
+    applicable_to: List[str] = ["contract", "marketing"]
+    usage_instruction: Optional[str] = None
+    tags: List[str] = []
+
+
+class UpdateStandardRequest(BaseModel):
+    """更新标准请求"""
+    category: Optional[str] = None
+    item: Optional[str] = None
+    description: Optional[str] = None
+    risk_level: Optional[str] = None
+    applicable_to: Optional[List[str]] = None
+    usage_instruction: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class BatchCreateStandardsRequest(BaseModel):
+    """批量创建标准请求"""
+    standards: List[CreateStandardRequest]
+
+
+class StandardPreviewResponse(BaseModel):
+    """标准预览响应"""
+    standards: List[StandardResponse]
+    total_count: int
+    parse_warnings: List[str] = []
+
+
+class SaveToLibraryRequest(BaseModel):
+    """保存到标准库请求"""
+    standards: List[CreateStandardRequest]
+    replace: bool = False  # 是否替换现有库
+
+
+class StandardLibraryStatsResponse(BaseModel):
+    """标准库统计信息"""
+    total: int
+    by_category: dict
+    by_risk_level: dict
+    by_material_type: dict
+    updated_at: Optional[str] = None
+
+
+class GenerateUsageInstructionRequest(BaseModel):
+    """生成适用说明请求"""
+    standard_ids: List[str]
+    sample_document_text: Optional[str] = None
+
+
+class UsageInstructionResult(BaseModel):
+    """适用说明生成结果"""
+    standard_id: str
+    usage_instruction: str
+
+
+class RecommendStandardsRequest(BaseModel):
+    """推荐标准请求"""
+    document_text: str
+    material_type: str = "contract"
+
+
+class StandardRecommendationResponse(BaseModel):
+    """标准推荐响应"""
+    standard_id: str
+    relevance_score: float
+    match_reason: str
+    standard: StandardResponse
 
 
 # ==================== 任务管理 API ====================
@@ -540,6 +646,379 @@ async def download_template(template_name: str):
         filename=template_path.name,
         media_type="application/octet-stream",
     )
+
+
+# ==================== 标准库管理 API ====================
+
+def _standard_to_response(s: ReviewStandard) -> StandardResponse:
+    """将 ReviewStandard 转换为 StandardResponse"""
+    return StandardResponse(
+        id=s.id,
+        category=s.category,
+        item=s.item,
+        description=s.description,
+        risk_level=s.risk_level,
+        applicable_to=list(s.applicable_to),
+        usage_instruction=s.usage_instruction,
+        tags=list(s.tags),
+        created_at=s.created_at.isoformat() if s.created_at else None,
+        updated_at=s.updated_at.isoformat() if s.updated_at else None,
+    )
+
+
+@app.get("/api/standard-library", response_model=StandardLibraryStatsResponse)
+async def get_standard_library_stats():
+    """获取标准库统计信息"""
+    stats = standard_library_manager.get_stats()
+    return StandardLibraryStatsResponse(**stats)
+
+
+@app.get("/api/standard-library/standards", response_model=List[StandardResponse])
+async def list_library_standards(
+    category: Optional[str] = Query(default=None, description="按分类筛选"),
+    material_type: Optional[str] = Query(default=None, description="按材料类型筛选"),
+    keyword: Optional[str] = Query(default=None, description="搜索关键词"),
+):
+    """获取标准库中的所有标准"""
+    standards = standard_library_manager.list_standards(
+        category=category,
+        material_type=material_type,
+        keyword=keyword,
+    )
+    return [_standard_to_response(s) for s in standards]
+
+
+@app.post("/api/standard-library/standards", response_model=StandardResponse)
+async def create_library_standard(request: CreateStandardRequest):
+    """添加单条标准到标准库"""
+    standard = ReviewStandard(
+        category=request.category,
+        item=request.item,
+        description=request.description,
+        risk_level=request.risk_level,
+        applicable_to=request.applicable_to,
+        usage_instruction=request.usage_instruction,
+        tags=request.tags,
+    )
+    standard_id = standard_library_manager.add_standard(standard)
+
+    # 重新获取以返回完整信息
+    created = standard_library_manager.get_standard(standard_id)
+    logger.info(f"创建标准: {standard_id} - {request.item}")
+    return _standard_to_response(created)
+
+
+@app.post("/api/standard-library/standards/batch")
+async def batch_create_library_standards(request: BatchCreateStandardsRequest):
+    """批量添加标准到标准库"""
+    standards = []
+    for req in request.standards:
+        standard = ReviewStandard(
+            category=req.category,
+            item=req.item,
+            description=req.description,
+            risk_level=req.risk_level,
+            applicable_to=req.applicable_to,
+            usage_instruction=req.usage_instruction,
+            tags=req.tags,
+        )
+        standards.append(standard)
+
+    ids = standard_library_manager.add_standards_batch(standards)
+    logger.info(f"批量创建 {len(ids)} 条标准")
+    return {"message": f"成功添加 {len(ids)} 条标准", "ids": ids}
+
+
+@app.get("/api/standard-library/standards/{standard_id}", response_model=StandardResponse)
+async def get_library_standard(standard_id: str):
+    """获取单条标准详情"""
+    standard = standard_library_manager.get_standard(standard_id)
+    if not standard:
+        raise HTTPException(status_code=404, detail="标准不存在")
+    return _standard_to_response(standard)
+
+
+@app.put("/api/standard-library/standards/{standard_id}", response_model=StandardResponse)
+async def update_library_standard(standard_id: str, request: UpdateStandardRequest):
+    """更新标准"""
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+
+    success = standard_library_manager.update_standard(standard_id, updates)
+    if not success:
+        raise HTTPException(status_code=404, detail="标准不存在")
+
+    updated = standard_library_manager.get_standard(standard_id)
+    logger.info(f"更新标准: {standard_id}")
+    return _standard_to_response(updated)
+
+
+@app.delete("/api/standard-library/standards/{standard_id}")
+async def delete_library_standard(standard_id: str):
+    """删除标准"""
+    success = standard_library_manager.delete_standard(standard_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="标准不存在")
+
+    logger.info(f"删除标准: {standard_id}")
+    return {"message": "删除成功"}
+
+
+@app.get("/api/standard-library/categories")
+async def get_library_categories():
+    """获取所有分类"""
+    categories = standard_library_manager.get_categories()
+    return {"categories": categories}
+
+
+@app.get("/api/standard-library/export")
+async def export_library(format: str = Query(default="csv", regex="^(csv|json)$")):
+    """导出标准库"""
+    if format == "csv":
+        content = standard_library_manager.export_to_csv()
+        media_type = "text/csv"
+        filename = "standard_library.csv"
+    else:
+        content = standard_library_manager.export_to_json()
+        media_type = "application/json"
+        filename = "standard_library.json"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/standard-library/import")
+async def import_to_library(
+    file: UploadFile = File(...),
+    replace: bool = Query(default=False, description="是否替换现有库"),
+):
+    """从文件导入标准到标准库"""
+    import tempfile
+
+    # 检查文件类型
+    suffix = Path(file.filename).suffix.lower()
+    allowed = {".xlsx", ".xls", ".csv", ".docx", ".md", ".txt"}
+    if suffix not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型。支持的格式: {', '.join(allowed)}",
+        )
+
+    # 保存临时文件并解析
+    content = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # 解析标准文件
+        standard_set = parse_standard_file(tmp_path)
+
+        # 导入到标准库
+        imported_count, warnings = standard_library_manager.import_from_parsed_standards(
+            standard_set.standards,
+            replace=replace,
+        )
+
+        logger.info(f"导入标准: {imported_count} 条，来自 {file.filename}")
+
+        return {
+            "message": f"成功导入 {imported_count} 条标准",
+            "imported_count": imported_count,
+            "warnings": warnings,
+        }
+    finally:
+        tmp_path.unlink()
+
+
+# ==================== 标准预览与入库 API ====================
+
+@app.post("/api/standards/preview", response_model=StandardPreviewResponse)
+async def preview_standards(file: UploadFile = File(...)):
+    """预览上传的标准文件（解析但不保存）"""
+    import tempfile
+
+    # 检查文件类型
+    suffix = Path(file.filename).suffix.lower()
+    allowed = {".xlsx", ".xls", ".csv", ".docx", ".md", ".txt"}
+    if suffix not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型。支持的格式: {', '.join(allowed)}",
+        )
+
+    # 保存临时文件并解析
+    content = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # 解析标准文件
+        standard_set = parse_standard_file(tmp_path)
+
+        # 转换为响应格式
+        standards = [_standard_to_response(s) for s in standard_set.standards]
+
+        logger.info(f"预览标准文件: {file.filename}，共 {len(standards)} 条")
+
+        return StandardPreviewResponse(
+            standards=standards,
+            total_count=len(standards),
+            parse_warnings=[],
+        )
+    except Exception as e:
+        logger.error(f"解析标准文件失败: {e}")
+        raise HTTPException(status_code=400, detail=f"解析文件失败: {str(e)}")
+    finally:
+        tmp_path.unlink()
+
+
+@app.post("/api/standards/save-to-library")
+async def save_standards_to_library(request: SaveToLibraryRequest):
+    """将预览的标准保存到标准库"""
+    standards = []
+    for req in request.standards:
+        standard = ReviewStandard(
+            category=req.category,
+            item=req.item,
+            description=req.description,
+            risk_level=req.risk_level,
+            applicable_to=req.applicable_to,
+            usage_instruction=req.usage_instruction,
+            tags=req.tags,
+        )
+        standards.append(standard)
+
+    imported_count, warnings = standard_library_manager.import_from_parsed_standards(
+        standards,
+        replace=request.replace,
+    )
+
+    logger.info(f"保存到标准库: {imported_count} 条")
+
+    return {
+        "message": f"成功保存 {imported_count} 条标准到标准库",
+        "imported_count": imported_count,
+        "warnings": warnings,
+    }
+
+
+# ==================== LLM 相关 API ====================
+
+@app.post("/api/standards/generate-usage-instruction")
+async def generate_usage_instruction(request: GenerateUsageInstructionRequest):
+    """为指定标准生成适用说明（使用 LLM）"""
+    results = []
+    errors = []
+
+    for standard_id in request.standard_ids:
+        standard = standard_library_manager.get_standard(standard_id)
+        if not standard:
+            errors.append(f"标准不存在: {standard_id}")
+            continue
+
+        try:
+            # 构建 Prompt
+            messages = build_usage_instruction_messages(
+                standard=standard,
+                sample_document_text=request.sample_document_text or "",
+            )
+
+            # 调用 LLM
+            usage_instruction = await llm_client.chat(messages, max_output_tokens=200)
+            usage_instruction = usage_instruction.strip()
+
+            # 更新标准
+            standard_library_manager.update_standard(
+                standard_id,
+                {"usage_instruction": usage_instruction}
+            )
+
+            results.append(UsageInstructionResult(
+                standard_id=standard_id,
+                usage_instruction=usage_instruction,
+            ))
+
+            logger.info(f"为标准 {standard_id} 生成适用说明")
+
+        except Exception as e:
+            logger.error(f"生成适用说明失败: {standard_id} - {e}")
+            errors.append(f"生成失败 ({standard_id}): {str(e)}")
+
+    return {
+        "results": [r.model_dump() for r in results],
+        "errors": errors,
+        "success_count": len(results),
+    }
+
+
+@app.post("/api/standards/recommend", response_model=List[StandardRecommendationResponse])
+async def recommend_standards(request: RecommendStandardsRequest):
+    """根据文档内容推荐审核标准（使用 LLM）"""
+    import json
+    import re
+
+    # 获取适用该材料类型的所有标准
+    available_standards = standard_library_manager.list_standards(
+        material_type=request.material_type
+    )
+
+    if not available_standards:
+        return []
+
+    try:
+        # 构建 Prompt
+        messages = build_standard_recommendation_messages(
+            document_text=request.document_text,
+            material_type=request.material_type,
+            available_standards=available_standards,
+        )
+
+        # 调用 LLM
+        response = await llm_client.chat(messages, max_output_tokens=2000)
+
+        # 解析 JSON 响应
+        response = response.strip()
+        # 移除可能的 markdown 代码块
+        response = re.sub(r"```json\s*", "", response)
+        response = re.sub(r"```\s*$", "", response)
+
+        # 尝试找到 JSON 数组
+        start = response.find("[")
+        end = response.rfind("]")
+        if start != -1 and end != -1:
+            response = response[start:end + 1]
+
+        recommendations = json.loads(response)
+
+        # 构建响应
+        results = []
+        for rec in recommendations:
+            standard_id = rec.get("standard_id")
+            standard = standard_library_manager.get_standard(standard_id)
+            if standard:
+                results.append(StandardRecommendationResponse(
+                    standard_id=standard_id,
+                    relevance_score=float(rec.get("relevance_score", 0)),
+                    match_reason=rec.get("match_reason", ""),
+                    standard=_standard_to_response(standard),
+                ))
+
+        # 按相关性排序
+        results.sort(key=lambda x: x.relevance_score, reverse=True)
+
+        logger.info(f"推荐 {len(results)} 条标准")
+        return results
+
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 LLM 响应失败: {e}")
+        raise HTTPException(status_code=500, detail="LLM 响应解析失败")
+    except Exception as e:
+        logger.error(f"推荐标准失败: {e}")
+        raise HTTPException(status_code=500, detail=f"推荐失败: {str(e)}")
 
 
 # ==================== 健康检查 ====================

@@ -123,6 +123,57 @@
                   </div>
                 </el-upload>
               </el-tab-pane>
+
+              <el-tab-pane label="从标准库选择" name="library">
+                <div class="library-section">
+                  <div class="library-actions">
+                    <el-button
+                      type="primary"
+                      :loading="recommending"
+                      :disabled="!currentTask?.document_filename"
+                      @click="handleRecommend"
+                    >
+                      <el-icon><MagicStick /></el-icon>
+                      智能推荐
+                    </el-button>
+                    <el-button @click="showLibrarySelector = true">
+                      手动选择
+                    </el-button>
+                  </div>
+
+                  <div v-if="selectedLibraryStandards.length" class="selected-standards">
+                    <p class="selected-count">已选择 {{ selectedLibraryStandards.length }} 条标准</p>
+                    <div class="standards-preview">
+                      <el-tag
+                        v-for="s in selectedLibraryStandards.slice(0, 5)"
+                        :key="s.id"
+                        closable
+                        @close="removeSelectedStandard(s.id)"
+                        style="margin: 4px"
+                      >
+                        {{ s.item }}
+                      </el-tag>
+                      <span v-if="selectedLibraryStandards.length > 5" class="more-count">
+                        +{{ selectedLibraryStandards.length - 5 }} 条
+                      </span>
+                    </div>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      style="margin-top: 12px"
+                      @click="applyLibraryStandards"
+                      :loading="applyingStandards"
+                    >
+                      应用选中标准
+                    </el-button>
+                  </div>
+
+                  <div v-else class="library-tip">
+                    <el-icon :size="32" color="#909399"><Collection /></el-icon>
+                    <p>点击「智能推荐」或「手动选择」从标准库中选择标准</p>
+                  </div>
+                </div>
+              </el-tab-pane>
             </el-tabs>
 
             <div v-if="currentTask?.standard_filename" class="standard-status">
@@ -131,6 +182,90 @@
               </el-tag>
             </div>
           </div>
+
+          <!-- 标准推荐对话框 -->
+          <el-dialog
+            v-model="showRecommendDialog"
+            title="智能推荐标准"
+            width="700px"
+          >
+            <div v-if="recommendations.length">
+              <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+                根据您上传的文档，推荐以下审核标准：
+              </el-alert>
+
+              <div class="recommend-list">
+                <div
+                  v-for="rec in recommendations"
+                  :key="rec.standard_id"
+                  class="recommend-item"
+                  :class="{ selected: isStandardSelected(rec.standard_id) }"
+                  @click="toggleStandard(rec)"
+                >
+                  <el-checkbox :model-value="isStandardSelected(rec.standard_id)" />
+                  <div class="recommend-content">
+                    <div class="recommend-header">
+                      <span class="recommend-title">{{ rec.standard.item }}</span>
+                      <el-tag size="small" :type="getRelevanceType(rec.relevance_score)">
+                        相关度 {{ Math.round(rec.relevance_score * 100) }}%
+                      </el-tag>
+                    </div>
+                    <p class="recommend-reason">{{ rec.match_reason }}</p>
+                    <p class="recommend-desc">{{ rec.standard.description }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <el-empty v-else description="暂无推荐结果" />
+
+            <template #footer>
+              <el-button @click="showRecommendDialog = false">取消</el-button>
+              <el-button type="primary" @click="confirmRecommendation">
+                确认选择 ({{ selectedLibraryStandards.length }})
+              </el-button>
+            </template>
+          </el-dialog>
+
+          <!-- 标准库选择对话框 -->
+          <el-dialog
+            v-model="showLibrarySelector"
+            title="从标准库选择"
+            width="800px"
+          >
+            <div class="library-selector">
+              <el-input
+                v-model="librarySearch"
+                placeholder="搜索标准..."
+                clearable
+                style="margin-bottom: 16px"
+              />
+
+              <el-table
+                :data="filteredLibraryStandards"
+                max-height="400"
+                @selection-change="handleLibrarySelectionChange"
+              >
+                <el-table-column type="selection" width="55" />
+                <el-table-column prop="category" label="分类" width="100" />
+                <el-table-column prop="item" label="审核要点" width="150" />
+                <el-table-column prop="description" label="说明" show-overflow-tooltip />
+                <el-table-column label="风险" width="60">
+                  <template #default="{ row }">
+                    <el-tag :type="getRiskTagType(row.risk_level)" size="small">
+                      {{ getRiskLabel(row.risk_level) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+
+            <template #footer>
+              <el-button @click="showLibrarySelector = false">取消</el-button>
+              <el-button type="primary" @click="confirmLibrarySelection">
+                确认选择
+              </el-button>
+            </template>
+          </el-dialog>
 
           <el-divider />
 
@@ -229,6 +364,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
+import api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -251,6 +387,17 @@ const rules = {
 const standardTab = ref('template')
 const selectedTemplate = ref('')
 const templates = ref([])
+
+// 标准库相关状态
+const recommending = ref(false)
+const showRecommendDialog = ref(false)
+const showLibrarySelector = ref(false)
+const recommendations = ref([])
+const selectedLibraryStandards = ref([])
+const libraryStandards = ref([])
+const librarySearch = ref('')
+const tempSelection = ref([])
+const applyingStandards = ref(false)
 
 const currentTask = computed(() => store.currentTask)
 const isCompleted = computed(() => currentTask.value?.status === 'completed')
@@ -401,6 +548,169 @@ function retryReview() {
 function goToResult() {
   router.push(`/result/${taskId.value}`)
 }
+
+// ==================== 标准库相关函数 ====================
+
+// 获取文档内容（用于推荐）
+async function getDocumentText() {
+  // 这里需要后端支持获取文档文本
+  // 暂时返回一个占位，实际应用中需要后端提供接口
+  return '文档内容待获取'
+}
+
+// 加载标准库
+async function loadLibraryStandards() {
+  try {
+    const response = await api.getLibraryStandards({
+      material_type: form.value.material_type
+    })
+    libraryStandards.value = response.data
+  } catch (error) {
+    console.error('加载标准库失败:', error)
+  }
+}
+
+// 智能推荐
+async function handleRecommend() {
+  if (!currentTask.value?.document_filename) {
+    ElMessage.warning('请先上传文档')
+    return
+  }
+
+  recommending.value = true
+  try {
+    // 获取文档文本内容（需要后端支持）
+    const response = await api.recommendStandards({
+      document_text: '待审阅文档内容', // TODO: 从后端获取实际文档内容
+      material_type: form.value.material_type
+    })
+    recommendations.value = response.data
+
+    // 默认选中相关度高的标准
+    selectedLibraryStandards.value = recommendations.value
+      .filter(r => r.relevance_score >= 0.5)
+      .map(r => r.standard)
+
+    showRecommendDialog.value = true
+  } catch (error) {
+    ElMessage.error('推荐失败: ' + error.message)
+  } finally {
+    recommending.value = false
+  }
+}
+
+// 检查标准是否已选中
+function isStandardSelected(standardId) {
+  return selectedLibraryStandards.value.some(s => s.id === standardId)
+}
+
+// 切换标准选中状态
+function toggleStandard(rec) {
+  const index = selectedLibraryStandards.value.findIndex(s => s.id === rec.standard_id)
+  if (index >= 0) {
+    selectedLibraryStandards.value.splice(index, 1)
+  } else {
+    selectedLibraryStandards.value.push(rec.standard)
+  }
+}
+
+// 确认推荐选择
+function confirmRecommendation() {
+  showRecommendDialog.value = false
+  if (selectedLibraryStandards.value.length) {
+    ElMessage.success(`已选择 ${selectedLibraryStandards.value.length} 条标准`)
+  }
+}
+
+// 移除已选标准
+function removeSelectedStandard(id) {
+  selectedLibraryStandards.value = selectedLibraryStandards.value.filter(s => s.id !== id)
+}
+
+// 获取相关度标签类型
+function getRelevanceType(score) {
+  if (score >= 0.8) return 'success'
+  if (score >= 0.5) return 'warning'
+  return 'info'
+}
+
+// 过滤标准库
+const filteredLibraryStandards = computed(() => {
+  if (!librarySearch.value) return libraryStandards.value
+  const keyword = librarySearch.value.toLowerCase()
+  return libraryStandards.value.filter(s =>
+    s.category.toLowerCase().includes(keyword) ||
+    s.item.toLowerCase().includes(keyword) ||
+    s.description.toLowerCase().includes(keyword)
+  )
+})
+
+// 处理标准库选择变化
+function handleLibrarySelectionChange(selection) {
+  tempSelection.value = selection
+}
+
+// 确认标准库选择
+function confirmLibrarySelection() {
+  selectedLibraryStandards.value = [...tempSelection.value]
+  showLibrarySelector.value = false
+  if (selectedLibraryStandards.value.length) {
+    ElMessage.success(`已选择 ${selectedLibraryStandards.value.length} 条标准`)
+  }
+}
+
+// 风险等级辅助函数
+function getRiskTagType(level) {
+  return { high: 'danger', medium: 'warning', low: 'success' }[level] || 'info'
+}
+
+function getRiskLabel(level) {
+  return { high: '高', medium: '中', low: '低' }[level] || level
+}
+
+// 应用选中的标准库标准
+async function applyLibraryStandards() {
+  if (!taskId.value || !selectedLibraryStandards.value.length) return
+
+  applyingStandards.value = true
+  try {
+    // 将选中的标准转换为临时文件并上传
+    // 这需要后端支持接收标准列表
+    const standardsData = selectedLibraryStandards.value.map(s => ({
+      category: s.category,
+      item: s.item,
+      description: s.description,
+      risk_level: s.risk_level,
+      applicable_to: s.applicable_to
+    }))
+
+    // 创建一个 CSV 内容
+    const csvContent = [
+      '审核分类,审核要点,详细说明,风险等级,适用材料类型',
+      ...standardsData.map(s =>
+        `"${s.category}","${s.item}","${s.description}","${s.risk_level === 'high' ? '高' : s.risk_level === 'medium' ? '中' : '低'}","${s.applicable_to.join(',')}"`
+      )
+    ].join('\n')
+
+    // 创建 Blob 并上传
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
+    const file = new File([blob], 'selected_standards.csv', { type: 'text/csv' })
+
+    await store.uploadStandard(taskId.value, file)
+    ElMessage.success('标准应用成功')
+  } catch (error) {
+    ElMessage.error('应用标准失败: ' + error.message)
+  } finally {
+    applyingStandards.value = false
+  }
+}
+
+// 监听标准库 Tab，加载数据
+watch(standardTab, (newTab) => {
+  if (newTab === 'library' && !libraryStandards.value.length) {
+    loadLibraryStandards()
+  }
+})
 </script>
 
 <style scoped>
@@ -513,5 +823,109 @@ function goToResult() {
   align-items: center;
   justify-content: center;
   height: 400px;
+}
+
+/* 标准库相关样式 */
+.library-section {
+  padding: 8px 0;
+}
+
+.library-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.library-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px;
+  color: #909399;
+  text-align: center;
+}
+
+.library-tip p {
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.selected-standards {
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.selected-count {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #606266;
+}
+
+.standards-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.more-count {
+  color: #909399;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+/* 推荐列表样式 */
+.recommend-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.recommend-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.recommend-item:hover {
+  border-color: #409eff;
+  background: #f5f7fa;
+}
+
+.recommend-item.selected {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.recommend-content {
+  flex: 1;
+}
+
+.recommend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.recommend-title {
+  font-weight: 600;
+  color: #303133;
+}
+
+.recommend-reason {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #409eff;
+}
+
+.recommend-desc {
+  margin: 0;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

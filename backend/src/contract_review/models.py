@@ -48,6 +48,12 @@ class ReviewStandard(BaseModel):
     risk_level: RiskLevel = "medium"  # 风险等级
     applicable_to: List[MaterialType] = Field(default_factory=lambda: ["contract", "marketing"])
 
+    # 标准库扩展字段
+    usage_instruction: Optional[str] = None  # 适用说明（LLM生成或手动填写）
+    tags: List[str] = Field(default_factory=list)  # 标签，用于搜索和分类
+    created_at: Optional[datetime] = None  # 创建时间（入库时设置）
+    updated_at: Optional[datetime] = None  # 更新时间
+
     class Config:
         json_encoders = {Path: str}
 
@@ -67,6 +73,57 @@ class ReviewStandardSet(BaseModel):
     def filter_by_material_type(self, material_type: MaterialType) -> List[ReviewStandard]:
         """按材料类型过滤审核标准"""
         return [s for s in self.standards if material_type in s.applicable_to]
+
+
+# ==================== 标准库模型 ====================
+
+class StandardLibrary(BaseModel):
+    """全局审核标准库"""
+    standards: List[ReviewStandard] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def count(self) -> int:
+        return len(self.standards)
+
+    def get_by_id(self, standard_id: str) -> Optional[ReviewStandard]:
+        """根据 ID 获取标准"""
+        for s in self.standards:
+            if s.id == standard_id:
+                return s
+        return None
+
+    def filter_by_category(self, category: str) -> List[ReviewStandard]:
+        """按分类过滤标准"""
+        return [s for s in self.standards if s.category == category]
+
+    def filter_by_material_type(self, material_type: MaterialType) -> List[ReviewStandard]:
+        """按材料类型过滤标准"""
+        return [s for s in self.standards if material_type in s.applicable_to]
+
+    def search(self, keyword: str) -> List[ReviewStandard]:
+        """搜索标准（匹配分类、要点、说明、标签）"""
+        keyword = keyword.lower()
+        results = []
+        for s in self.standards:
+            if (keyword in s.category.lower() or
+                keyword in s.item.lower() or
+                keyword in s.description.lower() or
+                any(keyword in tag.lower() for tag in s.tags)):
+                results.append(s)
+        return results
+
+    def get_categories(self) -> List[str]:
+        """获取所有分类"""
+        categories = set(s.category for s in self.standards)
+        return sorted(categories)
+
+
+class StandardRecommendation(BaseModel):
+    """标准推荐结果"""
+    standard_id: str
+    relevance_score: float  # 0-1 相关性评分
+    match_reason: str  # 匹配原因
 
 
 # ==================== 风险点模型 ====================
