@@ -246,88 +246,69 @@
             </template>
           </el-dialog>
 
-          <!-- 标准选择对话框（整合预设模板和标准库） -->
+          <!-- 标准集合选择对话框 -->
           <el-dialog
             v-model="showLibrarySelector"
             title="选择审核标准"
-            width="900px"
+            width="800px"
           >
             <div class="library-selector">
-              <!-- 预设模板区域 -->
-              <div class="preset-section">
-                <p class="section-title">预设标准模板</p>
-                <p class="section-desc">选择系统预设的标准模板，快速开始审阅</p>
-                <div class="template-cards-dialog">
-                  <div
-                    v-for="tpl in presetTemplates"
-                    :key="tpl.id"
-                    class="template-card-dialog"
-                    :class="{ selected: selectedPresetTemplate?.id === tpl.id }"
-                    @click="selectPresetTemplateInDialog(tpl)"
-                  >
-                    <div class="template-card-header">
-                      <el-icon :size="20" :color="selectedPresetTemplate?.id === tpl.id ? '#409eff' : '#909399'">
-                        <Document />
-                      </el-icon>
-                      <span class="template-name">{{ tpl.name }}</span>
-                      <el-tag v-if="selectedPresetTemplate?.id === tpl.id" type="primary" size="small">已选</el-tag>
+              <!-- 搜索框 -->
+              <el-input
+                v-model="collectionSearch"
+                placeholder="搜索标准集..."
+                clearable
+                style="margin-bottom: 16px"
+              >
+                <template #prefix>
+                  <el-icon><Search /></el-icon>
+                </template>
+              </el-input>
+
+              <!-- 标准集合列表 -->
+              <div class="collection-list">
+                <div
+                  v-for="collection in filteredCollections"
+                  :key="collection.id"
+                  class="collection-card-dialog"
+                  :class="{ selected: selectedCollection?.id === collection.id }"
+                  @click="selectCollectionInDialog(collection)"
+                >
+                  <div class="collection-card-header">
+                    <el-icon :size="24" :color="selectedCollection?.id === collection.id ? '#409eff' : '#909399'">
+                      <Folder />
+                    </el-icon>
+                    <div class="collection-info">
+                      <span class="collection-name">{{ collection.name }}</span>
+                      <span class="collection-meta">
+                        <el-tag size="small" type="info">{{ collection.standard_count }} 条风险点</el-tag>
+                        <el-tag v-if="collection.is_preset" size="small" type="success">预设</el-tag>
+                      </span>
                     </div>
-                    <p class="template-desc">{{ tpl.description }}</p>
-                    <div class="template-meta">
-                      <el-tag size="small" type="info">{{ tpl.standard_count }} 条标准</el-tag>
-                    </div>
+                    <el-icon v-if="selectedCollection?.id === collection.id" class="check-icon" color="#409eff">
+                      <CircleCheck />
+                    </el-icon>
                   </div>
+                  <p v-if="collection.description" class="collection-desc">{{ collection.description }}</p>
                 </div>
-              </div>
 
-              <el-divider>或从标准库自由选择</el-divider>
-
-              <!-- 标准库区域 -->
-              <div class="library-section-dialog">
-                <el-input
-                  v-model="librarySearch"
-                  placeholder="搜索标准..."
-                  clearable
-                  style="margin-bottom: 12px"
-                >
-                  <template #prefix>
-                    <el-icon><Search /></el-icon>
-                  </template>
-                </el-input>
-
-                <el-table
-                  ref="libraryTableRef"
-                  :data="filteredLibraryStandards"
-                  max-height="280"
-                  @selection-change="handleLibrarySelectionChange"
-                >
-                  <el-table-column type="selection" width="50" />
-                  <el-table-column prop="category" label="分类" width="100" />
-                  <el-table-column prop="item" label="审核要点" width="150" />
-                  <el-table-column prop="description" label="说明" show-overflow-tooltip />
-                  <el-table-column label="风险" width="60">
-                    <template #default="{ row }">
-                      <el-tag :type="getRiskTagType(row.risk_level)" size="small">
-                        {{ getRiskLabel(row.risk_level) }}
-                      </el-tag>
-                    </template>
-                  </el-table-column>
-                </el-table>
-                <p v-if="libraryStandards.length === 0" class="empty-tip">
-                  标准库为空，请先在标准管理中添加标准
-                </p>
+                <el-empty v-if="filteredCollections.length === 0" description="暂无标准集">
+                  <el-button type="primary" @click="goToStandardsManagement">
+                    前往标准管理
+                  </el-button>
+                </el-empty>
               </div>
 
               <!-- 当前选择状态 -->
-              <div v-if="dialogSelectionSummary" class="selection-summary">
+              <div v-if="selectedCollection" class="selection-summary">
                 <el-icon><InfoFilled /></el-icon>
-                <span>{{ dialogSelectionSummary }}</span>
+                <span>已选择「{{ selectedCollection.name }}」，共 {{ selectedCollection.standard_count }} 条风险点</span>
               </div>
             </div>
 
             <template #footer>
               <el-button @click="showLibrarySelector = false">取消</el-button>
-              <el-button type="primary" @click="confirmStandardSelection" :disabled="!hasDialogSelection">
+              <el-button type="primary" @click="confirmCollectionSelection" :disabled="!selectedCollection">
                 确认选择
               </el-button>
             </template>
@@ -529,7 +510,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
-import { Loading, Search } from '@element-plus/icons-vue'
+import { Loading, Search, Folder, CircleCheck } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const route = useRoute()
@@ -537,7 +518,6 @@ const router = useRouter()
 const store = useReviewStore()
 
 const formRef = ref(null)
-const libraryTableRef = ref(null)
 const standardUploadRef = ref(null)
 const taskId = ref(route.params.taskId || null)
 
@@ -552,16 +532,14 @@ const rules = {
   our_party: [{ required: true, message: '请输入我方身份', trigger: 'blur' }]
 }
 
-// 预设模板相关状态
-const presetTemplates = ref([])
-const selectedPresetTemplate = ref(null)
-const selectedStandards = ref([]) // 当前选中的标准列表
+// 标准集合相关状态
+const collections = ref([])
+const selectedCollection = ref(null)
+const selectedStandards = ref([]) // 当前选中的标准列表（来自集合）
 
-// 标准库相关状态
+// 标准选择相关状态
 const showLibrarySelector = ref(false)
-const libraryStandards = ref([])
-const librarySearch = ref('')
-const tempSelection = ref([])
+const collectionSearch = ref('')
 const applyingStandards = ref(false)
 const showStandardPreview = ref(false)
 
@@ -607,18 +585,17 @@ const activeStep = computed(() => {
 })
 
 onMounted(async () => {
-  // 加载标准集合列表（原预设模板已迁移到集合）
+  // 加载标准集合列表
   try {
     const response = await api.getCollections()
-    // 转换为与原预设模板兼容的格式
-    presetTemplates.value = response.data.map(c => ({
+    collections.value = response.data.map(c => ({
       id: c.id,
       name: c.name,
       description: c.description,
       material_type: c.material_type,
       standard_count: c.standard_count,
       is_preset: c.is_preset,
-      standards: c.standards || []  // 集合列表API不返回standards，需要单独获取
+      standards: []  // 集合列表API不返回standards，需要单独获取
     }))
   } catch (error) {
     console.error('加载标准集合失败:', error)
@@ -688,103 +665,77 @@ async function handleDocumentChange(file) {
 
 // ==================== 标准选择相关函数 ====================
 
+// 过滤后的集合列表
+const filteredCollections = computed(() => {
+  if (!collectionSearch.value) return collections.value
+  const keyword = collectionSearch.value.toLowerCase()
+  return collections.value.filter(c =>
+    c.name.toLowerCase().includes(keyword) ||
+    (c.description && c.description.toLowerCase().includes(keyword))
+  )
+})
+
 // 打开标准选择对话框
 function openStandardSelector() {
   // 重置对话框内的临时选择状态
-  selectedPresetTemplate.value = null
-  tempSelection.value = []
-  if (libraryTableRef.value) {
-    libraryTableRef.value.clearSelection()
-  }
+  selectedCollection.value = null
   showLibrarySelector.value = true
 }
 
-// 对话框内选择预设模板（只标记，不立即应用）
-async function selectPresetTemplateInDialog(template) {
-  // 选择模板时，清除标准库的选择
-  if (libraryTableRef.value) {
-    libraryTableRef.value.clearSelection()
-  }
-  tempSelection.value = []
+// 跳转到标准管理页面
+function goToStandardsManagement() {
+  showLibrarySelector.value = false
+  router.push({ name: 'standards' })
+}
 
-  if (selectedPresetTemplate.value?.id === template.id) {
+// 对话框内选择集合
+async function selectCollectionInDialog(collection) {
+  if (selectedCollection.value?.id === collection.id) {
     // 再次点击取消选择
-    selectedPresetTemplate.value = null
+    selectedCollection.value = null
   } else {
     // 如果标准列表为空，需要从API获取完整集合详情
-    if (!template.standards || template.standards.length === 0) {
+    if (!collection.standards || collection.standards.length === 0) {
       try {
-        const response = await api.getCollection(template.id)
-        template.standards = response.data.standards || []
-        template.standard_count = template.standards.length
+        const response = await api.getCollection(collection.id)
+        collection.standards = response.data.standards || []
+        collection.standard_count = collection.standards.length
       } catch (error) {
         console.error('获取集合详情失败:', error)
         ElMessage.error('获取标准详情失败')
         return
       }
     }
-    selectedPresetTemplate.value = template
+    selectedCollection.value = collection
   }
 }
 
-// 对话框内选择状态摘要
-const dialogSelectionSummary = computed(() => {
-  if (selectedPresetTemplate.value) {
-    return `已选择模板「${selectedPresetTemplate.value.name}」，共 ${selectedPresetTemplate.value.standard_count} 条标准`
-  }
-  if (tempSelection.value.length > 0) {
-    return `已从标准库选择 ${tempSelection.value.length} 条标准`
-  }
-  return ''
-})
-
-// 是否有选择内容
-const hasDialogSelection = computed(() => {
-  return selectedPresetTemplate.value !== null || tempSelection.value.length > 0
-})
-
-// 确认标准选择（整合模板和标准库）
-async function confirmStandardSelection() {
+// 确认集合选择
+async function confirmCollectionSelection() {
   if (!taskId.value) {
     ElMessage.warning('请先上传文档')
     return
   }
 
-  let standardsToApply = []
-
-  if (selectedPresetTemplate.value) {
-    // 使用预设模板
-    standardsToApply = selectedPresetTemplate.value.standards.map(s => ({
-      id: s.id,
-      category: s.category,
-      item: s.item,
-      description: s.description,
-      risk_level: s.risk_level,
-      applicable_to: s.applicable_to || ['contract']
-    }))
-  } else if (tempSelection.value.length > 0) {
-    // 使用标准库选择
-    standardsToApply = tempSelection.value.map(s => ({
-      id: s.id,
-      category: s.category,
-      item: s.item,
-      description: s.description,
-      risk_level: s.risk_level,
-      applicable_to: s.applicable_to || ['contract']
-    }))
-  }
-
-  if (standardsToApply.length === 0) {
-    ElMessage.warning('请先选择标准')
+  if (!selectedCollection.value) {
+    ElMessage.warning('请先选择标准集')
     return
   }
 
   // 设置当前选中的标准（用于显示和特殊要求整合）
-  selectedStandards.value = standardsToApply
+  selectedStandards.value = selectedCollection.value.standards.map(s => ({
+    id: s.id,
+    category: s.category,
+    item: s.item,
+    description: s.description,
+    risk_level: s.risk_level,
+    applicable_to: s.applicable_to || ['contract']
+  }))
+
   showLibrarySelector.value = false
 
   // 直接应用标准到任务
-  await applyStandardsImmediately(standardsToApply)
+  await applyStandardsImmediately(selectedStandards.value)
 }
 
 // 立即应用标准到任务
@@ -801,8 +752,8 @@ async function applyStandardsImmediately(standards) {
 
     // 创建 Blob 并上传
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
-    const fileName = selectedPresetTemplate.value
-      ? `${selectedPresetTemplate.value.name}.csv`
+    const fileName = selectedCollection.value
+      ? `${selectedCollection.value.name}.csv`
       : 'selected_standards.csv'
     const file = new File([blob], fileName, { type: 'text/csv' })
 
@@ -815,19 +766,6 @@ async function applyStandardsImmediately(standards) {
   }
 }
 
-// 选择预设模板（旧函数保留兼容）
-function selectPresetTemplate(template) {
-  selectedPresetTemplate.value = template
-  selectedStandards.value = template.standards.map(s => ({
-    id: s.id,
-    category: s.category,
-    item: s.item,
-    description: s.description,
-    risk_level: s.risk_level,
-    applicable_to: s.applicable_to
-  }))
-  ElMessage.success(`已选择「${template.name}」，共 ${template.standard_count} 条标准`)
-}
 
 // 新建标准下拉菜单命令处理
 function handleNewStandardInReview(command) {
@@ -862,7 +800,7 @@ async function handleStandardUpload(file) {
 
 // 重新选择标准
 function reselect() {
-  selectedPresetTemplate.value = null
+  selectedCollection.value = null
   selectedStandards.value = []
   specialRequirements.value = ''
 }
@@ -895,119 +833,7 @@ function clearError() {
   store.operationState.lastError = null
 }
 
-// ==================== 标准库相关函数 ====================
-
-// 获取文档内容（用于推荐）
-async function getDocumentText() {
-  // 这里需要后端支持获取文档文本
-  // 暂时返回一个占位，实际应用中需要后端提供接口
-  return '文档内容待获取'
-}
-
-// 加载标准库
-async function loadLibraryStandards() {
-  try {
-    const response = await api.getLibraryStandards({
-      material_type: form.value.material_type
-    })
-    libraryStandards.value = response.data
-  } catch (error) {
-    console.error('加载标准库失败:', error)
-  }
-}
-
-// 智能推荐
-async function handleRecommend() {
-  if (!currentTask.value?.document_filename) {
-    ElMessage.warning('请先上传文档')
-    return
-  }
-
-  recommending.value = true
-  try {
-    // 获取文档文本内容（需要后端支持）
-    const response = await api.recommendStandards({
-      document_text: '待审阅文档内容', // TODO: 从后端获取实际文档内容
-      material_type: form.value.material_type
-    })
-    recommendations.value = response.data
-
-    // 默认选中相关度高的标准
-    selectedLibraryStandards.value = recommendations.value
-      .filter(r => r.relevance_score >= 0.5)
-      .map(r => r.standard)
-
-    showRecommendDialog.value = true
-  } catch (error) {
-    ElMessage.error('推荐失败: ' + error.message)
-  } finally {
-    recommending.value = false
-  }
-}
-
-// 检查标准是否已选中
-function isStandardSelected(standardId) {
-  return selectedLibraryStandards.value.some(s => s.id === standardId)
-}
-
-// 切换标准选中状态
-function toggleStandard(rec) {
-  const index = selectedLibraryStandards.value.findIndex(s => s.id === rec.standard_id)
-  if (index >= 0) {
-    selectedLibraryStandards.value.splice(index, 1)
-  } else {
-    selectedLibraryStandards.value.push(rec.standard)
-  }
-}
-
-// 确认推荐选择
-function confirmRecommendation() {
-  showRecommendDialog.value = false
-  if (selectedLibraryStandards.value.length) {
-    ElMessage.success(`已选择 ${selectedLibraryStandards.value.length} 条标准`)
-  }
-}
-
-// 移除已选标准
-function removeSelectedStandard(id) {
-  selectedLibraryStandards.value = selectedLibraryStandards.value.filter(s => s.id !== id)
-}
-
-// 获取相关度标签类型
-function getRelevanceType(score) {
-  if (score >= 0.8) return 'success'
-  if (score >= 0.5) return 'warning'
-  return 'info'
-}
-
-// 过滤标准库
-const filteredLibraryStandards = computed(() => {
-  if (!librarySearch.value) return libraryStandards.value
-  const keyword = librarySearch.value.toLowerCase()
-  return libraryStandards.value.filter(s =>
-    s.category.toLowerCase().includes(keyword) ||
-    s.item.toLowerCase().includes(keyword) ||
-    s.description.toLowerCase().includes(keyword)
-  )
-})
-
-// 处理标准库选择变化
-function handleLibrarySelectionChange(selection) {
-  tempSelection.value = selection
-  // 如果选择了标准库项目，清除预设模板选择
-  if (selection.length > 0) {
-    selectedPresetTemplate.value = null
-  }
-}
-
-// 确认标准库选择
-function confirmLibrarySelection() {
-  selectedLibraryStandards.value = [...tempSelection.value]
-  showLibrarySelector.value = false
-  if (selectedLibraryStandards.value.length) {
-    ElMessage.success(`已选择 ${selectedLibraryStandards.value.length} 条标准`)
-  }
-}
+// ==================== 辅助函数 ====================
 
 // 风险等级辅助函数
 function getRiskTagType(level) {
@@ -1037,43 +863,6 @@ function getChangeLabel(changeType) {
     unchanged: '未变'
   }
   return labels[changeType] || changeType
-}
-
-// 应用选中的标准库标准
-async function applyLibraryStandards() {
-  if (!taskId.value || !selectedLibraryStandards.value.length) return
-
-  applyingStandards.value = true
-  try {
-    // 将选中的标准转换为临时文件并上传
-    // 这需要后端支持接收标准列表
-    const standardsData = selectedLibraryStandards.value.map(s => ({
-      category: s.category,
-      item: s.item,
-      description: s.description,
-      risk_level: s.risk_level,
-      applicable_to: s.applicable_to
-    }))
-
-    // 创建一个 CSV 内容
-    const csvContent = [
-      '审核分类,审核要点,详细说明,风险等级,适用材料类型',
-      ...standardsData.map(s =>
-        `"${s.category}","${s.item}","${s.description}","${s.risk_level === 'high' ? '高' : s.risk_level === 'medium' ? '中' : '低'}","${s.applicable_to.join(',')}"`
-      )
-    ].join('\n')
-
-    // 创建 Blob 并上传
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
-    const file = new File([blob], 'selected_standards.csv', { type: 'text/csv' })
-
-    await store.uploadStandard(taskId.value, file)
-    ElMessage.success('标准应用成功')
-  } catch (error) {
-    ElMessage.error('应用标准失败: ' + error.message)
-  } finally {
-    applyingStandards.value = false
-  }
 }
 
 // ==================== 特殊要求整合相关函数 ====================
@@ -1162,8 +951,8 @@ async function applyStandards() {
 
     // 创建 Blob 并上传
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
-    const fileName = selectedPresetTemplate.value
-      ? `${selectedPresetTemplate.value.name}.csv`
+    const fileName = selectedCollection.value
+      ? `${selectedCollection.value.name}.csv`
       : 'selected_standards.csv'
     const file = new File([blob], fileName, { type: 'text/csv' })
 
@@ -1176,13 +965,6 @@ async function applyStandards() {
     applyingStandards.value = false
   }
 }
-
-// 监听标准库对话框打开时加载数据
-watch(showLibrarySelector, (show) => {
-  if (show && !libraryStandards.value.length) {
-    loadLibraryStandards()
-  }
-})
 </script>
 
 <style scoped>
@@ -1435,7 +1217,7 @@ watch(showLibrarySelector, (show) => {
   color: #909399;
 }
 
-/* ==================== 新标准选择界面样式 ==================== */
+/* ==================== 标准集合选择界面样式 ==================== */
 
 .standard-section h4 {
   display: flex;
@@ -1459,50 +1241,68 @@ watch(showLibrarySelector, (show) => {
   color: #606266;
 }
 
-/* 对话框内预设模板区域 */
-.preset-section {
-  margin-bottom: 16px;
-}
-
-.section-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.section-desc {
-  margin: 0 0 12px;
-  font-size: 12px;
-  color: #909399;
-}
-
-.template-cards-dialog {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+/* 集合列表 */
+.collection-list {
+  max-height: 400px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
-.template-card-dialog {
-  padding: 14px;
+.collection-card-dialog {
+  padding: 16px;
   border: 2px solid #ebeef5;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.template-card-dialog:hover {
+.collection-card-dialog:hover {
   border-color: #c0c4cc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
-.template-card-dialog.selected {
+.collection-card-dialog.selected {
   border-color: #409eff;
   background: #ecf5ff;
 }
 
-.library-section-dialog {
-  margin-top: 8px;
+.collection-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.collection-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.collection-name {
+  display: block;
+  font-weight: 600;
+  font-size: 15px;
+  color: #303133;
+  margin-bottom: 4px;
+}
+
+.collection-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.collection-desc {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.5;
+  padding-left: 36px;
+}
+
+.check-icon {
+  font-size: 22px;
 }
 
 .empty-tip {

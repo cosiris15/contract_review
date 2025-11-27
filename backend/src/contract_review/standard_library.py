@@ -400,23 +400,21 @@ class StandardLibraryManager:
     def add_collection(
         self,
         name: str,
-        standard_ids: List[str],
         description: str = "",
         material_type: str = "both",
         is_preset: bool = False,
-    ) -> str:
+    ) -> StandardCollection:
         """
-        添加集合
+        添加集合（空集合，标准通过 collection_id 关联）
 
         Args:
             name: 集合名称
-            standard_ids: 包含的标准ID列表
             description: 集合描述
             material_type: 适用材料类型
             is_preset: 是否为系统预设
 
         Returns:
-            集合 ID
+            创建的集合对象
         """
         library = self._load_library()
 
@@ -425,14 +423,13 @@ class StandardLibraryManager:
             description=description,
             material_type=material_type,
             is_preset=is_preset,
-            standard_ids=standard_ids,
         )
 
         library.collections.append(collection)
         self._save_library()
 
-        logger.info(f"Added collection: {collection.id} - {name} ({len(standard_ids)} standards)")
-        return collection.id
+        logger.info(f"Added collection: {collection.id} - {name}")
+        return collection
 
     def update_collection(self, collection_id: str, updates: dict) -> bool:
         """更新集合"""
@@ -457,8 +454,17 @@ class StandardLibraryManager:
         logger.info(f"Updated collection: {collection_id}")
         return True
 
-    def delete_collection(self, collection_id: str) -> bool:
-        """删除集合（预设集合不可删除）"""
+    def delete_collection(self, collection_id: str, force: bool = False) -> bool:
+        """
+        删除集合（连同删除集合内的所有风险点）
+
+        Args:
+            collection_id: 集合ID
+            force: 是否强制删除预设集合
+
+        Returns:
+            是否删除成功
+        """
         library = self._load_library()
         collection = library.get_collection_by_id(collection_id)
 
@@ -466,14 +472,19 @@ class StandardLibraryManager:
             logger.warning(f"Collection not found: {collection_id}")
             return False
 
-        if collection.is_preset:
+        if collection.is_preset and not force:
             logger.warning(f"Cannot delete preset collection: {collection_id}")
             return False
 
+        # 级联删除集合内的所有风险点
+        deleted_standards_count = len([s for s in library.standards if s.collection_id == collection_id])
+        library.standards = [s for s in library.standards if s.collection_id != collection_id]
+
+        # 删除集合
         library.collections = [c for c in library.collections if c.id != collection_id]
         self._save_library()
 
-        logger.info(f"Deleted collection: {collection_id}")
+        logger.info(f"Deleted collection: {collection_id} (with {deleted_standards_count} standards)")
         return True
 
     def import_preset_templates(self, templates_dir: Path) -> int:
@@ -524,27 +535,27 @@ class StandardLibraryManager:
                 else:
                     material_type = "both"
 
-                # 添加标准到库中
-                now = datetime.now()
-                standard_ids = []
-                for standard in standard_set.standards:
-                    standard.created_at = now
-                    standard.updated_at = now
-                    library.standards.append(standard)
-                    standard_ids.append(standard.id)
-
-                # 创建预设集合
+                # 先创建集合
                 collection = StandardCollection(
                     name=template_name,
                     description=f"系统预设模板: {template_name}",
                     material_type=material_type,
                     is_preset=True,
-                    standard_ids=standard_ids,
                 )
                 library.collections.append(collection)
 
+                # 添加标准到库中，并设置 collection_id
+                now = datetime.now()
+                standards_count = 0
+                for standard in standard_set.standards:
+                    standard.collection_id = collection.id  # 关联到集合
+                    standard.created_at = now
+                    standard.updated_at = now
+                    library.standards.append(standard)
+                    standards_count += 1
+
                 imported_count += 1
-                logger.info(f"Imported preset template: {template_name} ({len(standard_ids)} standards)")
+                logger.info(f"Imported preset template: {template_name} ({standards_count} standards)")
 
             except Exception as e:
                 logger.error(f"Failed to import template {template_name}: {e}")
@@ -553,3 +564,164 @@ class StandardLibraryManager:
             self._save_library()
 
         return imported_count
+
+    # ==================== 集合内标准管理 ====================
+
+    def list_collection_standards(
+        self,
+        collection_id: str,
+        category: Optional[str] = None,
+        risk_level: Optional[str] = None,
+        keyword: Optional[str] = None,
+    ) -> List[ReviewStandard]:
+        """
+        获取集合内的标准列表（支持筛选）
+
+        Args:
+            collection_id: 集合ID
+            category: 按分类筛选
+            risk_level: 按风险等级筛选
+            keyword: 搜索关键词
+
+        Returns:
+            标准列表
+        """
+        library = self._load_library()
+        standards = [s for s in library.standards if s.collection_id == collection_id]
+
+        if category:
+            standards = [s for s in standards if s.category == category]
+
+        if risk_level:
+            standards = [s for s in standards if s.risk_level == risk_level]
+
+        if keyword:
+            keyword = keyword.lower()
+            standards = [
+                s for s in standards
+                if (keyword in s.category.lower() or
+                    keyword in s.item.lower() or
+                    keyword in s.description.lower() or
+                    (s.usage_instruction and keyword in s.usage_instruction.lower()))
+            ]
+
+        return standards
+
+    def add_standard_to_collection(
+        self,
+        collection_id: str,
+        standard: ReviewStandard
+    ) -> str:
+        """
+        向集合中添加单条标准
+
+        Args:
+            collection_id: 集合ID
+            standard: 标准对象
+
+        Returns:
+            标准ID
+        """
+        library = self._load_library()
+
+        # 验证集合存在
+        collection = library.get_collection_by_id(collection_id)
+        if not collection:
+            raise ValueError(f"Collection not found: {collection_id}")
+
+        # 设置关联和时间戳
+        standard.collection_id = collection_id
+        now = datetime.now()
+        standard.created_at = now
+        standard.updated_at = now
+
+        library.standards.append(standard)
+        self._save_library()
+
+        logger.info(f"Added standard to collection {collection_id}: {standard.id} - {standard.item}")
+        return standard.id
+
+    def add_standards_to_collection(
+        self,
+        collection_id: str,
+        standards: List[ReviewStandard]
+    ) -> List[str]:
+        """
+        向集合中批量添加标准
+
+        Args:
+            collection_id: 集合ID
+            standards: 标准列表
+
+        Returns:
+            标准ID列表
+        """
+        library = self._load_library()
+        self._create_backup()
+
+        # 验证集合存在
+        collection = library.get_collection_by_id(collection_id)
+        if not collection:
+            raise ValueError(f"Collection not found: {collection_id}")
+
+        now = datetime.now()
+        ids = []
+
+        for standard in standards:
+            standard.collection_id = collection_id
+            standard.created_at = now
+            standard.updated_at = now
+            library.standards.append(standard)
+            ids.append(standard.id)
+
+        self._save_library()
+        logger.info(f"Added {len(standards)} standards to collection {collection_id}")
+
+        return ids
+
+    def get_collection_categories(self, collection_id: str) -> List[str]:
+        """获取集合内的所有分类"""
+        library = self._load_library()
+        standards = [s for s in library.standards if s.collection_id == collection_id]
+        categories = set(s.category for s in standards)
+        return sorted(categories)
+
+    # ==================== 数据迁移 ====================
+
+    def migrate_orphan_standards(self) -> int:
+        """
+        迁移无归属的风险点到默认集合
+
+        Returns:
+            迁移的标准数量
+        """
+        library = self._load_library()
+
+        # 找出没有 collection_id 的标准
+        orphan_standards = [s for s in library.standards if not s.collection_id]
+
+        if not orphan_standards:
+            logger.info("No orphan standards to migrate")
+            return 0
+
+        self._create_backup()
+
+        # 创建默认集合
+        default_collection = StandardCollection(
+            name="未分类标准",
+            description="从旧版本迁移的未分类标准",
+            material_type="both",
+            is_preset=False,
+        )
+        library.collections.append(default_collection)
+
+        # 迁移标准
+        now = datetime.now()
+        for standard in orphan_standards:
+            standard.collection_id = default_collection.id
+            standard.updated_at = now
+
+        self._save_library()
+        logger.info(f"Migrated {len(orphan_standards)} orphan standards to default collection")
+
+        return len(orphan_standards)

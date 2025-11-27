@@ -415,13 +415,45 @@ export default {
   // ==================== 标准集合 ====================
 
   // 获取所有标准集合
-  getCollections() {
-    return api.get('/standard-library/collections')
+  getCollections(params = {}) {
+    return api.get('/standard-library/collections', { params })
   },
 
   // 获取单个集合（包含标准列表）
   getCollection(collectionId) {
     return api.get(`/standard-library/collections/${collectionId}`)
+  },
+
+  // 创建标准集合
+  createCollection(data) {
+    return api.post('/standard-library/collections', data)
+  },
+
+  // 更新集合信息
+  updateCollection(collectionId, data) {
+    return api.put(`/standard-library/collections/${collectionId}`, data)
+  },
+
+  // 删除集合（连同删除所有风险点）
+  deleteCollection(collectionId, force = false) {
+    return api.delete(`/standard-library/collections/${collectionId}`, {
+      params: { force }
+    })
+  },
+
+  // 获取集合内的标准列表（支持筛选）
+  getCollectionStandards(collectionId, params = {}) {
+    return api.get(`/standard-library/collections/${collectionId}/standards`, { params })
+  },
+
+  // 向集合中添加单条标准
+  addStandardToCollection(collectionId, data) {
+    return api.post(`/standard-library/collections/${collectionId}/standards`, data)
+  },
+
+  // 获取集合内的分类列表
+  getCollectionCategories(collectionId) {
+    return api.get(`/standard-library/collections/${collectionId}/categories`)
   },
 
   // ==================== 预设模板（兼容旧接口） ====================

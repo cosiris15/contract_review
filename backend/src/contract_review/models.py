@@ -40,7 +40,7 @@ class LoadedDocument(BaseModel):
 # ==================== 审核标准模型 ====================
 
 class ReviewStandard(BaseModel):
-    """单条审核标准"""
+    """单条审核标准（风险点）"""
     id: str = Field(default_factory=generate_id)
     category: str  # 审核分类：主体资格、权利义务、费用条款、期限条款、责任条款等
     item: str  # 审核要点
@@ -49,6 +49,7 @@ class ReviewStandard(BaseModel):
     applicable_to: List[MaterialType] = Field(default_factory=lambda: ["contract", "marketing"])
 
     # 标准库扩展字段
+    collection_id: Optional[str] = None  # 所属标准集ID（必填，用于一对一关联）
     usage_instruction: Optional[str] = None  # 适用说明（LLM生成或手动填写）
     tags: List[str] = Field(default_factory=list)  # 标签，用于搜索和分类
     created_at: Optional[datetime] = None  # 创建时间（入库时设置）
@@ -78,13 +79,13 @@ class ReviewStandardSet(BaseModel):
 # ==================== 标准库模型 ====================
 
 class StandardCollection(BaseModel):
-    """标准集合（用于预设模板和分组管理）"""
+    """标准集（一套完整的审阅标准）"""
     id: str = Field(default_factory=generate_id)
-    name: str  # 集合名称，如"通用合同审核标准"
-    description: str = ""  # 集合描述
+    name: str  # 集合名称，如"电商平台合作协议审核标准"
+    description: str = ""  # 适用场景说明
     material_type: str = "both"  # contract/marketing/both
     is_preset: bool = False  # 是否为系统预设（预设集合不可删除）
-    standard_ids: List[str] = Field(default_factory=list)  # 包含的标准ID列表
+    # 注意：不再存储 standard_ids，改为通过 ReviewStandard.collection_id 关联
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -141,11 +142,12 @@ class StandardLibrary(BaseModel):
         return None
 
     def get_collection_standards(self, collection_id: str) -> List[ReviewStandard]:
-        """获取集合中的所有标准"""
-        collection = self.get_collection_by_id(collection_id)
-        if not collection:
-            return []
-        return [s for s in self.standards if s.id in collection.standard_ids]
+        """获取集合中的所有标准（通过 collection_id 关联）"""
+        return [s for s in self.standards if s.collection_id == collection_id]
+
+    def get_collection_standard_count(self, collection_id: str) -> int:
+        """获取集合中的标准数量"""
+        return len([s for s in self.standards if s.collection_id == collection_id])
 
 
 class StandardRecommendation(BaseModel):

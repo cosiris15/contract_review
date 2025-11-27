@@ -1,255 +1,254 @@
 <template>
   <div class="standards-view">
-    <!-- 页面头部 -->
-    <div class="page-header">
-      <div class="header-left">
-        <h1>审核标准管理</h1>
-        <p class="subtitle">管理和维护审核标准库，支持导入、编辑、删除标准</p>
-      </div>
-      <div class="header-actions">
-        <el-dropdown trigger="click" @command="handleNewStandardCommand">
-          <el-button type="primary">
-            <el-icon><Plus /></el-icon>
-            新建标准
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="upload">
-                <el-icon><Upload /></el-icon>
-                上传新标准（批量）
-              </el-dropdown-item>
-              <el-dropdown-item command="ai">
-                <el-icon><MagicStick /></el-icon>
-                AI辅助制作（批量）
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-button @click="handleExport">
-          <el-icon><Download /></el-icon>
-          导出
-        </el-button>
-      </div>
-    </div>
-
-    <!-- 统计卡片 -->
-    <div class="stats-row" v-if="stats">
-      <el-card class="stat-card">
-        <div class="stat-value">{{ stats.total }}</div>
-        <div class="stat-label">标准总数</div>
-      </el-card>
-      <el-card class="stat-card">
-        <div class="stat-value high">{{ stats.by_risk_level?.high || 0 }}</div>
-        <div class="stat-label">高风险</div>
-      </el-card>
-      <el-card class="stat-card">
-        <div class="stat-value medium">{{ stats.by_risk_level?.medium || 0 }}</div>
-        <div class="stat-label">中风险</div>
-      </el-card>
-      <el-card class="stat-card">
-        <div class="stat-value low">{{ stats.by_risk_level?.low || 0 }}</div>
-        <div class="stat-label">低风险</div>
-      </el-card>
-    </div>
-
-    <!-- 筛选和搜索 -->
-    <el-card class="filter-card">
-      <div class="filter-row">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索标准..."
-          clearable
-          style="width: 300px"
-          @input="handleSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-
-        <el-select
-          v-model="filterCategory"
-          placeholder="选择分类"
-          clearable
-          style="width: 200px"
-          @change="loadStandards"
-        >
-          <el-option
-            v-for="cat in categories"
-            :key="cat"
-            :label="cat"
-            :value="cat"
-          />
-        </el-select>
-
-        <el-select
-          v-model="filterRiskLevel"
-          placeholder="风险等级"
-          clearable
-          style="width: 150px"
-          @change="loadStandards"
-        >
-          <el-option label="高" value="high" />
-          <el-option label="中" value="medium" />
-          <el-option label="低" value="low" />
-        </el-select>
-
-        <el-select
-          v-model="filterMaterialType"
-          placeholder="适用类型"
-          clearable
-          style="width: 150px"
-          @change="loadStandards"
-        >
-          <el-option label="合同" value="contract" />
-          <el-option label="营销材料" value="marketing" />
-        </el-select>
-
-        <el-button type="primary" text @click="showAddDialog = true">
-          <el-icon><Plus /></el-icon>
-          添加单条
-        </el-button>
-      </div>
-    </el-card>
-
-    <!-- 标准列表表格 -->
-    <el-card class="table-card">
-      <el-table
-        :data="standards"
-        v-loading="loading"
-        stripe
-        style="width: 100%"
-      >
-        <el-table-column prop="category" label="分类" width="120" />
-        <el-table-column prop="item" label="审核要点" min-width="180" />
-        <el-table-column prop="description" label="说明" min-width="250" show-overflow-tooltip />
-        <el-table-column label="风险等级" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag :type="getRiskTagType(row.risk_level)" size="small">
-              {{ getRiskLabel(row.risk_level) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="适用类型" width="120">
-          <template #default="{ row }">
-            <span>{{ formatApplicableTo(row.applicable_to) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="usage_instruction" label="适用说明" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span v-if="row.usage_instruction">{{ row.usage_instruction }}</span>
-            <el-button
-              v-else
-              type="primary"
-              text
-              size="small"
-              @click="generateUsageInstruction(row)"
-              :loading="generatingIds.includes(row.id)"
-            >
-              生成
+    <!-- 第一层：集合列表 -->
+    <template v-if="!selectedCollection">
+      <!-- 页面头部 -->
+      <div class="page-header">
+        <div class="header-left">
+          <h1>审核标准管理</h1>
+          <p class="subtitle">管理审核标准集，每套标准包含若干风险点</p>
+        </div>
+        <div class="header-actions">
+          <el-dropdown trigger="click" @command="handleNewStandardCommand">
+            <el-button type="primary">
+              <el-icon><Plus /></el-icon>
+              新建标准集
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
             </el-button>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" text size="small" @click="editStandard(row)">
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="upload">
+                  <el-icon><Upload /></el-icon>
+                  上传新标准（批量）
+                </el-dropdown-item>
+                <el-dropdown-item command="ai">
+                  <el-icon><MagicStick /></el-icon>
+                  AI辅助制作（批量）
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </div>
+
+      <!-- 筛选 -->
+      <el-card class="filter-card">
+        <div class="filter-row">
+          <el-input
+            v-model="collectionSearch"
+            placeholder="搜索标准集..."
+            clearable
+            style="width: 300px"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-select
+            v-model="filterMaterialType"
+            placeholder="材料类型"
+            clearable
+            style="width: 150px"
+          >
+            <el-option label="合同" value="contract" />
+            <el-option label="营销材料" value="marketing" />
+          </el-select>
+        </div>
+      </el-card>
+
+      <!-- 集合列表 -->
+      <div class="collections-list" v-loading="loadingCollections">
+        <el-empty v-if="filteredCollections.length === 0" description="暂无标准集" />
+        <div
+          v-for="col in filteredCollections"
+          :key="col.id"
+          class="collection-card"
+        >
+          <div class="collection-card-main" @click="openCollection(col)">
+            <div class="collection-icon">
+              <el-icon :size="24"><Folder /></el-icon>
+            </div>
+            <div class="collection-info">
+              <div class="collection-name">
+                {{ col.name }}
+                <el-tag v-if="col.is_preset" size="small" type="info">系统预设</el-tag>
+              </div>
+              <div class="collection-desc">{{ col.description || '暂无描述' }}</div>
+              <div class="collection-meta">
+                <span>{{ col.standard_count }} 条风险点</span>
+                <span class="meta-sep">|</span>
+                <span>{{ formatMaterialType(col.material_type) }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="collection-actions">
+            <el-button text type="primary" @click.stop="openCollection(col)">
+              <el-icon><View /></el-icon>
+              查看
+            </el-button>
+            <el-button text type="primary" @click.stop="editCollectionInfo(col)">
+              <el-icon><Edit /></el-icon>
               编辑
             </el-button>
-            <el-button type="danger" text size="small" @click="deleteStandard(row)">
+            <el-button
+              text
+              type="danger"
+              @click.stop="deleteCollection(col)"
+              :disabled="col.is_preset"
+            >
+              <el-icon><Delete /></el-icon>
               删除
             </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="table-footer">
-        <span>共 {{ standards.length }} 条标准</span>
-      </div>
-    </el-card>
-
-    <!-- 导入对话框 -->
-    <el-dialog
-      v-model="showImportDialog"
-      title="上传审核标准"
-      width="700px"
-      @close="resetImportDialog"
-    >
-      <div v-if="!previewStandards.length">
-        <el-upload
-          ref="uploadRef"
-          drag
-          :auto-upload="false"
-          :on-change="handleFileChange"
-          accept=".xlsx,.xls,.csv,.docx,.md,.txt"
-        >
-          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-          <div class="el-upload__text">
-            拖拽文件到此处，或 <em>点击上传</em>
           </div>
-          <template #tip>
-            <div class="el-upload__tip">
-              支持 Excel (.xlsx/.xls)、CSV、Word (.docx)、Markdown (.md)、文本 (.txt) 格式
-            </div>
-          </template>
-        </el-upload>
+        </div>
+      </div>
+    </template>
+
+    <!-- 第二层：集合详情（风险点管理） -->
+    <template v-else>
+      <!-- 详情头部 -->
+      <div class="detail-header">
+        <el-button text @click="backToList">
+          <el-icon><ArrowLeft /></el-icon>
+          返回列表
+        </el-button>
+        <h2>{{ selectedCollection.name }}</h2>
+        <el-tag v-if="selectedCollection.is_preset" size="small" type="info">系统预设</el-tag>
       </div>
 
-      <div v-else>
-        <el-alert
-          type="success"
-          :closable="false"
-          style="margin-bottom: 16px"
-        >
-          解析成功，共 {{ previewStandards.length }} 条标准
-        </el-alert>
+      <!-- 集合信息卡片 -->
+      <el-card class="collection-info-card">
+        <div class="info-row">
+          <div class="info-item">
+            <span class="info-label">适用场景：</span>
+            <span class="info-value">{{ selectedCollection.description || '暂无描述' }}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">材料类型：</span>
+            <span class="info-value">{{ formatMaterialType(selectedCollection.material_type) }}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">风险点数量：</span>
+            <span class="info-value">{{ standards.length }} 条</span>
+          </div>
+        </div>
+        <el-button type="primary" text size="small" @click="editCollectionInfo(selectedCollection)">
+          <el-icon><Edit /></el-icon>
+          编辑集合信息
+        </el-button>
+      </el-card>
 
-        <el-table :data="previewStandards" max-height="400" size="small">
-          <el-table-column prop="category" label="分类" width="100" />
-          <el-table-column prop="item" label="审核要点" width="150" />
-          <el-table-column prop="description" label="说明" show-overflow-tooltip />
-          <el-table-column label="风险" width="60">
+      <!-- 风险点筛选和操作 -->
+      <el-card class="filter-card">
+        <div class="filter-row">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索风险点..."
+            clearable
+            style="width: 300px"
+            @input="handleSearch"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+
+          <el-select
+            v-model="filterCategory"
+            placeholder="选择分类"
+            clearable
+            style="width: 200px"
+            @change="loadStandards"
+          >
+            <el-option
+              v-for="cat in categories"
+              :key="cat"
+              :label="cat"
+              :value="cat"
+            />
+          </el-select>
+
+          <el-select
+            v-model="filterRiskLevel"
+            placeholder="风险等级"
+            clearable
+            style="width: 150px"
+            @change="loadStandards"
+          >
+            <el-option label="高" value="high" />
+            <el-option label="中" value="medium" />
+            <el-option label="低" value="low" />
+          </el-select>
+
+          <el-button type="primary" @click="showAddDialog = true">
+            <el-icon><Plus /></el-icon>
+            添加风险点
+          </el-button>
+        </div>
+      </el-card>
+
+      <!-- 风险点列表表格 -->
+      <el-card class="table-card">
+        <el-table
+          :data="standards"
+          v-loading="loading"
+          stripe
+          style="width: 100%"
+        >
+          <el-table-column prop="category" label="分类" width="120" />
+          <el-table-column prop="item" label="审核要点" min-width="180" />
+          <el-table-column prop="description" label="说明" min-width="250" show-overflow-tooltip />
+          <el-table-column label="风险等级" width="100" align="center">
             <template #default="{ row }">
-              {{ getRiskLabel(row.risk_level) }}
+              <el-tag :type="getRiskTagType(row.risk_level)" size="small">
+                {{ getRiskLabel(row.risk_level) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="适用类型" width="120">
+            <template #default="{ row }">
+              <span>{{ formatApplicableTo(row.applicable_to) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="usage_instruction" label="适用说明" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.usage_instruction">{{ row.usage_instruction }}</span>
+              <el-button
+                v-else
+                type="primary"
+                text
+                size="small"
+                @click="generateUsageInstruction(row)"
+                :loading="generatingIds.includes(row.id)"
+              >
+                生成
+              </el-button>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="150" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" text size="small" @click="editStandard(row)">
+                编辑
+              </el-button>
+              <el-button type="danger" text size="small" @click="deleteStandard(row)">
+                删除
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
 
-        <div style="margin-top: 16px">
-          <el-checkbox v-model="replaceExisting">
-            替换现有标准库（清空后导入）
-          </el-checkbox>
+        <div class="table-footer">
+          <span>共 {{ standards.length }} 条风险点</span>
         </div>
-      </div>
+      </el-card>
+    </template>
 
-      <template #footer>
-        <el-button @click="showImportDialog = false">取消</el-button>
-        <el-button
-          v-if="!previewStandards.length"
-          type="primary"
-          @click="previewFile"
-          :loading="previewing"
-          :disabled="!selectedFile"
-        >
-          预览
-        </el-button>
-        <el-button
-          v-else
-          type="primary"
-          @click="saveToLibrary"
-          :loading="saving"
-        >
-          确认入库
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 添加标准对话框（手动添加） -->
+    <!-- 添加风险点对话框 -->
     <el-dialog
       v-model="showAddDialog"
-      title="添加标准"
+      :title="editingStandard ? '编辑风险点' : '添加风险点'"
       width="600px"
-      @close="resetEditDialog"
+      @close="resetStandardForm"
     >
       <el-form :model="standardForm" label-width="100px">
         <el-form-item label="分类" required>
@@ -293,6 +292,142 @@
         <el-button @click="showAddDialog = false">取消</el-button>
         <el-button type="primary" @click="saveStandard" :loading="saving">
           保存
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑集合信息对话框 -->
+    <el-dialog
+      v-model="showCollectionEditDialog"
+      title="编辑集合信息"
+      width="500px"
+    >
+      <el-form :model="collectionForm" label-width="100px">
+        <el-form-item label="集合名称" required>
+          <el-input v-model="collectionForm.name" placeholder="如：电商平台合作协议审核标准" />
+        </el-form-item>
+        <el-form-item label="适用场景">
+          <el-input
+            v-model="collectionForm.description"
+            type="textarea"
+            :rows="3"
+            placeholder="描述该标准集的适用场景"
+          />
+        </el-form-item>
+        <el-form-item label="材料类型">
+          <el-select v-model="collectionForm.material_type" style="width: 100%">
+            <el-option label="合同" value="contract" />
+            <el-option label="营销材料" value="marketing" />
+            <el-option label="两者都适用" value="both" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showCollectionEditDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveCollectionInfo" :loading="savingCollection">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 导入对话框（创建新集合） -->
+    <el-dialog
+      v-model="showImportDialog"
+      title="上传审核标准"
+      width="700px"
+      @close="resetImportDialog"
+    >
+      <div v-if="importStep === 1">
+        <!-- 第一步：输入集合信息 -->
+        <el-form :model="newCollectionForm" label-width="100px">
+          <el-form-item label="集合名称" required>
+            <el-input v-model="newCollectionForm.name" placeholder="如：电商平台合作协议审核标准" />
+          </el-form-item>
+          <el-form-item label="适用场景">
+            <el-input
+              v-model="newCollectionForm.description"
+              type="textarea"
+              :rows="2"
+              placeholder="描述该标准集的适用场景"
+            />
+          </el-form-item>
+          <el-form-item label="材料类型">
+            <el-select v-model="newCollectionForm.material_type" style="width: 100%">
+              <el-option label="合同" value="contract" />
+              <el-option label="营销材料" value="marketing" />
+              <el-option label="两者都适用" value="both" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+
+        <el-divider />
+
+        <el-upload
+          ref="uploadRef"
+          drag
+          :auto-upload="false"
+          :on-change="handleFileChange"
+          accept=".xlsx,.xls,.csv,.docx,.md,.txt"
+        >
+          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+          <div class="el-upload__text">
+            拖拽文件到此处，或 <em>点击上传</em>
+          </div>
+          <template #tip>
+            <div class="el-upload__tip">
+              支持 Excel (.xlsx/.xls)、CSV、Word (.docx)、Markdown (.md)、文本 (.txt) 格式
+            </div>
+          </template>
+        </el-upload>
+      </div>
+
+      <div v-else>
+        <!-- 第二步：预览标准 -->
+        <el-alert
+          type="success"
+          :closable="false"
+          style="margin-bottom: 16px"
+        >
+          解析成功，将创建标准集「{{ newCollectionForm.name }}」，共 {{ previewStandards.length }} 条风险点
+        </el-alert>
+
+        <el-table :data="previewStandards" max-height="400" size="small">
+          <el-table-column prop="category" label="分类" width="100" />
+          <el-table-column prop="item" label="审核要点" width="150" />
+          <el-table-column prop="description" label="说明" show-overflow-tooltip />
+          <el-table-column label="风险" width="60">
+            <template #default="{ row }">
+              {{ getRiskLabel(row.risk_level) }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <template #footer>
+        <el-button @click="showImportDialog = false">取消</el-button>
+        <el-button
+          v-if="importStep === 1"
+          type="primary"
+          @click="previewFile"
+          :loading="previewing"
+          :disabled="!selectedFile || !newCollectionForm.name"
+        >
+          预览
+        </el-button>
+        <el-button
+          v-else
+          @click="importStep = 1"
+        >
+          上一步
+        </el-button>
+        <el-button
+          v-if="importStep === 2"
+          type="primary"
+          @click="saveToLibrary"
+          :loading="saving"
+        >
+          确认入库
         </el-button>
       </template>
     </el-dialog>
@@ -429,11 +564,18 @@
           {{ generationSummary }}
         </el-alert>
 
+        <!-- 集合名称编辑 -->
+        <div class="collection-name-edit">
+          <el-form-item label="标准集名称" label-width="100px">
+            <el-input v-model="generatedCollectionName" placeholder="AI生成的名称，可修改" />
+          </el-form-item>
+        </div>
+
         <el-table
           :data="generatedStandards"
           border
           size="small"
-          max-height="400"
+          max-height="350"
         >
           <el-table-column type="expand">
             <template #default="{ row, $index }">
@@ -483,11 +625,6 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="适用" width="80">
-            <template #default="{ row }">
-              {{ formatApplicableTo(row.applicable_to) }}
-            </template>
-          </el-table-column>
         </el-table>
 
         <div class="step2-tip">
@@ -503,7 +640,7 @@
           :closable="false"
           style="margin-bottom: 16px;"
         >
-          请确认每条标准的适用说明，适用说明将帮助审阅时判断该标准是否适用于当前文档。
+          将创建标准集「{{ generatedCollectionName }}」，包含 {{ generatedStandards.length }} 条风险点
         </el-alert>
 
         <div class="usage-instruction-list">
@@ -546,7 +683,7 @@
           <!-- 步骤2按钮 -->
           <template v-if="createStep === 2">
             <el-button @click="createStep = 1">上一步</el-button>
-            <el-button type="primary" @click="createStep = 3" :disabled="!generatedStandards.length">
+            <el-button type="primary" @click="createStep = 3" :disabled="!generatedStandards.length || !generatedCollectionName">
               下一步
             </el-button>
           </template>
@@ -565,353 +702,182 @@
         </div>
       </template>
     </el-dialog>
-
-    <!-- AI 辅助编辑对话框 -->
-    <el-dialog
-      v-model="showEditDialog"
-      title="编辑标准"
-      width="800px"
-      @close="resetAIEditDialog"
-    >
-      <div class="ai-edit-container">
-        <!-- 当前标准展示 -->
-        <div class="current-standard">
-          <div class="section-title">当前标准</div>
-          <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="分类">{{ editingStandard?.category }}</el-descriptions-item>
-            <el-descriptions-item label="风险等级">
-              <el-tag :type="getRiskTagType(editingStandard?.risk_level)" size="small">
-                {{ getRiskLabel(editingStandard?.risk_level) }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="审核要点" :span="2">{{ editingStandard?.item }}</el-descriptions-item>
-            <el-descriptions-item label="详细说明" :span="2">{{ editingStandard?.description }}</el-descriptions-item>
-            <el-descriptions-item label="适用类型">{{ formatApplicableTo(editingStandard?.applicable_to) }}</el-descriptions-item>
-            <el-descriptions-item label="适用说明">{{ editingStandard?.usage_instruction || '（无）' }}</el-descriptions-item>
-          </el-descriptions>
-        </div>
-
-        <!-- AI 修改输入区 -->
-        <div class="ai-input-section">
-          <div class="section-title">
-            <el-icon><MagicStick /></el-icon>
-            告诉 AI 如何修改
-          </div>
-          <el-input
-            v-model="aiInstruction"
-            type="textarea"
-            :rows="3"
-            placeholder="用自然语言描述您想要的修改，例如：&#10;• 把风险等级提高到高&#10;• 在说明中增加关于违约金比例的要求&#10;• 这个标准只适用于采购合同&#10;• 让描述更加具体，包含具体的检查步骤"
-          />
-          <div class="ai-input-actions">
-            <el-button
-              type="primary"
-              @click="handleAIModify"
-              :loading="aiModifying"
-              :disabled="!aiInstruction.trim()"
-            >
-              <el-icon><MagicStick /></el-icon>
-              生成修改建议
-            </el-button>
-          </div>
-        </div>
-
-        <!-- AI 修改结果预览 -->
-        <div class="ai-result-section" v-if="aiModifiedResult">
-          <div class="section-title">
-            <el-icon><Check /></el-icon>
-            AI 修改建议
-            <el-tag type="info" size="small" style="margin-left: 8px;">
-              {{ aiModifiedResult.modification_summary }}
-            </el-tag>
-          </div>
-          <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="分类">
-              <span :class="{ 'changed': aiModifiedResult.category !== editingStandard?.category }">
-                {{ aiModifiedResult.category }}
-              </span>
-            </el-descriptions-item>
-            <el-descriptions-item label="风险等级">
-              <el-tag
-                :type="getRiskTagType(aiModifiedResult.risk_level)"
-                size="small"
-                :class="{ 'changed': aiModifiedResult.risk_level !== editingStandard?.risk_level }"
-              >
-                {{ getRiskLabel(aiModifiedResult.risk_level) }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="审核要点" :span="2">
-              <span :class="{ 'changed': aiModifiedResult.item !== editingStandard?.item }">
-                {{ aiModifiedResult.item }}
-              </span>
-            </el-descriptions-item>
-            <el-descriptions-item label="详细说明" :span="2">
-              <span :class="{ 'changed': aiModifiedResult.description !== editingStandard?.description }">
-                {{ aiModifiedResult.description }}
-              </span>
-            </el-descriptions-item>
-            <el-descriptions-item label="适用类型">
-              <span :class="{ 'changed': formatApplicableTo(aiModifiedResult.applicable_to) !== formatApplicableTo(editingStandard?.applicable_to) }">
-                {{ formatApplicableTo(aiModifiedResult.applicable_to) }}
-              </span>
-            </el-descriptions-item>
-            <el-descriptions-item label="适用说明">
-              <span :class="{ 'changed': aiModifiedResult.usage_instruction !== editingStandard?.usage_instruction }">
-                {{ aiModifiedResult.usage_instruction || '（无）' }}
-              </span>
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button @click="showEditDialog = false">取消</el-button>
-        <el-button
-          type="primary"
-          @click="confirmAIModification"
-          :loading="saving"
-          :disabled="!aiModifiedResult"
-        >
-          确认修改
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed } from 'vue'
 import {
-  Upload, Download, Search, Plus, UploadFilled, MagicStick, Check, InfoFilled, ArrowDown
+  Upload, Download, Search, Plus, UploadFilled, MagicStick, InfoFilled, ArrowDown,
+  Folder, View, Edit, Delete, ArrowLeft
 } from '@element-plus/icons-vue'
 import api from '@/api'
 
-// 数据状态
+// ==================== 集合列表相关 ====================
+const loadingCollections = ref(false)
+const collections = ref([])
+const collectionSearch = ref('')
+const filterMaterialType = ref('')
+const selectedCollection = ref(null)
+
+// 筛选后的集合
+const filteredCollections = computed(() => {
+  let result = collections.value
+
+  if (collectionSearch.value) {
+    const keyword = collectionSearch.value.toLowerCase()
+    result = result.filter(c =>
+      c.name.toLowerCase().includes(keyword) ||
+      (c.description && c.description.toLowerCase().includes(keyword))
+    )
+  }
+
+  if (filterMaterialType.value) {
+    result = result.filter(c =>
+      c.material_type === filterMaterialType.value || c.material_type === 'both'
+    )
+  }
+
+  return result
+})
+
+// 加载集合列表
+async function loadCollections() {
+  loadingCollections.value = true
+  try {
+    const response = await api.getCollections()
+    collections.value = response.data
+  } catch (error) {
+    ElMessage.error('加载标准集失败: ' + error.message)
+  } finally {
+    loadingCollections.value = false
+  }
+}
+
+// 打开集合详情
+async function openCollection(col) {
+  selectedCollection.value = col
+  await loadStandards()
+  await loadCategories()
+}
+
+// 返回列表
+function backToList() {
+  selectedCollection.value = null
+  standards.value = []
+  filterCategory.value = ''
+  filterRiskLevel.value = ''
+  searchKeyword.value = ''
+}
+
+// ==================== 集合编辑相关 ====================
+const showCollectionEditDialog = ref(false)
+const savingCollection = ref(false)
+const editingCollection = ref(null)
+const collectionForm = reactive({
+  name: '',
+  description: '',
+  material_type: 'both'
+})
+
+function editCollectionInfo(col) {
+  editingCollection.value = col
+  collectionForm.name = col.name
+  collectionForm.description = col.description
+  collectionForm.material_type = col.material_type
+  showCollectionEditDialog.value = true
+}
+
+async function saveCollectionInfo() {
+  if (!collectionForm.name.trim()) {
+    ElMessage.warning('集合名称不能为空')
+    return
+  }
+
+  savingCollection.value = true
+  try {
+    await api.updateCollection(editingCollection.value.id, {
+      name: collectionForm.name,
+      description: collectionForm.description,
+      material_type: collectionForm.material_type
+    })
+    ElMessage.success('更新成功')
+    showCollectionEditDialog.value = false
+
+    // 更新本地数据
+    if (selectedCollection.value && selectedCollection.value.id === editingCollection.value.id) {
+      selectedCollection.value.name = collectionForm.name
+      selectedCollection.value.description = collectionForm.description
+      selectedCollection.value.material_type = collectionForm.material_type
+    }
+    loadCollections()
+  } catch (error) {
+    ElMessage.error('更新失败: ' + error.message)
+  } finally {
+    savingCollection.value = false
+  }
+}
+
+// 删除集合
+async function deleteCollection(col) {
+  if (col.is_preset) {
+    ElMessage.warning('系统预设集合不可删除')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除标准集「${col.name}」吗？该集合内的所有风险点将一并删除。`,
+      '确认删除',
+      { type: 'warning' }
+    )
+    await api.deleteCollection(col.id)
+    ElMessage.success('删除成功')
+    loadCollections()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('删除失败: ' + error.message)
+    }
+  }
+}
+
+// ==================== 风险点管理相关 ====================
 const loading = ref(false)
 const standards = ref([])
-const stats = ref(null)
 const categories = ref([])
-
-// 筛选状态
 const searchKeyword = ref('')
 const filterCategory = ref('')
 const filterRiskLevel = ref('')
-const filterMaterialType = ref('')
-
-// 导入对话框状态
-const showImportDialog = ref(false)
-const selectedFile = ref(null)
-const previewStandards = ref([])
-const previewing = ref(false)
-const saving = ref(false)
-const replaceExisting = ref(false)
-
-// 添加对话框状态（手动添加）
-const showAddDialog = ref(false)
-const standardForm = reactive({
-  category: '',
-  item: '',
-  description: '',
-  risk_level: 'medium',
-  applicable_to: ['contract', 'marketing'],
-  usage_instruction: '',
-})
-
-// AI 编辑对话框状态
-const showEditDialog = ref(false)
-const editingStandard = ref(null)
-const aiInstruction = ref('')
-const aiModifying = ref(false)
-const aiModifiedResult = ref(null)
-
-// 生成适用说明状态
 const generatingIds = ref([])
 
-// 标准制作对话框状态
-const showCreateDialog = ref(false)
-const createStep = ref(1)  // 步骤：1=问卷 2=预览编辑 3=确认适用条件
-const generating = ref(false)
-const savingCreated = ref(false)
-const creationForm = reactive({
-  document_type: 'contract',
-  business_scenario: '',
-  focus_areas: [],
-  our_role: '',
-  industry: '',
-  special_risks: '',
-  reference_material: '',
-  custom_focus: '',  // 自定义关注点
-  custom_industry: '',  // 自定义行业
-})
-const generatedStandards = ref([])
-const generationSummary = ref('')
-
-// 核心关注点选项
-const focusAreaOptions = [
-  '合同主体资格',
-  '权利义务条款',
-  '费用与支付',
-  '违约责任',
-  '知识产权',
-  '保密条款',
-  '争议解决',
-  '合规性要求',
-]
-
-// 行业选项
-const industryOptions = [
-  '信息技术/互联网',
-  '金融/保险',
-  '制造业',
-  '房地产/建筑',
-  '医疗/生物',
-  '零售/消费',
-]
-
-// 制作标准 - 计算属性
-const createDialogTitle = computed(() => {
-  const titles = ['制作审核标准', '预览编辑标准', '确认入库']
-  return titles[createStep.value - 1]
-})
-
-const canGenerate = computed(() => {
-  return (
-    creationForm.business_scenario.trim() &&
-    (creationForm.focus_areas.length > 0 || creationForm.custom_focus.trim())
-  )
-})
-
-// 制作标准 - 生成标准
-async function generateStandardsFromBusiness() {
-  if (!canGenerate.value) {
-    ElMessage.warning('请填写业务场景和至少一个关注点')
-    return
-  }
-
-  generating.value = true
-  try {
-    // 合并选中的关注点和自定义关注点
-    const allFocusAreas = [...creationForm.focus_areas]
-    if (creationForm.custom_focus.trim()) {
-      const customAreas = creationForm.custom_focus.split(/[,，、]/).map(s => s.trim()).filter(Boolean)
-      allFocusAreas.push(...customAreas)
-    }
-
-    // 确定行业
-    const industry = creationForm.custom_industry.trim() || creationForm.industry
-
-    const response = await api.createStandardsFromBusiness({
-      document_type: creationForm.document_type,
-      business_scenario: creationForm.business_scenario,
-      focus_areas: allFocusAreas,
-      our_role: creationForm.our_role || null,
-      industry: industry || null,
-      special_risks: creationForm.special_risks || null,
-      reference_material: creationForm.reference_material || null,
-    })
-
-    generatedStandards.value = response.data.standards
-    generationSummary.value = response.data.generation_summary || `成功生成 ${response.data.standards.length} 条标准`
-    createStep.value = 2
-    ElMessage.success('标准生成成功')
-  } catch (error) {
-    ElMessage.error('生成标准失败: ' + (error.response?.data?.detail || error.message))
-  } finally {
-    generating.value = false
-  }
-}
-
-// 制作标准 - 删除生成的标准
-function removeGeneratedStandard(index) {
-  generatedStandards.value.splice(index, 1)
-}
-
-// 制作标准 - 保存生成的标准
-async function saveGeneratedStandards() {
-  if (!generatedStandards.value.length) {
-    ElMessage.warning('没有可保存的标准')
-    return
-  }
-
-  savingCreated.value = true
-  try {
-    const response = await api.saveToLibrary({
-      standards: generatedStandards.value,
-      replace: false,
-    })
-    ElMessage.success(response.data.message || '标准保存成功')
-    showCreateDialog.value = false
-    resetCreateDialog()
-    loadStandards()
-    loadStats()
-    loadCategories()
-  } catch (error) {
-    ElMessage.error('保存失败: ' + error.message)
-  } finally {
-    savingCreated.value = false
-  }
-}
-
-// 制作标准 - 重置对话框
-function resetCreateDialog() {
-  createStep.value = 1
-  Object.assign(creationForm, {
-    document_type: 'contract',
-    business_scenario: '',
-    focus_areas: [],
-    our_role: '',
-    industry: '',
-    special_risks: '',
-    reference_material: '',
-    custom_focus: '',
-    custom_industry: '',
-  })
-  generatedStandards.value = []
-  generationSummary.value = ''
-}
-
-// 加载标准列表
+// 加载风险点列表
 async function loadStandards() {
+  if (!selectedCollection.value) return
+
   loading.value = true
   try {
     const params = {}
     if (filterCategory.value) params.category = filterCategory.value
-    if (filterMaterialType.value) params.material_type = filterMaterialType.value
+    if (filterRiskLevel.value) params.risk_level = filterRiskLevel.value
     if (searchKeyword.value) params.keyword = searchKeyword.value
 
-    const response = await api.getLibraryStandards(params)
+    const response = await api.getCollectionStandards(selectedCollection.value.id, params)
     standards.value = response.data
-
-    // 如果有风险等级筛选，前端过滤
-    if (filterRiskLevel.value) {
-      standards.value = standards.value.filter(
-        s => s.risk_level === filterRiskLevel.value
-      )
-    }
   } catch (error) {
-    ElMessage.error('加载标准失败: ' + error.message)
+    ElMessage.error('加载风险点失败: ' + error.message)
   } finally {
     loading.value = false
   }
 }
 
-// 加载统计信息
-async function loadStats() {
-  try {
-    const response = await api.getLibraryStats()
-    stats.value = response.data
-  } catch (error) {
-    console.error('加载统计失败:', error)
-  }
-}
-
 // 加载分类列表
 async function loadCategories() {
+  if (!selectedCollection.value) return
+
   try {
-    const response = await api.getLibraryCategories()
-    categories.value = response.data.categories
+    const response = await api.getCollectionCategories(selectedCollection.value.id)
+    categories.value = response.data
   } catch (error) {
     console.error('加载分类失败:', error)
   }
@@ -926,82 +892,32 @@ function handleSearch() {
   }, 300)
 }
 
-// 风险等级标签
-function getRiskTagType(level) {
-  return { high: 'danger', medium: 'warning', low: 'success' }[level] || 'info'
-}
+// ==================== 添加/编辑风险点 ====================
+const showAddDialog = ref(false)
+const saving = ref(false)
+const editingStandard = ref(null)
+const standardForm = reactive({
+  category: '',
+  item: '',
+  description: '',
+  risk_level: 'medium',
+  applicable_to: ['contract', 'marketing'],
+  usage_instruction: ''
+})
 
-function getRiskLabel(level) {
-  return { high: '高', medium: '中', low: '低' }[level] || level
-}
-
-// 格式化适用类型
-function formatApplicableTo(types) {
-  if (!types) return ''
-  return types.map(t => t === 'contract' ? '合同' : '营销').join('、')
-}
-
-// 文件选择处理
-function handleFileChange(file) {
-  selectedFile.value = file.raw
-  previewStandards.value = []
-}
-
-// 预览文件
-async function previewFile() {
-  if (!selectedFile.value) return
-
-  previewing.value = true
-  try {
-    const response = await api.previewStandards(selectedFile.value)
-    previewStandards.value = response.data.standards
-    ElMessage.success(`解析成功，共 ${response.data.total_count} 条标准`)
-  } catch (error) {
-    ElMessage.error('解析失败: ' + error.message)
-  } finally {
-    previewing.value = false
-  }
-}
-
-// 保存到标准库
-async function saveToLibrary() {
-  if (!previewStandards.value.length) return
-
-  saving.value = true
-  try {
-    const response = await api.saveToLibrary({
-      standards: previewStandards.value,
-      replace: replaceExisting.value,
-    })
-    ElMessage.success(response.data.message)
-    showImportDialog.value = false
-    resetImportDialog()
-    loadStandards()
-    loadStats()
-    loadCategories()
-  } catch (error) {
-    ElMessage.error('保存失败: ' + error.message)
-  } finally {
-    saving.value = false
-  }
-}
-
-// 重置导入对话框
-function resetImportDialog() {
-  selectedFile.value = null
-  previewStandards.value = []
-  replaceExisting.value = false
-}
-
-// 编辑标准 - 打开 AI 编辑对话框
 function editStandard(row) {
   editingStandard.value = row
-  aiInstruction.value = ''
-  aiModifiedResult.value = null
-  showEditDialog.value = true
+  Object.assign(standardForm, {
+    category: row.category,
+    item: row.item,
+    description: row.description,
+    risk_level: row.risk_level,
+    applicable_to: row.applicable_to || ['contract', 'marketing'],
+    usage_instruction: row.usage_instruction || ''
+  })
+  showAddDialog.value = true
 }
 
-// 保存标准（添加或更新）
 async function saveStandard() {
   if (!standardForm.category || !standardForm.item || !standardForm.description) {
     ElMessage.warning('请填写必填字段')
@@ -1011,17 +927,21 @@ async function saveStandard() {
   saving.value = true
   try {
     if (editingStandard.value) {
+      // 更新
       await api.updateLibraryStandard(editingStandard.value.id, standardForm)
       ElMessage.success('更新成功')
     } else {
-      await api.createLibraryStandard(standardForm)
+      // 添加到当前集合
+      await api.addStandardToCollection(selectedCollection.value.id, standardForm)
       ElMessage.success('添加成功')
     }
     showAddDialog.value = false
-    resetEditDialog()
+    resetStandardForm()
     loadStandards()
-    loadStats()
     loadCategories()
+
+    // 更新集合的风险点数量
+    selectedCollection.value.standard_count = standards.value.length + (editingStandard.value ? 0 : 1)
   } catch (error) {
     ElMessage.error('保存失败: ' + error.message)
   } finally {
@@ -1029,19 +949,18 @@ async function saveStandard() {
   }
 }
 
-// 删除标准
 async function deleteStandard(row) {
   try {
     await ElMessageBox.confirm(
-      `确定要删除标准「${row.item}」吗？`,
+      `确定要删除风险点「${row.item}」吗？`,
       '确认删除',
       { type: 'warning' }
     )
     await api.deleteLibraryStandard(row.id)
     ElMessage.success('删除成功')
     loadStandards()
-    loadStats()
     loadCategories()
+    selectedCollection.value.standard_count--
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('删除失败: ' + error.message)
@@ -1049,66 +968,16 @@ async function deleteStandard(row) {
   }
 }
 
-// 重置手动添加对话框
-function resetEditDialog() {
+function resetStandardForm() {
+  editingStandard.value = null
   Object.assign(standardForm, {
     category: '',
     item: '',
     description: '',
     risk_level: 'medium',
     applicable_to: ['contract', 'marketing'],
-    usage_instruction: '',
+    usage_instruction: ''
   })
-}
-
-// 重置 AI 编辑对话框
-function resetAIEditDialog() {
-  editingStandard.value = null
-  aiInstruction.value = ''
-  aiModifiedResult.value = null
-}
-
-// AI 辅助修改
-async function handleAIModify() {
-  if (!aiInstruction.value.trim() || !editingStandard.value) return
-
-  aiModifying.value = true
-  try {
-    const response = await api.aiModifyStandard(editingStandard.value.id, aiInstruction.value)
-    aiModifiedResult.value = response.data.modified_standard
-    ElMessage.success('AI 已生成修改建议，请确认')
-  } catch (error) {
-    ElMessage.error('AI 修改失败: ' + error.message)
-  } finally {
-    aiModifying.value = false
-  }
-}
-
-// 确认 AI 修改
-async function confirmAIModification() {
-  if (!aiModifiedResult.value || !editingStandard.value) return
-
-  saving.value = true
-  try {
-    await api.updateLibraryStandard(editingStandard.value.id, {
-      category: aiModifiedResult.value.category,
-      item: aiModifiedResult.value.item,
-      description: aiModifiedResult.value.description,
-      risk_level: aiModifiedResult.value.risk_level,
-      applicable_to: aiModifiedResult.value.applicable_to,
-      usage_instruction: aiModifiedResult.value.usage_instruction,
-    })
-    ElMessage.success('标准已更新')
-    showEditDialog.value = false
-    resetAIEditDialog()
-    loadStandards()
-    loadStats()
-    loadCategories()
-  } catch (error) {
-    ElMessage.error('保存失败: ' + error.message)
-  } finally {
-    saving.value = false
-  }
 }
 
 // 生成适用说明
@@ -1131,7 +1000,236 @@ async function generateUsageInstruction(row) {
   }
 }
 
-// 新建标准下拉菜单命令处理
+// ==================== 导入标准（创建新集合） ====================
+const showImportDialog = ref(false)
+const importStep = ref(1)
+const selectedFile = ref(null)
+const previewStandards = ref([])
+const previewing = ref(false)
+const newCollectionForm = reactive({
+  name: '',
+  description: '',
+  material_type: 'both'
+})
+
+function handleFileChange(file) {
+  selectedFile.value = file.raw
+}
+
+async function previewFile() {
+  if (!selectedFile.value) return
+  if (!newCollectionForm.name.trim()) {
+    ElMessage.warning('请先输入集合名称')
+    return
+  }
+
+  previewing.value = true
+  try {
+    const response = await api.previewStandards(selectedFile.value)
+    previewStandards.value = response.data.standards
+    importStep.value = 2
+    ElMessage.success(`解析成功，共 ${response.data.total_count} 条标准`)
+  } catch (error) {
+    ElMessage.error('解析失败: ' + error.message)
+  } finally {
+    previewing.value = false
+  }
+}
+
+async function saveToLibrary() {
+  if (!previewStandards.value.length) return
+
+  saving.value = true
+  try {
+    const response = await api.saveToLibrary({
+      collection_name: newCollectionForm.name,
+      collection_description: newCollectionForm.description,
+      material_type: newCollectionForm.material_type,
+      standards: previewStandards.value,
+    })
+    ElMessage.success(response.data.message)
+    showImportDialog.value = false
+    resetImportDialog()
+    loadCollections()
+  } catch (error) {
+    ElMessage.error('保存失败: ' + error.message)
+  } finally {
+    saving.value = false
+  }
+}
+
+function resetImportDialog() {
+  importStep.value = 1
+  selectedFile.value = null
+  previewStandards.value = []
+  Object.assign(newCollectionForm, {
+    name: '',
+    description: '',
+    material_type: 'both'
+  })
+}
+
+// ==================== AI 制作标准 ====================
+const showCreateDialog = ref(false)
+const createStep = ref(1)
+const generating = ref(false)
+const savingCreated = ref(false)
+const generatedStandards = ref([])
+const generatedCollectionName = ref('')
+const generationSummary = ref('')
+
+const creationForm = reactive({
+  document_type: 'contract',
+  business_scenario: '',
+  focus_areas: [],
+  our_role: '',
+  industry: '',
+  special_risks: '',
+  reference_material: '',
+  custom_focus: '',
+  custom_industry: ''
+})
+
+const focusAreaOptions = [
+  '合同主体资格',
+  '权利义务条款',
+  '费用与支付',
+  '违约责任',
+  '知识产权',
+  '保密条款',
+  '争议解决',
+  '合规性要求',
+]
+
+const industryOptions = [
+  '信息技术/互联网',
+  '金融/保险',
+  '制造业',
+  '房地产/建筑',
+  '医疗/生物',
+  '零售/消费',
+]
+
+const createDialogTitle = computed(() => {
+  const titles = ['制作审核标准', '预览编辑标准', '确认入库']
+  return titles[createStep.value - 1]
+})
+
+const canGenerate = computed(() => {
+  return (
+    creationForm.business_scenario.trim() &&
+    (creationForm.focus_areas.length > 0 || creationForm.custom_focus.trim())
+  )
+})
+
+async function generateStandardsFromBusiness() {
+  if (!canGenerate.value) {
+    ElMessage.warning('请填写业务场景和至少一个关注点')
+    return
+  }
+
+  generating.value = true
+  try {
+    const allFocusAreas = [...creationForm.focus_areas]
+    if (creationForm.custom_focus.trim()) {
+      const customAreas = creationForm.custom_focus.split(/[,，、]/).map(s => s.trim()).filter(Boolean)
+      allFocusAreas.push(...customAreas)
+    }
+
+    const industry = creationForm.custom_industry.trim() || creationForm.industry
+
+    const response = await api.createStandardsFromBusiness({
+      document_type: creationForm.document_type,
+      business_scenario: creationForm.business_scenario,
+      focus_areas: allFocusAreas,
+      our_role: creationForm.our_role || null,
+      industry: industry || null,
+      special_risks: creationForm.special_risks || null,
+      reference_material: creationForm.reference_material || null,
+    })
+
+    generatedStandards.value = response.data.standards
+    generatedCollectionName.value = response.data.collection_name || ''
+    generationSummary.value = response.data.generation_summary || `成功生成 ${response.data.standards.length} 条标准`
+    createStep.value = 2
+    ElMessage.success('标准生成成功')
+  } catch (error) {
+    ElMessage.error('生成标准失败: ' + (error.response?.data?.detail || error.message))
+  } finally {
+    generating.value = false
+  }
+}
+
+function removeGeneratedStandard(index) {
+  generatedStandards.value.splice(index, 1)
+}
+
+async function saveGeneratedStandards() {
+  if (!generatedStandards.value.length) {
+    ElMessage.warning('没有可保存的标准')
+    return
+  }
+  if (!generatedCollectionName.value.trim()) {
+    ElMessage.warning('请输入标准集名称')
+    return
+  }
+
+  savingCreated.value = true
+  try {
+    const response = await api.saveToLibrary({
+      collection_name: generatedCollectionName.value,
+      collection_description: creationForm.business_scenario,
+      material_type: creationForm.document_type === 'both' ? 'both' : creationForm.document_type,
+      standards: generatedStandards.value,
+    })
+    ElMessage.success(response.data.message || '标准保存成功')
+    showCreateDialog.value = false
+    resetCreateDialog()
+    loadCollections()
+  } catch (error) {
+    ElMessage.error('保存失败: ' + error.message)
+  } finally {
+    savingCreated.value = false
+  }
+}
+
+function resetCreateDialog() {
+  createStep.value = 1
+  Object.assign(creationForm, {
+    document_type: 'contract',
+    business_scenario: '',
+    focus_areas: [],
+    our_role: '',
+    industry: '',
+    special_risks: '',
+    reference_material: '',
+    custom_focus: '',
+    custom_industry: ''
+  })
+  generatedStandards.value = []
+  generatedCollectionName.value = ''
+  generationSummary.value = ''
+}
+
+// ==================== 辅助函数 ====================
+function getRiskTagType(level) {
+  return { high: 'danger', medium: 'warning', low: 'success' }[level] || 'info'
+}
+
+function getRiskLabel(level) {
+  return { high: '高', medium: '中', low: '低' }[level] || level
+}
+
+function formatApplicableTo(types) {
+  if (!types) return ''
+  return types.map(t => t === 'contract' ? '合同' : '营销').join('、')
+}
+
+function formatMaterialType(type) {
+  const map = { contract: '合同', marketing: '营销材料', both: '合同/营销' }
+  return map[type] || type
+}
+
 function handleNewStandardCommand(command) {
   if (command === 'upload') {
     showImportDialog.value = true
@@ -1140,20 +1238,9 @@ function handleNewStandardCommand(command) {
   }
 }
 
-// 导出标准库
-async function handleExport() {
-  try {
-    window.open(api.exportLibrary('csv'), '_blank')
-  } catch (error) {
-    ElMessage.error('导出失败: ' + error.message)
-  }
-}
-
-// 初始化
+// ==================== 初始化 ====================
 onMounted(() => {
-  loadStandards()
-  loadStats()
-  loadCategories()
+  loadCollections()
 })
 </script>
 
@@ -1188,42 +1275,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.stat-card {
-  text-align: center;
-  padding: 16px;
-}
-
-.stat-value {
-  font-size: 32px;
-  font-weight: bold;
-  color: #409eff;
-}
-
-.stat-value.high {
-  color: #f56c6c;
-}
-
-.stat-value.medium {
-  color: #e6a23c;
-}
-
-.stat-value.low {
-  color: #67c23a;
-}
-
-.stat-label {
-  margin-top: 8px;
-  color: #909399;
-  font-size: 14px;
-}
-
 .filter-card {
   margin-bottom: 16px;
 }
@@ -1235,6 +1286,121 @@ onMounted(() => {
   align-items: center;
 }
 
+/* 集合列表样式 */
+.collections-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.collection-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+  transition: all 0.2s;
+}
+
+.collection-card:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.1);
+}
+
+.collection-card-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.collection-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f7fa;
+  border-radius: 8px;
+  color: #409eff;
+}
+
+.collection-info {
+  flex: 1;
+}
+
+.collection-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collection-desc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #909399;
+}
+
+.collection-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.meta-sep {
+  margin: 0 8px;
+}
+
+.collection-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 详情页样式 */
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.detail-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #303133;
+}
+
+.collection-info-card {
+  margin-bottom: 16px;
+}
+
+.info-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 12px;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+}
+
+.info-label {
+  color: #909399;
+  margin-right: 8px;
+}
+
+.info-value {
+  color: #303133;
+}
+
 .table-card {
   margin-bottom: 24px;
 }
@@ -1244,55 +1410,6 @@ onMounted(() => {
   text-align: right;
   color: #909399;
   font-size: 14px;
-}
-
-/* AI 编辑对话框样式 */
-.ai-edit-container {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.current-standard {
-  background: #f5f7fa;
-  padding: 16px;
-  border-radius: 8px;
-}
-
-.ai-input-section {
-  padding: 16px;
-  border: 1px solid #dcdfe6;
-  border-radius: 8px;
-}
-
-.ai-input-actions {
-  margin-top: 12px;
-  text-align: right;
-}
-
-.ai-result-section {
-  padding: 16px;
-  border: 2px solid #67c23a;
-  border-radius: 8px;
-  background: #f0f9eb;
-}
-
-.ai-result-section .changed {
-  background: #fef0f0;
-  color: #f56c6c;
-  padding: 2px 4px;
-  border-radius: 4px;
-  font-weight: 500;
 }
 
 /* 制作标准对话框样式 */
@@ -1347,6 +1464,13 @@ onMounted(() => {
 .industry-selector {
   display: flex;
   align-items: center;
+}
+
+.collection-name-edit {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 8px;
 }
 
 .expand-edit-form {

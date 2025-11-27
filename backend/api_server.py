@@ -126,6 +126,14 @@ try:
 except Exception as e:
     logger.warning(f"导入预设模板失败: {e}")
 
+# 启动时迁移无归属的风险点
+try:
+    migrated_count = standard_library_manager.migrate_orphan_standards()
+    if migrated_count > 0:
+        logger.info(f"已迁移 {migrated_count} 条无归属风险点到默认集合")
+except Exception as e:
+    logger.warning(f"迁移无归属风险点失败: {e}")
+
 
 # ==================== 请求/响应模型 ====================
 
@@ -208,6 +216,7 @@ class GeneratedStandard(BaseModel):
 
 class StandardCreationResponse(BaseModel):
     """标准制作响应"""
+    collection_name: str  # AI生成的集合名称
     standards: List[GeneratedStandard]
     generation_summary: str
 
@@ -270,8 +279,10 @@ class StandardPreviewResponse(BaseModel):
 
 class SaveToLibraryRequest(BaseModel):
     """保存到标准库请求"""
+    collection_name: str  # 集合名称（必填）
+    collection_description: str = ""  # 集合描述
+    material_type: str = "both"  # 材料类型
     standards: List[CreateStandardRequest]
-    replace: bool = False  # 是否替换现有库
 
 
 class StandardLibraryStatsResponse(BaseModel):
@@ -1134,26 +1145,35 @@ class CollectionWithStandardsResponse(BaseModel):
     standards: List[StandardResponse]
 
 
-def _collection_to_response(collection, include_standards: bool = False, standards: list = None) -> CollectionResponse:
+def _collection_to_response(collection, standards: list = None) -> CollectionResponse:
     """将集合转换为响应格式"""
+    # 通过 collection_id 关联计算标准数量
+    library = standard_library_manager._load_library()
+    standard_count = len([s for s in library.standards if s.collection_id == collection.id])
+
     response = CollectionResponse(
         id=collection.id,
         name=collection.name,
         description=collection.description,
         material_type=collection.material_type,
         is_preset=collection.is_preset,
-        standard_count=len(collection.standard_ids),
+        standard_count=standard_count,
         standards=None,
     )
-    if include_standards and standards:
+    if standards:
         response.standards = [_standard_to_response(s) for s in standards]
     return response
 
 
 @app.get("/api/standard-library/collections", response_model=List[CollectionResponse])
-async def list_collections():
+async def list_collections(material_type: Optional[str] = None):
     """获取所有标准集合"""
     collections = standard_library_manager.list_collections()
+
+    # 按材料类型筛选
+    if material_type:
+        collections = [c for c in collections if c.material_type == material_type or c.material_type == "both"]
+
     return [_collection_to_response(c) for c in collections]
 
 
@@ -1173,9 +1193,117 @@ async def get_collection(collection_id: str):
         description=collection.description,
         material_type=collection.material_type,
         is_preset=collection.is_preset,
-        standard_count=len(collection.standard_ids),
+        standard_count=len(standards),
         standards=[_standard_to_response(s) for s in standards],
     )
+
+
+# ---------- 集合创建/更新/删除 ----------
+
+class CreateCollectionRequest(BaseModel):
+    """创建集合请求"""
+    name: str
+    description: str = ""
+    material_type: str = "both"
+
+
+class UpdateCollectionRequest(BaseModel):
+    """更新集合请求"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    material_type: Optional[str] = None
+
+
+@app.post("/api/standard-library/collections", response_model=CollectionResponse)
+async def create_collection(request: CreateCollectionRequest):
+    """创建新的标准集合"""
+    collection = standard_library_manager.add_collection(
+        name=request.name,
+        description=request.description,
+        material_type=request.material_type,
+        is_preset=False,
+    )
+    logger.info(f"创建标准集合: {collection.id} - {collection.name}")
+    return _collection_to_response(collection)
+
+
+@app.put("/api/standard-library/collections/{collection_id}", response_model=CollectionResponse)
+async def update_collection(collection_id: str, request: UpdateCollectionRequest):
+    """更新集合信息"""
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="没有提供要更新的字段")
+
+    success = standard_library_manager.update_collection(collection_id, updates)
+    if not success:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    collection = standard_library_manager.get_collection(collection_id)
+    return _collection_to_response(collection)
+
+
+@app.delete("/api/standard-library/collections/{collection_id}")
+async def delete_collection(collection_id: str, force: bool = False):
+    """删除集合（连同删除所有风险点）"""
+    success = standard_library_manager.delete_collection(collection_id, force=force)
+    if not success:
+        raise HTTPException(status_code=400, detail="集合不存在或为系统预设不可删除")
+    return {"message": "删除成功"}
+
+
+# ---------- 集合内标准管理 ----------
+
+@app.get("/api/standard-library/collections/{collection_id}/standards", response_model=List[StandardResponse])
+async def list_collection_standards(
+    collection_id: str,
+    category: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    keyword: Optional[str] = None,
+):
+    """获取集合内的标准列表（支持筛选）"""
+    collection = standard_library_manager.get_collection(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    standards = standard_library_manager.list_collection_standards(
+        collection_id=collection_id,
+        category=category,
+        risk_level=risk_level,
+        keyword=keyword,
+    )
+    return [_standard_to_response(s) for s in standards]
+
+
+@app.post("/api/standard-library/collections/{collection_id}/standards", response_model=StandardResponse)
+async def add_standard_to_collection(collection_id: str, request: CreateStandardRequest):
+    """向集合中添加单条标准"""
+    collection = standard_library_manager.get_collection(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    standard = ReviewStandard(
+        category=request.category,
+        item=request.item,
+        description=request.description,
+        risk_level=request.risk_level,
+        applicable_to=request.applicable_to,
+        usage_instruction=request.usage_instruction,
+        tags=request.tags,
+    )
+
+    standard_id = standard_library_manager.add_standard_to_collection(collection_id, standard)
+    created = standard_library_manager.get_standard(standard_id)
+    return _standard_to_response(created)
+
+
+@app.get("/api/standard-library/collections/{collection_id}/categories", response_model=List[str])
+async def get_collection_categories(collection_id: str):
+    """获取集合内的所有分类"""
+    collection = standard_library_manager.get_collection(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    return standard_library_manager.get_collection_categories(collection_id)
 
 
 # ==================== 标准制作 API ====================
@@ -1251,9 +1379,18 @@ async def create_standards_from_business(request: StandardCreationRequest):
                 usage_instruction=s.get("usage_instruction", ""),
             ))
 
-        logger.info(f"成功生成 {len(standards)} 条审阅标准")
+        # AI 生成的集合名称（如果没有则根据业务场景生成默认名称）
+        collection_name = result.get("collection_name", "")
+        if not collection_name:
+            # 根据业务场景生成默认名称
+            industry = request.industry or ""
+            scenario = request.business_scenario[:20] if request.business_scenario else ""
+            collection_name = f"{industry}{scenario}审核标准".strip()
+
+        logger.info(f"成功生成 {len(standards)} 条审阅标准，集合名称: {collection_name}")
 
         return StandardCreationResponse(
+            collection_name=collection_name,
             standards=standards,
             generation_summary=result.get("generation_summary", f"成功生成 {len(standards)} 条审阅标准"),
         )
@@ -1311,7 +1448,22 @@ async def preview_standards(file: UploadFile = File(...)):
 
 @app.post("/api/standards/save-to-library")
 async def save_standards_to_library(request: SaveToLibraryRequest):
-    """将预览的标准保存到标准库"""
+    """将预览的标准保存到标准库（创建新集合）"""
+    if not request.collection_name or not request.collection_name.strip():
+        raise HTTPException(status_code=400, detail="集合名称不能为空")
+
+    if not request.standards:
+        raise HTTPException(status_code=400, detail="至少需要一条标准")
+
+    # 1. 创建集合
+    collection = standard_library_manager.add_collection(
+        name=request.collection_name.strip(),
+        description=request.collection_description,
+        material_type=request.material_type,
+        is_preset=False,
+    )
+
+    # 2. 创建标准并关联到集合
     standards = []
     for req in request.standards:
         standard = ReviewStandard(
@@ -1325,17 +1477,16 @@ async def save_standards_to_library(request: SaveToLibraryRequest):
         )
         standards.append(standard)
 
-    imported_count, warnings = standard_library_manager.import_from_parsed_standards(
-        standards,
-        replace=request.replace,
-    )
+    # 3. 批量添加到集合
+    standard_ids = standard_library_manager.add_standards_to_collection(collection.id, standards)
 
-    logger.info(f"保存到标准库: {imported_count} 条")
+    logger.info(f"保存到标准库: 集合 {collection.name}，共 {len(standard_ids)} 条标准")
 
     return {
-        "message": f"成功保存 {imported_count} 条标准到标准库",
-        "imported_count": imported_count,
-        "warnings": warnings,
+        "message": f"成功创建标准集「{collection.name}」，包含 {len(standard_ids)} 条标准",
+        "collection_id": collection.id,
+        "collection_name": collection.name,
+        "imported_count": len(standard_ids),
     }
 
 
