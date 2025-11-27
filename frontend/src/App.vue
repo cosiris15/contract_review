@@ -5,16 +5,22 @@
         <el-header class="app-header">
           <div class="header-left">
             <router-link to="/" class="logo">
-              <el-icon :size="24"><Document /></el-icon>
-              <span>法务文本审阅系统</span>
+              <img src="@/assets/Logo.png" alt="Paralaw" class="logo-img" />
             </router-link>
+            <div class="header-divider"></div>
             <nav class="nav-links">
-              <router-link to="/" class="nav-link">首页</router-link>
-              <router-link to="/standards" class="nav-link">标准管理</router-link>
+              <router-link to="/" class="nav-link">
+                <el-icon><HomeFilled /></el-icon>
+                <span>首页</span>
+              </router-link>
+              <router-link to="/standards" class="nav-link">
+                <el-icon><Setting /></el-icon>
+                <span>标准管理</span>
+              </router-link>
             </nav>
           </div>
           <div class="header-right">
-            <el-tag type="info" size="small">v1.0.0</el-tag>
+            <el-tag type="info" effect="plain" size="small" class="version-tag">v1.0.0</el-tag>
           </div>
         </el-header>
         <el-main class="app-main">
@@ -27,6 +33,7 @@
 
 <script setup>
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
+import { HomeFilled, Setting } from '@element-plus/icons-vue'
 </script>
 
 <style>
@@ -53,59 +60,85 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 0 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  background: #ffffff;
+  color: #303133;
+  padding: 0 32px;
+  height: 64px !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid #e4e7ed;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 32px;
-}
-
-.nav-links {
-  display: flex;
   gap: 24px;
-}
-
-.nav-link {
-  color: rgba(255, 255, 255, 0.85);
-  text-decoration: none;
-  font-size: 14px;
-  padding: 4px 0;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-}
-
-.nav-link:hover {
-  color: white;
-}
-
-.nav-link.router-link-active {
-  color: white;
-  border-bottom-color: white;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: white;
   text-decoration: none;
-  font-size: 18px;
-  font-weight: 600;
 }
 
-.logo:hover {
-  opacity: 0.9;
+.logo-img {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
+
+.logo:hover .logo-img {
+  opacity: 0.85;
+  transition: opacity 0.2s;
+}
+
+.header-divider {
+  width: 1px;
+  height: 24px;
+  background-color: #dcdfe6;
+}
+
+.nav-links {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #606266;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.nav-link:hover {
+  color: #2563eb;
+  background-color: #f0f5ff;
+}
+
+.nav-link.router-link-active {
+  color: #2563eb;
+  background-color: #e8f0fe;
+  font-weight: 500;
+}
+
+.nav-link .el-icon {
+  font-size: 16px;
 }
 
 .header-right {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.version-tag {
+  background-color: #f4f4f5;
+  border-color: #e4e7ed;
+  color: #909399;
 }
 
 .app-main {
