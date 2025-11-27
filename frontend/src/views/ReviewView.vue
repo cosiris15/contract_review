@@ -844,7 +844,7 @@ function handleNewStandardInReview(command) {
   } else if (command === 'ai') {
     // 先关闭弹窗，再跳转到标准管理页面的AI制作功能
     showLibrarySelector.value = false
-    router.push({ name: 'standards', query: { action: 'ai-create' } })
+    router.push({ name: 'Standards', query: { action: 'ai-create' } })
   }
 }
 

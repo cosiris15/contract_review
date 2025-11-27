@@ -512,11 +512,40 @@
                     :label="area"
                   />
                 </el-checkbox-group>
+                <el-button
+                  type="primary"
+                  text
+                  size="small"
+                  class="add-focus-btn"
+                  @click="showCustomFocusInput = true"
+                >
+                  <el-icon><Plus /></el-icon>
+                  添加其他
+                </el-button>
+              </div>
+              <!-- 自定义关注点输入 -->
+              <div v-if="showCustomFocusInput" class="custom-focus-input">
                 <el-input
-                  v-model="creationForm.custom_focus"
-                  placeholder="其他关注点（逗号分隔）"
-                  style="margin-top: 8px; width: 300px;"
+                  v-model="customFocusInput"
+                  placeholder="输入关注点名称"
+                  size="small"
+                  style="width: 200px;"
+                  @keyup.enter="addCustomFocus"
                 />
+                <el-button type="primary" size="small" @click="addCustomFocus">添加</el-button>
+                <el-button size="small" @click="showCustomFocusInput = false; customFocusInput = ''">取消</el-button>
+              </div>
+              <!-- 已添加的自定义关注点 -->
+              <div v-if="customFocusAreas.length > 0" class="custom-focus-tags">
+                <el-tag
+                  v-for="(area, index) in customFocusAreas"
+                  :key="index"
+                  closable
+                  size="small"
+                  @close="removeCustomFocus(index)"
+                >
+                  {{ area }}
+                </el-tag>
               </div>
             </el-form-item>
           </div>
@@ -1123,10 +1152,27 @@ const creationForm = reactive({
   industry: '',
   special_risks: '',
   reference_material: '',
-  custom_focus: '',
   custom_industry: '',
   language: 'zh-CN'  // 语言选择
 })
+
+// 自定义关注点相关
+const showCustomFocusInput = ref(false)
+const customFocusInput = ref('')
+const customFocusAreas = ref([])
+
+function addCustomFocus() {
+  const value = customFocusInput.value.trim()
+  if (value && !customFocusAreas.value.includes(value)) {
+    customFocusAreas.value.push(value)
+    customFocusInput.value = ''
+    showCustomFocusInput.value = false
+  }
+}
+
+function removeCustomFocus(index) {
+  customFocusAreas.value.splice(index, 1)
+}
 
 const focusAreaOptions = [
   '合同主体资格',
@@ -1156,7 +1202,7 @@ const createDialogTitle = computed(() => {
 const canGenerate = computed(() => {
   return (
     creationForm.business_scenario.trim() &&
-    (creationForm.focus_areas.length > 0 || creationForm.custom_focus.trim())
+    (creationForm.focus_areas.length > 0 || customFocusAreas.value.length > 0)
   )
 })
 
@@ -1168,11 +1214,7 @@ async function generateStandardsFromBusiness() {
 
   generating.value = true
   try {
-    const allFocusAreas = [...creationForm.focus_areas]
-    if (creationForm.custom_focus.trim()) {
-      const customAreas = creationForm.custom_focus.split(/[,，、]/).map(s => s.trim()).filter(Boolean)
-      allFocusAreas.push(...customAreas)
-    }
+    const allFocusAreas = [...creationForm.focus_areas, ...customFocusAreas.value]
 
     const industry = creationForm.custom_industry.trim() || creationForm.industry
 
@@ -1243,10 +1285,14 @@ function resetCreateDialog() {
     industry: '',
     special_risks: '',
     reference_material: '',
-    custom_focus: '',
     custom_industry: '',
     language: 'zh-CN'
   })
+  // 重置自定义关注点
+  customFocusAreas.value = []
+  customFocusInput.value = ''
+  showCustomFocusInput.value = false
+
   generatedStandards.value = []
   generatedCollectionName.value = ''
   generationSummary.value = ''
@@ -1516,13 +1562,33 @@ onMounted(async () => {
 
 .focus-area-selector {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
 }
 
 .focus-area-selector .el-checkbox-group {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-2);
+}
+
+.add-focus-btn {
+  margin-left: var(--spacing-2);
+}
+
+.custom-focus-input {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-3);
+}
+
+.custom-focus-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-3);
 }
 
 .industry-selector {
