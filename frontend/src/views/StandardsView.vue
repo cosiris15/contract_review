@@ -229,10 +229,10 @@
       </template>
     </el-dialog>
 
-    <!-- 添加/编辑对话框 -->
+    <!-- 添加标准对话框（手动添加） -->
     <el-dialog
       v-model="showAddDialog"
-      :title="editingStandard ? '编辑标准' : '添加标准'"
+      title="添加标准"
       width="600px"
       @close="resetEditDialog"
     >
@@ -281,6 +281,117 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- AI 辅助编辑对话框 -->
+    <el-dialog
+      v-model="showEditDialog"
+      title="编辑标准"
+      width="800px"
+      @close="resetAIEditDialog"
+    >
+      <div class="ai-edit-container">
+        <!-- 当前标准展示 -->
+        <div class="current-standard">
+          <div class="section-title">当前标准</div>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="分类">{{ editingStandard?.category }}</el-descriptions-item>
+            <el-descriptions-item label="风险等级">
+              <el-tag :type="getRiskTagType(editingStandard?.risk_level)" size="small">
+                {{ getRiskLabel(editingStandard?.risk_level) }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="审核要点" :span="2">{{ editingStandard?.item }}</el-descriptions-item>
+            <el-descriptions-item label="详细说明" :span="2">{{ editingStandard?.description }}</el-descriptions-item>
+            <el-descriptions-item label="适用类型">{{ formatApplicableTo(editingStandard?.applicable_to) }}</el-descriptions-item>
+            <el-descriptions-item label="适用说明">{{ editingStandard?.usage_instruction || '（无）' }}</el-descriptions-item>
+          </el-descriptions>
+        </div>
+
+        <!-- AI 修改输入区 -->
+        <div class="ai-input-section">
+          <div class="section-title">
+            <el-icon><MagicStick /></el-icon>
+            告诉 AI 如何修改
+          </div>
+          <el-input
+            v-model="aiInstruction"
+            type="textarea"
+            :rows="3"
+            placeholder="用自然语言描述您想要的修改，例如：&#10;• 把风险等级提高到高&#10;• 在说明中增加关于违约金比例的要求&#10;• 这个标准只适用于采购合同&#10;• 让描述更加具体，包含具体的检查步骤"
+          />
+          <div class="ai-input-actions">
+            <el-button
+              type="primary"
+              @click="handleAIModify"
+              :loading="aiModifying"
+              :disabled="!aiInstruction.trim()"
+            >
+              <el-icon><MagicStick /></el-icon>
+              生成修改建议
+            </el-button>
+          </div>
+        </div>
+
+        <!-- AI 修改结果预览 -->
+        <div class="ai-result-section" v-if="aiModifiedResult">
+          <div class="section-title">
+            <el-icon><Check /></el-icon>
+            AI 修改建议
+            <el-tag type="info" size="small" style="margin-left: 8px;">
+              {{ aiModifiedResult.modification_summary }}
+            </el-tag>
+          </div>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="分类">
+              <span :class="{ 'changed': aiModifiedResult.category !== editingStandard?.category }">
+                {{ aiModifiedResult.category }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="风险等级">
+              <el-tag
+                :type="getRiskTagType(aiModifiedResult.risk_level)"
+                size="small"
+                :class="{ 'changed': aiModifiedResult.risk_level !== editingStandard?.risk_level }"
+              >
+                {{ getRiskLabel(aiModifiedResult.risk_level) }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="审核要点" :span="2">
+              <span :class="{ 'changed': aiModifiedResult.item !== editingStandard?.item }">
+                {{ aiModifiedResult.item }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="详细说明" :span="2">
+              <span :class="{ 'changed': aiModifiedResult.description !== editingStandard?.description }">
+                {{ aiModifiedResult.description }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="适用类型">
+              <span :class="{ 'changed': formatApplicableTo(aiModifiedResult.applicable_to) !== formatApplicableTo(editingStandard?.applicable_to) }">
+                {{ formatApplicableTo(aiModifiedResult.applicable_to) }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="适用说明">
+              <span :class="{ 'changed': aiModifiedResult.usage_instruction !== editingStandard?.usage_instruction }">
+                {{ aiModifiedResult.usage_instruction || '（无）' }}
+              </span>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          @click="confirmAIModification"
+          :loading="saving"
+          :disabled="!aiModifiedResult"
+        >
+          确认修改
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -288,7 +399,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Upload, Download, Search, Plus, UploadFilled
+  Upload, Download, Search, Plus, UploadFilled, MagicStick, Check
 } from '@element-plus/icons-vue'
 import api from '@/api'
 
@@ -312,9 +423,8 @@ const previewing = ref(false)
 const saving = ref(false)
 const replaceExisting = ref(false)
 
-// 添加/编辑对话框状态
+// 添加对话框状态（手动添加）
 const showAddDialog = ref(false)
-const editingStandard = ref(null)
 const standardForm = reactive({
   category: '',
   item: '',
@@ -323,6 +433,13 @@ const standardForm = reactive({
   applicable_to: ['contract', 'marketing'],
   usage_instruction: '',
 })
+
+// AI 编辑对话框状态
+const showEditDialog = ref(false)
+const editingStandard = ref(null)
+const aiInstruction = ref('')
+const aiModifying = ref(false)
+const aiModifiedResult = ref(null)
 
 // 生成适用说明状态
 const generatingIds = ref([])
@@ -448,18 +565,12 @@ function resetImportDialog() {
   replaceExisting.value = false
 }
 
-// 编辑标准
+// 编辑标准 - 打开 AI 编辑对话框
 function editStandard(row) {
   editingStandard.value = row
-  Object.assign(standardForm, {
-    category: row.category,
-    item: row.item,
-    description: row.description,
-    risk_level: row.risk_level,
-    applicable_to: [...row.applicable_to],
-    usage_instruction: row.usage_instruction || '',
-  })
-  showAddDialog.value = true
+  aiInstruction.value = ''
+  aiModifiedResult.value = null
+  showEditDialog.value = true
 }
 
 // 保存标准（添加或更新）
@@ -510,9 +621,8 @@ async function deleteStandard(row) {
   }
 }
 
-// 重置编辑对话框
+// 重置手动添加对话框
 function resetEditDialog() {
-  editingStandard.value = null
   Object.assign(standardForm, {
     category: '',
     item: '',
@@ -521,6 +631,56 @@ function resetEditDialog() {
     applicable_to: ['contract', 'marketing'],
     usage_instruction: '',
   })
+}
+
+// 重置 AI 编辑对话框
+function resetAIEditDialog() {
+  editingStandard.value = null
+  aiInstruction.value = ''
+  aiModifiedResult.value = null
+}
+
+// AI 辅助修改
+async function handleAIModify() {
+  if (!aiInstruction.value.trim() || !editingStandard.value) return
+
+  aiModifying.value = true
+  try {
+    const response = await api.aiModifyStandard(editingStandard.value.id, aiInstruction.value)
+    aiModifiedResult.value = response.data.modified_standard
+    ElMessage.success('AI 已生成修改建议，请确认')
+  } catch (error) {
+    ElMessage.error('AI 修改失败: ' + error.message)
+  } finally {
+    aiModifying.value = false
+  }
+}
+
+// 确认 AI 修改
+async function confirmAIModification() {
+  if (!aiModifiedResult.value || !editingStandard.value) return
+
+  saving.value = true
+  try {
+    await api.updateLibraryStandard(editingStandard.value.id, {
+      category: aiModifiedResult.value.category,
+      item: aiModifiedResult.value.item,
+      description: aiModifiedResult.value.description,
+      risk_level: aiModifiedResult.value.risk_level,
+      applicable_to: aiModifiedResult.value.applicable_to,
+      usage_instruction: aiModifiedResult.value.usage_instruction,
+    })
+    ElMessage.success('标准已更新')
+    showEditDialog.value = false
+    resetAIEditDialog()
+    loadStandards()
+    loadStats()
+    loadCategories()
+  } catch (error) {
+    ElMessage.error('保存失败: ' + error.message)
+  } finally {
+    saving.value = false
+  }
 }
 
 // 生成适用说明
@@ -647,5 +807,54 @@ onMounted(() => {
   text-align: right;
   color: #909399;
   font-size: 14px;
+}
+
+/* AI 编辑对话框样式 */
+.ai-edit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.current-standard {
+  background: #f5f7fa;
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.ai-input-section {
+  padding: 16px;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+}
+
+.ai-input-actions {
+  margin-top: 12px;
+  text-align: right;
+}
+
+.ai-result-section {
+  padding: 16px;
+  border: 2px solid #67c23a;
+  border-radius: 8px;
+  background: #f0f9eb;
+}
+
+.ai-result-section .changed {
+  background: #fef0f0;
+  color: #f56c6c;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-weight: 500;
 }
 </style>

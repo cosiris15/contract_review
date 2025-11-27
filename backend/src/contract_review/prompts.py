@@ -410,3 +410,69 @@ def build_standard_recommendation_messages(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+def build_standard_modification_messages(
+    standard: ReviewStandard,
+    user_instruction: str,
+) -> List[Dict[str, Any]]:
+    """
+    构建 AI 辅助修改审核标准的 Prompt
+
+    Args:
+        standard: 当前的审核标准
+        user_instruction: 用户的自然语言修改指令
+
+    Returns:
+        消息列表
+    """
+    risk_level_cn = {"high": "高", "medium": "中", "low": "低"}.get(standard.risk_level, "中")
+    applicable_to_cn = "、".join([
+        "合同" if t == "contract" else "营销材料"
+        for t in standard.applicable_to
+    ])
+
+    system = """你是一位资深法务标准管理专家。根据用户的修改意图，帮助修改审核标准。
+
+【任务说明】
+用户会提供一条现有的审核标准和修改要求，你需要：
+1. 理解用户的修改意图
+2. 对标准进行相应的调整
+3. 确保修改后的标准仍然专业、完整、可操作
+
+【输出格式】
+输出纯 JSON 对象，包含修改后的标准字段：
+- category: 分类（如无需修改则保持原值）
+- item: 审核要点（简洁的标题，不超过30字）
+- description: 详细说明（完整的审核说明，50-200字）
+- risk_level: 风险等级 "high" | "medium" | "low"
+- applicable_to: 适用类型数组 ["contract"] 或 ["marketing"] 或 ["contract", "marketing"]
+- usage_instruction: 适用说明（可选，说明何时使用该标准，50-100字，如无需修改填 null）
+- modification_summary: 修改摘要（简要说明做了哪些修改，不超过50字）
+
+【修改原则】
+1. 忠实执行用户的修改意图
+2. 只修改用户要求修改的部分，其他部分保持不变
+3. 如果用户的要求不清晰，做出合理的推断
+4. 确保修改后的标准语言专业、逻辑清晰
+5. 如果用户要求的修改不合理（如降低必要的风险等级），可以在 modification_summary 中说明建议
+
+只输出 JSON 对象，不要添加任何 markdown 代码块或额外说明。"""
+
+    user = f"""【当前审核标准】
+- 分类：{standard.category}
+- 审核要点：{standard.item}
+- 详细说明：{standard.description}
+- 风险等级：{risk_level_cn}
+- 适用类型：{applicable_to_cn}
+- 适用说明：{standard.usage_instruction or "（无）"}
+
+【用户修改要求】
+{user_instruction}
+
+请根据用户要求修改这条审核标准。"""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]

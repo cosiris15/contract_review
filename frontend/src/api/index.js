@@ -206,5 +206,12 @@ export default {
   // 推荐标准
   recommendStandards(data) {
     return api.post('/standards/recommend', data)
+  },
+
+  // AI 辅助修改标准
+  aiModifyStandard(standardId, instruction) {
+    return api.post(`/standards/${standardId}/ai-modify`, {
+      instruction: instruction
+    })
   }
 }

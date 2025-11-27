@@ -37,6 +37,7 @@ from src.contract_review.tasks import TaskManager
 from src.contract_review.prompts import (
     build_usage_instruction_messages,
     build_standard_recommendation_messages,
+    build_standard_modification_messages,
 )
 from src.contract_review.llm_client import LLMClient
 
@@ -1174,6 +1175,107 @@ async def recommend_standards(request: RecommendStandardsRequest):
     except Exception as e:
         logger.error(f"推荐标准失败: {e}")
         raise HTTPException(status_code=500, detail=f"推荐失败: {str(e)}")
+
+
+class AIModifyStandardRequest(BaseModel):
+    """AI 辅助修改标准请求"""
+    instruction: str  # 用户的自然语言修改指令
+
+
+class AIModifyStandardResponse(BaseModel):
+    """AI 辅助修改标准响应"""
+    category: str
+    item: str
+    description: str
+    risk_level: str
+    applicable_to: List[str]
+    usage_instruction: Optional[str] = None
+    modification_summary: str
+
+
+@app.post("/api/standards/{standard_id}/ai-modify", response_model=AIModifyStandardResponse)
+async def ai_modify_standard(standard_id: str, request: AIModifyStandardRequest):
+    """
+    使用 AI 辅助修改审核标准
+
+    用户提供自然语言指令，AI 理解意图后生成修改建议。
+    此接口只生成建议，不直接保存，用户需确认后再保存。
+    """
+    import json
+    import re
+
+    # 获取当前标准
+    standard = standard_library_manager.get_standard(standard_id)
+    if not standard:
+        raise HTTPException(status_code=404, detail="标准不存在")
+
+    if not request.instruction or not request.instruction.strip():
+        raise HTTPException(status_code=400, detail="请输入修改要求")
+
+    try:
+        # 构建 Prompt
+        messages = build_standard_modification_messages(
+            standard=standard,
+            user_instruction=request.instruction.strip(),
+        )
+
+        # 调用 LLM
+        response = await llm_client.chat(messages, max_output_tokens=1000)
+
+        # 解析 JSON 响应
+        response = response.strip()
+        # 移除可能的 markdown 代码块
+        response = re.sub(r"```json\s*", "", response)
+        response = re.sub(r"```\s*$", "", response)
+
+        # 尝试找到 JSON 对象
+        start = response.find("{")
+        end = response.rfind("}")
+        if start != -1 and end != -1:
+            response = response[start:end + 1]
+
+        modified = json.loads(response)
+
+        # 验证必要字段
+        required_fields = ["category", "item", "description", "risk_level", "applicable_to", "modification_summary"]
+        for field in required_fields:
+            if field not in modified:
+                raise ValueError(f"响应缺少必要字段: {field}")
+
+        # 验证 risk_level
+        if modified["risk_level"] not in ["high", "medium", "low"]:
+            modified["risk_level"] = standard.risk_level
+
+        # 验证 applicable_to
+        valid_types = {"contract", "marketing"}
+        modified["applicable_to"] = [
+            t for t in modified.get("applicable_to", [])
+            if t in valid_types
+        ]
+        if not modified["applicable_to"]:
+            modified["applicable_to"] = list(standard.applicable_to)
+
+        logger.info(f"AI 辅助修改标准 {standard_id}: {modified.get('modification_summary', '')}")
+
+        return AIModifyStandardResponse(
+            category=modified["category"],
+            item=modified["item"],
+            description=modified["description"],
+            risk_level=modified["risk_level"],
+            applicable_to=modified["applicable_to"],
+            usage_instruction=modified.get("usage_instruction"),
+            modification_summary=modified["modification_summary"],
+        )
+
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 AI 修改响应失败: {e}")
+        raise HTTPException(status_code=500, detail="AI 响应解析失败，请重试")
+    except ValueError as e:
+        logger.error(f"AI 修改响应验证失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"AI 辅助修改失败: {e}")
+        raise HTTPException(status_code=500, detail=f"修改失败: {str(e)}")
 
 
 # ==================== 健康检查 ====================
