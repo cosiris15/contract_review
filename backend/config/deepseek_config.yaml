@@ -1,0 +1,14 @@
+llm:
+  provider: deepseek
+  api_key: "sk-d02d6d8c02f74563b33894a0e8fd2ffd"
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  temperature: 0.1
+  top_p: 0.9
+  max_output_tokens: 4000
+  request_timeout: 120
+
+review:
+  tasks_dir: "tasks"
+  templates_dir: "templates"
+  max_document_chars: 50000

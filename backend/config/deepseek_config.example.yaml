@@ -1,0 +1,17 @@
+# 法务文本审阅系统配置文件示例
+# 复制此文件为 deepseek_config.yaml 并填入您的配置
+
+llm:
+  provider: deepseek
+  api_key: "YOUR_DEEPSEEK_API_KEY"  # 也可通过环境变量 DEEPSEEK_API_KEY 设置
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  temperature: 0.1  # 低温度以保证输出稳定性
+  top_p: 0.9
+  max_output_tokens: 4000  # 审阅结果可能较长
+  request_timeout: 120  # 秒，审阅可能耗时较长
+
+review:
+  tasks_dir: "tasks"  # 任务存储目录
+  templates_dir: "templates"  # 默认模板目录
+  max_document_chars: 50000  # 最大文档字符数

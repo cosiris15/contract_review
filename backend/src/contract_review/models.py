@@ -1,0 +1,225 @@
+"""
+数据模型定义
+
+包含审核标准、风险点、修改建议、行动建议、审阅结果等核心模型。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+
+# ==================== 基础类型定义 ====================
+
+MaterialType = Literal["contract", "marketing"]
+RiskLevel = Literal["high", "medium", "low"]
+ModificationPriority = Literal["must", "should", "may"]
+ActionUrgency = Literal["immediate", "soon", "normal"]
+TaskStatus = Literal["created", "uploading", "reviewing", "completed", "failed"]
+
+
+def generate_id() -> str:
+    """生成短 UUID"""
+    return uuid4().hex[:8]
+
+
+# ==================== 文档相关模型 ====================
+
+class LoadedDocument(BaseModel):
+    """加载的文档"""
+    path: Path
+    text: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ==================== 审核标准模型 ====================
+
+class ReviewStandard(BaseModel):
+    """单条审核标准"""
+    id: str = Field(default_factory=generate_id)
+    category: str  # 审核分类：主体资格、权利义务、费用条款、期限条款、责任条款等
+    item: str  # 审核要点
+    description: str  # 详细说明
+    risk_level: RiskLevel = "medium"  # 风险等级
+    applicable_to: List[MaterialType] = Field(default_factory=lambda: ["contract", "marketing"])
+
+    class Config:
+        json_encoders = {Path: str}
+
+
+class ReviewStandardSet(BaseModel):
+    """审核标准集合"""
+    name: str  # 标准集名称
+    version: str = "1.0"  # 版本
+    standards: List[ReviewStandard]
+    created_at: datetime = Field(default_factory=datetime.now)
+    source_file: Optional[str] = None  # 来源文件名
+
+    @property
+    def count(self) -> int:
+        return len(self.standards)
+
+    def filter_by_material_type(self, material_type: MaterialType) -> List[ReviewStandard]:
+        """按材料类型过滤审核标准"""
+        return [s for s in self.standards if material_type in s.applicable_to]
+
+
+# ==================== 风险点模型 ====================
+
+class TextLocation(BaseModel):
+    """文本位置标记"""
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
+    original_text: str  # 原文摘录
+
+
+class RiskPoint(BaseModel):
+    """识别出的风险点"""
+    id: str = Field(default_factory=generate_id)
+    standard_id: Optional[str] = None  # 关联的审核标准 ID
+    risk_level: RiskLevel
+    risk_type: str  # 风险类型（对应审核分类）
+    description: str  # 风险描述
+    reason: str  # 判定理由
+    location: Optional[TextLocation] = None  # 原文位置
+    raw_llm_response: Optional[str] = None  # LLM 原始响应（调试用）
+
+
+# ==================== 修改建议模型 ====================
+
+class ModificationSuggestion(BaseModel):
+    """修改建议"""
+    id: str = Field(default_factory=generate_id)
+    risk_id: str  # 关联的风险点 ID
+    original_text: str  # 当前文本
+    suggested_text: str  # 建议修改为
+    modification_reason: str  # 修改理由
+    priority: ModificationPriority = "should"  # 优先级：必须/应该/可以
+    user_confirmed: bool = False  # 用户是否确认
+    user_modified_text: Optional[str] = None  # 用户修改后的文本
+
+
+# ==================== 行动建议模型 ====================
+
+class ActionRecommendation(BaseModel):
+    """行动建议（除文本修改外的措施）"""
+    id: str = Field(default_factory=generate_id)
+    related_risk_ids: List[str]  # 关联的风险点 ID 列表
+    action_type: str  # 行动类型：沟通协商、补充材料、法务确认、内部审批等
+    description: str  # 具体行动描述
+    urgency: ActionUrgency = "normal"  # 紧急程度
+    responsible_party: str = ""  # 建议负责方
+    deadline_suggestion: Optional[str] = None  # 建议完成时限
+    user_confirmed: bool = False
+
+
+# ==================== 审阅结果模型 ====================
+
+class ReviewSummary(BaseModel):
+    """审阅结果摘要"""
+    total_risks: int = 0
+    high_risks: int = 0
+    medium_risks: int = 0
+    low_risks: int = 0
+    total_modifications: int = 0
+    must_modify: int = 0
+    should_modify: int = 0
+    may_modify: int = 0
+    total_actions: int = 0
+    immediate_actions: int = 0
+
+
+class ReviewResult(BaseModel):
+    """完整审阅结果"""
+    task_id: str
+    document_name: str
+    document_path: Optional[str] = None
+    material_type: MaterialType
+    our_party: str  # 我方身份
+    review_standards_used: str  # 使用的标准集名称
+
+    # 审阅产出
+    risks: List[RiskPoint] = Field(default_factory=list)
+    modifications: List[ModificationSuggestion] = Field(default_factory=list)
+    actions: List[ActionRecommendation] = Field(default_factory=list)
+
+    # 统计摘要
+    summary: ReviewSummary = Field(default_factory=ReviewSummary)
+
+    # 元数据
+    reviewed_at: datetime = Field(default_factory=datetime.now)
+    llm_model: str = ""
+    prompt_version: str = "1.0"
+
+    def calculate_summary(self) -> None:
+        """根据审阅结果计算摘要统计"""
+        self.summary = ReviewSummary(
+            total_risks=len(self.risks),
+            high_risks=sum(1 for r in self.risks if r.risk_level == "high"),
+            medium_risks=sum(1 for r in self.risks if r.risk_level == "medium"),
+            low_risks=sum(1 for r in self.risks if r.risk_level == "low"),
+            total_modifications=len(self.modifications),
+            must_modify=sum(1 for m in self.modifications if m.priority == "must"),
+            should_modify=sum(1 for m in self.modifications if m.priority == "should"),
+            may_modify=sum(1 for m in self.modifications if m.priority == "may"),
+            total_actions=len(self.actions),
+            immediate_actions=sum(1 for a in self.actions if a.urgency == "immediate"),
+        )
+
+
+# ==================== 任务模型 ====================
+
+class ReviewTaskProgress(BaseModel):
+    """审阅任务进度"""
+    stage: str = "idle"  # idle/uploading/analyzing/generating/completed/failed
+    percentage: int = 0
+    message: str = ""
+
+
+class ReviewTask(BaseModel):
+    """审阅任务"""
+    id: str = Field(default_factory=generate_id)
+    name: str  # 任务名称
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    status: TaskStatus = "created"
+    message: Optional[str] = None  # 状态消息
+    progress: ReviewTaskProgress = Field(default_factory=ReviewTaskProgress)
+
+    # 输入配置
+    our_party: str  # 我方身份
+    material_type: MaterialType = "contract"
+
+    # 文件路径
+    document_filename: Optional[str] = None  # 上传的文档文件名
+    standard_filename: Optional[str] = None  # 上传的审核标准文件名
+    standard_template: Optional[str] = None  # 使用的默认模板名称
+
+    # 结果
+    result: Optional[ReviewResult] = None
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            Path: str,
+        }
+
+    def update_status(self, status: TaskStatus, message: Optional[str] = None) -> None:
+        """更新任务状态"""
+        self.status = status
+        self.message = message
+        self.updated_at = datetime.now()
+
+    def update_progress(self, stage: str, percentage: int, message: str = "") -> None:
+        """更新进度"""
+        self.progress = ReviewTaskProgress(
+            stage=stage,
+            percentage=percentage,
+            message=message,
+        )
+        self.updated_at = datetime.now()
