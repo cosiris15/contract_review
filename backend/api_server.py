@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+import httpx
+import jwt
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -117,6 +121,143 @@ llm_client = LLMClient(settings.llm)
 
 # 默认模板目录
 TEMPLATES_DIR = settings.review.templates_dir
+
+# ==================== Clerk 身份验证 ====================
+
+# 从环境变量加载 Clerk 配置
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "")
+# Clerk JWKS URL（用于验证 JWT）
+CLERK_JWKS_URL = None
+
+# HTTP Bearer 认证
+security = HTTPBearer(auto_error=False)
+
+# 缓存 JWKS
+_jwks_cache = None
+_jwks_cache_time = 0
+JWKS_CACHE_DURATION = 3600  # 1小时
+
+
+async def get_clerk_jwks():
+    """获取 Clerk 的 JWKS（JSON Web Key Set）用于验证 JWT"""
+    global _jwks_cache, _jwks_cache_time, CLERK_JWKS_URL
+
+    import time
+    current_time = time.time()
+
+    # 如果缓存有效，直接返回
+    if _jwks_cache and (current_time - _jwks_cache_time) < JWKS_CACHE_DURATION:
+        return _jwks_cache
+
+    # 从 CLERK_SECRET_KEY 推断 JWKS URL
+    # Clerk 的 publishable key 格式: pk_test_xxx 或 pk_live_xxx
+    # 对应的 JWKS URL: https://{frontend_api}/.well-known/jwks.json
+    if not CLERK_JWKS_URL:
+        # 尝试从环境变量获取 frontend API
+        clerk_frontend_api = os.getenv("CLERK_FRONTEND_API", "")
+        if clerk_frontend_api:
+            CLERK_JWKS_URL = f"https://{clerk_frontend_api}/.well-known/jwks.json"
+        else:
+            # 从 publishable key 中提取（base64 解码）
+            publishable_key = os.getenv("CLERK_PUBLISHABLE_KEY", os.getenv("VITE_CLERK_PUBLISHABLE_KEY", ""))
+            if publishable_key and publishable_key.startswith("pk_"):
+                try:
+                    import base64
+                    # pk_test_xxx 格式，xxx 是 base64 编码的 frontend API
+                    encoded_part = publishable_key.split("_")[-1]
+                    # 添加 padding
+                    padding = 4 - len(encoded_part) % 4
+                    if padding != 4:
+                        encoded_part += "=" * padding
+                    frontend_api = base64.b64decode(encoded_part).decode("utf-8").rstrip("$")
+                    CLERK_JWKS_URL = f"https://{frontend_api}/.well-known/jwks.json"
+                except Exception as e:
+                    logger.warning(f"无法从 publishable key 解析 JWKS URL: {e}")
+
+    if not CLERK_JWKS_URL:
+        raise HTTPException(status_code=500, detail="Clerk JWKS URL 未配置")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(CLERK_JWKS_URL, timeout=10.0)
+            response.raise_for_status()
+            _jwks_cache = response.json()
+            _jwks_cache_time = current_time
+            return _jwks_cache
+    except Exception as e:
+        logger.error(f"获取 Clerk JWKS 失败: {e}")
+        raise HTTPException(status_code=500, detail="无法验证身份凭证")
+
+
+def get_signing_key(jwks: dict, kid: str):
+    """从 JWKS 中获取签名密钥"""
+    from jwt import algorithms
+
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            return algorithms.RSAAlgorithm.from_jwk(key)
+
+    raise HTTPException(status_code=401, detail="无法找到匹配的签名密钥")
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> str:
+    """
+    验证 Clerk JWT Token 并返回用户 ID
+
+    从请求头 Authorization: Bearer <token> 中提取并验证 Token。
+    成功返回 user_id，失败抛出 401 异常。
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials
+
+    try:
+        # 先解码 header 获取 kid
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+
+        if not kid:
+            raise HTTPException(status_code=401, detail="Invalid token header")
+
+        # 获取 JWKS 并找到对应的公钥
+        jwks = await get_clerk_jwks()
+        signing_key = get_signing_key(jwks, kid)
+
+        # 验证并解码 token
+        payload = jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            options={
+                "verify_aud": False,  # Clerk 不使用 audience
+                "verify_iss": False,  # issuer 验证可选
+            },
+        )
+
+        # 获取用户 ID（Clerk 使用 sub 字段）
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
+
+        return user_id
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Token 验证失败: {e}")
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"身份验证异常: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 # 启动时将预设模板导入标准库（如果尚未导入）
 try:
@@ -328,15 +469,19 @@ class StandardRecommendationResponse(BaseModel):
 # ==================== 任务管理 API ====================
 
 @app.post("/api/tasks", response_model=TaskResponse)
-async def create_task(request: CreateTaskRequest):
-    """创建审阅任务"""
+async def create_task(
+    request: CreateTaskRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """创建审阅任务（需要登录）"""
+    print(f"User {user_id} is creating a new task...")
     task = task_manager.create_task(
         name=request.name,
         our_party=request.our_party,
         material_type=request.material_type,
         language=request.language,
     )
-    logger.info(f"创建任务: {task.id} - {task.name} (language={request.language})")
+    logger.info(f"创建任务: {task.id} - {task.name} (language={request.language}) by user {user_id}")
     return TaskResponse.from_task(task)
 
 
@@ -386,8 +531,13 @@ async def get_task_status(task_id: str):
 # ==================== 文件上传 API ====================
 
 @app.post("/api/tasks/{task_id}/document")
-async def upload_document(task_id: str, file: UploadFile = File(...)):
-    """上传待审阅文档"""
+async def upload_document(
+    task_id: str,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    """上传待审阅文档（需要登录）"""
+    print(f"User {user_id} is uploading document to task {task_id}...")
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -409,8 +559,13 @@ async def upload_document(task_id: str, file: UploadFile = File(...)):
 
 
 @app.post("/api/tasks/{task_id}/standard")
-async def upload_standard(task_id: str, file: UploadFile = File(...)):
-    """上传审核标准"""
+async def upload_standard(
+    task_id: str,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    """上传审核标准（需要登录）"""
+    print(f"User {user_id} is uploading standard to task {task_id}...")
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -529,13 +684,15 @@ async def start_review(
     task_id: str,
     background_tasks: BackgroundTasks,
     llm_provider: str = Query(default="deepseek", regex="^(deepseek|gemini)$"),
+    user_id: str = Depends(get_current_user),
 ):
-    """开始审阅
+    """开始审阅（需要登录）
 
     Args:
         task_id: 任务 ID
         llm_provider: LLM 提供者，可选 "deepseek"（初级）或 "gemini"（高级）
     """
+    print(f"User {user_id} is starting review for task {task_id}...")
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
