@@ -52,113 +52,82 @@
     <div class="welcome-section">
       <div class="welcome-card">
         <div class="welcome-content">
-          <h1>法务文本审阅系统</h1>
-          <p>使用 AI 技术从法务角度审阅合同、营销材料等文本，自动识别风险点并提供专业的修改建议。</p>
-          <el-button
-            type="primary"
-            size="large"
-            @click="goToNewReview"
-            :loading="isCreatingTask"
-            :disabled="backendStatus !== 'ready'"
-          >
-            <el-icon v-if="!isCreatingTask"><Plus /></el-icon>
-            {{ isCreatingTask ? creatingTaskMessage : '新建审阅任务' }}
-          </el-button>
+          <h1 class="welcome-title">十行小助</h1>
+          <p class="welcome-desc">使用 AI 技术从法务角度审阅合同、营销材料等文本，自动识别风险点并提供专业的修改建议。</p>
+          <div class="welcome-actions">
+            <el-button
+              type="primary"
+              size="large"
+              @click="goToNewReview"
+              :loading="isCreatingTask"
+              :disabled="backendStatus !== 'ready'"
+            >
+              <el-icon v-if="!isCreatingTask"><Plus /></el-icon>
+              {{ isCreatingTask ? creatingTaskMessage : '新建审阅任务' }}
+            </el-button>
+            <el-button
+              size="large"
+              @click="goToDocuments"
+              :disabled="backendStatus !== 'ready'"
+            >
+              <el-icon><FolderOpened /></el-icon>
+              查看所有文档
+            </el-button>
+          </div>
           <div v-if="backendStatus !== 'ready'" class="backend-hint">
             {{ backendStatus === 'connecting' ? '等待后端服务就绪...' : '请先连接后端服务' }}
           </div>
         </div>
         <div class="welcome-features">
           <div class="feature-item">
-            <el-icon :size="32"><Search /></el-icon>
+            <div class="feature-icon">
+              <el-icon :size="28"><Search /></el-icon>
+            </div>
             <h3>智能风险识别</h3>
-            <p>基于审核标准自动识别文本中的法务风险点</p>
+            <p>基于审核标准自动识别文本中的潜在法务风险</p>
           </div>
           <div class="feature-item">
-            <el-icon :size="32"><Edit /></el-icon>
+            <div class="feature-icon">
+              <el-icon :size="28"><Edit /></el-icon>
+            </div>
             <h3>修改建议</h3>
-            <p>针对每个风险点提供具体的文本修改建议</p>
+            <p>针对每个风险点提供具体可执行的文本修改方案</p>
           </div>
           <div class="feature-item">
-            <el-icon :size="32"><List /></el-icon>
+            <div class="feature-icon">
+              <el-icon :size="28"><List /></el-icon>
+            </div>
             <h3>行动建议</h3>
-            <p>除文本修改外还应采取的其他措施</p>
+            <p>提供文本修改之外的补充措施与注意事项</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">
+              <el-icon :size="28"><Download /></el-icon>
+            </div>
+            <h3>修订版导出</h3>
+            <p>一键导出带修订标记的 Word 文档，方便对照查阅</p>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 最近任务 -->
-    <div class="recent-section">
-      <div class="section-header">
-        <h2>最近任务</h2>
-        <el-button text @click="refreshTasks" :loading="loading">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
-      </div>
-
-      <el-empty v-if="tasks.length === 0" description="暂无任务">
-        <el-button type="primary" @click="goToNewReview">创建第一个任务</el-button>
-      </el-empty>
-
-      <div v-else class="task-list">
-        <el-card
-          v-for="task in tasks.slice(0, 6)"
-          :key="task.id"
-          class="task-card"
-          shadow="hover"
-          @click="goToTask(task)"
-        >
-          <div class="task-header">
-            <div class="task-name">{{ task.name }}</div>
-            <el-tag :type="statusType(task.status)" size="small">
-              {{ statusText(task.status) }}
-            </el-tag>
-          </div>
-          <div class="task-meta">
-            <span>
-              <el-icon><User /></el-icon>
-              {{ task.our_party }}
-            </span>
-            <span>
-              <el-icon><Clock /></el-icon>
-              {{ formatTime(task.created_at) }}
-            </span>
-          </div>
-          <div class="task-files">
-            <el-tag v-if="task.document_filename" type="info" size="small">
-              {{ task.document_filename }}
-            </el-tag>
-            <el-tag v-else type="warning" size="small">未上传文档</el-tag>
-          </div>
-          <div class="task-actions">
-            <el-button
-              v-if="task.status === 'completed'"
-              type="primary"
-              size="small"
-              @click.stop="goToResult(task)"
-            >
-              查看结果
-            </el-button>
-            <el-button
-              v-else
-              type="primary"
-              size="small"
-              @click.stop="goToTask(task)"
-            >
-              继续审阅
-            </el-button>
-            <el-button
-              type="danger"
-              size="small"
-              text
-              @click.stop="deleteTask(task)"
-            >
-              删除
-            </el-button>
-          </div>
-        </el-card>
+    <!-- 简单统计 -->
+    <div class="stats-section" v-if="backendStatus === 'ready'">
+      <div class="stats-card">
+        <div class="stat-item">
+          <div class="stat-value">{{ totalDocuments }}</div>
+          <div class="stat-label">文档总数</div>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <div class="stat-value completed">{{ completedDocuments }}</div>
+          <div class="stat-label">已完成</div>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <div class="stat-value in-progress">{{ inProgressDocuments }}</div>
+          <div class="stat-label">进行中</div>
+        </div>
       </div>
     </div>
   </div>
@@ -168,13 +137,12 @@
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Loading, Plus, FolderOpened, Search, Edit, List, Download } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
 
-const loading = ref(false)
 const tasks = ref([])
 
 // 后端连接状态
@@ -189,8 +157,12 @@ let successAlertTimer = null
 const isCreatingTask = ref(false)
 const creatingTaskMessage = ref('')
 
-// 计算属性
-const isOperationInProgress = computed(() => store.isOperationInProgress)
+// 统计数据
+const totalDocuments = computed(() => tasks.value.length)
+const completedDocuments = computed(() => tasks.value.filter(t => t.status === 'completed').length)
+const inProgressDocuments = computed(() =>
+  tasks.value.filter(t => t.status === 'reviewing' || t.status === 'created' || t.status === 'uploading').length
+)
 
 onMounted(async () => {
   // 首先检查后端连接
@@ -219,8 +191,8 @@ async function checkBackendConnection() {
     successAlertTimer = setTimeout(() => {
       showSuccessAlert.value = false
     }, 3000)
-    // 连接成功后加载任务列表
-    await refreshTasks()
+    // 连接成功后加载任务列表（用于统计）
+    await fetchTasks()
   } else {
     backendStatus.value = 'error'
     connectionError.value = store.operationError?.message || '无法连接到后端服务'
@@ -234,23 +206,13 @@ async function retryConnection() {
   isRetrying.value = false
 }
 
-async function refreshTasks() {
-  loading.value = true
+async function fetchTasks() {
   try {
     await store.fetchTasks()
     tasks.value = store.tasks
   } catch (error) {
-    const errorInfo = error.errorInfo
-    if (errorInfo?.retryable) {
-      ElMessage.warning({
-        message: errorInfo.message,
-        duration: 5000
-      })
-    } else {
-      ElMessage.error(errorInfo?.message || '获取任务列表失败')
-    }
-  } finally {
-    loading.value = false
+    // 静默处理，仅用于统计
+    console.error('获取任务列表失败:', error)
   }
 }
 
@@ -273,65 +235,8 @@ async function goToNewReview() {
   }
 }
 
-function goToTask(task) {
-  if (task.status === 'completed') {
-    router.push(`/result/${task.id}`)
-  } else {
-    router.push(`/review/${task.id}`)
-  }
-}
-
-function goToResult(task) {
-  router.push(`/result/${task.id}`)
-}
-
-async function deleteTask(task) {
-  try {
-    await ElMessageBox.confirm(
-      `确定要删除任务 "${task.name}" 吗？`,
-      '确认删除',
-      { type: 'warning' }
-    )
-    await store.deleteTask(task.id)
-    tasks.value = store.tasks
-    ElMessage.success('删除成功')
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除失败')
-    }
-  }
-}
-
-function statusType(status) {
-  const types = {
-    created: 'info',
-    uploading: 'info',
-    reviewing: 'warning',
-    completed: 'success',
-    failed: 'danger'
-  }
-  return types[status] || 'info'
-}
-
-function statusText(status) {
-  const texts = {
-    created: '已创建',
-    uploading: '上传中',
-    reviewing: '审阅中',
-    completed: '已完成',
-    failed: '失败'
-  }
-  return texts[status] || status
-}
-
-function formatTime(isoString) {
-  const date = new Date(isoString)
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+function goToDocuments() {
+  router.push('/documents')
 }
 </script>
 
@@ -372,7 +277,7 @@ function formatTime(isoString) {
 
 /* 欢迎区域 */
 .welcome-section {
-  margin-bottom: var(--spacing-8);
+  margin-bottom: var(--spacing-6);
 }
 
 .welcome-card {
@@ -387,135 +292,146 @@ function formatTime(isoString) {
   margin-bottom: var(--spacing-10);
 }
 
-.welcome-content h1 {
+.welcome-title {
   font-size: var(--font-size-3xl);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
   margin-bottom: var(--spacing-3);
 }
 
-.welcome-content p {
+.welcome-desc {
   color: var(--color-text-secondary);
   font-size: var(--font-size-md);
   margin-bottom: var(--spacing-6);
   line-height: var(--line-height-relaxed);
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.welcome-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--spacing-4);
 }
 
 .welcome-features {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-6);
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-5);
 }
 
 .feature-item {
   text-align: center;
-  padding: var(--spacing-5);
+  padding: var(--spacing-5) var(--spacing-3);
+  border-radius: var(--radius-lg);
+  transition: all 0.2s;
 }
 
-.feature-item :deep(.el-icon) {
-  color: var(--color-primary) !important;
+.feature-item:hover {
+  background: var(--color-bg-secondary);
+}
+
+.feature-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto var(--spacing-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-bg);
+  border-radius: var(--radius-lg);
+  color: var(--color-primary);
 }
 
 .feature-item h3 {
-  margin: var(--spacing-3) 0 var(--spacing-2);
-  font-size: var(--font-size-md);
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
 }
 
 .feature-item p {
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 
-/* 最近任务区域 */
-.recent-section {
+/* 统计区域 */
+.stats-section {
+  margin-bottom: var(--spacing-6);
+}
+
+.stats-card {
   background: var(--color-bg-card);
   border-radius: var(--radius-lg);
   padding: var(--spacing-6);
   box-shadow: var(--shadow-md);
-}
-
-.section-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  margin-bottom: var(--spacing-5);
+  gap: var(--spacing-8);
 }
 
-.section-header h2 {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
+.stat-item {
+  text-align: center;
+  padding: 0 var(--spacing-6);
+}
+
+.stat-value {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
-  margin: 0;
+  margin-bottom: var(--spacing-1);
 }
 
-.task-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: var(--spacing-4);
+.stat-value.completed {
+  color: var(--color-success);
 }
 
-.task-card {
-  cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+.stat-value.in-progress {
+  color: var(--color-warning);
 }
 
-.task-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-
-.task-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-3);
-}
-
-.task-name {
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-base);
-}
-
-.task-meta {
-  display: flex;
-  gap: var(--spacing-4);
-  color: var(--color-text-tertiary);
+.stat-label {
   font-size: var(--font-size-sm);
-  margin-bottom: var(--spacing-3);
+  color: var(--color-text-tertiary);
 }
 
-.task-meta span {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-}
-
-.task-files {
-  margin-bottom: var(--spacing-3);
-}
-
-.task-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-2);
+.stat-divider {
+  width: 1px;
+  height: 48px;
+  background: var(--color-border);
 }
 
 /* 响应式 */
+@media (max-width: 1024px) {
+  .welcome-features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 @media (max-width: 768px) {
   .welcome-card {
     padding: var(--spacing-6);
+  }
+
+  .welcome-actions {
+    flex-direction: column;
   }
 
   .welcome-features {
     grid-template-columns: 1fr;
   }
 
-  .task-list {
-    grid-template-columns: 1fr;
+  .stats-card {
+    flex-direction: column;
+    gap: var(--spacing-4);
+  }
+
+  .stat-divider {
+    width: 100%;
+    height: 1px;
   }
 }
 </style>

@@ -10,6 +10,13 @@ const api = axios.create({
   }
 })
 
+// 用于获取 token 的辅助函数
+let getTokenFn = null
+
+export function setAuthTokenGetter(fn) {
+  getTokenFn = fn
+}
+
 // 连接状态追踪
 export const connectionState = {
   isConnecting: false,
@@ -69,11 +76,24 @@ export const connectionState = {
   }
 }
 
-// 请求拦截器 - 添加请求追踪
+// 请求拦截器 - 添加请求追踪和认证
 api.interceptors.request.use(
-  config => {
+  async config => {
     console.log(`[API] 请求: ${config.method?.toUpperCase()} ${config.url}`)
     connectionState.setConnecting(true)
+
+    // 添加 Clerk 认证 token
+    if (getTokenFn) {
+      try {
+        const token = await getTokenFn()
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`
+        }
+      } catch (error) {
+        console.warn('[API] 获取认证 token 失败:', error)
+      }
+    }
+
     return config
   },
   error => {

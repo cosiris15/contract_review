@@ -13,6 +13,10 @@
                 <el-icon><HomeFilled /></el-icon>
                 <span>首页</span>
               </router-link>
+              <router-link to="/documents" class="nav-link">
+                <el-icon><FolderOpened /></el-icon>
+                <span>文档管理</span>
+              </router-link>
               <router-link to="/standards" class="nav-link">
                 <el-icon><Setting /></el-icon>
                 <span>标准管理</span>
@@ -30,7 +34,6 @@
                 <el-icon :size="18"><Tools /></el-icon>
               </el-button>
             </el-tooltip>
-            <el-tag type="info" effect="plain" size="small" class="version-tag">v1.0.0</el-tag>
             <!-- Clerk 用户认证 -->
             <SignedOut>
               <SignInButton mode="modal">
@@ -56,12 +59,17 @@
 <script setup>
 import { onMounted } from 'vue'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
-import { HomeFilled, Setting, Tools } from '@element-plus/icons-vue'
-import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/vue'
+import { HomeFilled, FolderOpened, Setting, Tools } from '@element-plus/icons-vue'
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from '@clerk/vue'
 import SettingsDrawer from '@/components/common/SettingsDrawer.vue'
 import { useSettingsStore } from '@/store/settings'
+import { setAuthTokenGetter } from '@/api'
 
 const settingsStore = useSettingsStore()
+const { getToken } = useAuth()
+
+// 设置 API 认证 token getter
+setAuthTokenGetter(() => getToken.value())
 
 // 初始化设置（从 localStorage 加载）
 onMounted(() => {
@@ -294,12 +302,6 @@ html, body {
 .settings-btn:hover {
   background-color: var(--color-primary-bg);
   color: var(--color-primary);
-}
-
-.version-tag {
-  background-color: var(--color-bg-secondary);
-  border-color: var(--color-border);
-  color: var(--color-text-tertiary);
 }
 
 /* ========== Main 样式 ========== */

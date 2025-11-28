@@ -41,6 +41,12 @@ const routes = [
     meta: { title: '首页' }
   },
   {
+    path: '/documents',
+    name: 'Documents',
+    component: lazyLoadView(() => import('@/views/DocumentsView.vue'), 'DocumentsView'),
+    meta: { title: '文档管理' }
+  },
+  {
     path: '/review/:taskId?',
     name: 'Review',
     component: lazyLoadView(() => import('@/views/ReviewView.vue'), 'ReviewView'),

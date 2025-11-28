@@ -77,7 +77,9 @@
     <!-- 底部信息 -->
     <template #footer>
       <div class="drawer-footer">
-        <span class="version-info">设置会自动保存</span>
+        <span class="footer-text">设置会自动保存</span>
+        <span class="footer-divider">·</span>
+        <span class="version-tag">v1.0.0</span>
       </div>
     </template>
   </el-drawer>
@@ -191,11 +193,23 @@ const handleIntelligenceLevelChange = (value) => {
 .drawer-footer {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: var(--spacing-2);
   padding: var(--spacing-3) 0;
 }
 
-.version-info {
+.footer-text {
   font-size: var(--font-size-xs);
   color: var(--color-text-disabled);
+}
+
+.footer-divider {
+  color: var(--color-text-disabled);
+}
+
+.version-tag {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-medium);
 }
 </style>
