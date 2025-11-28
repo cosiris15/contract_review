@@ -246,7 +246,7 @@
             width="800px"
           >
             <div class="library-selector">
-              <!-- 搜索框和新建按钮 -->
+              <!-- 搜索框和操作按钮 -->
               <div class="selector-header">
                 <el-input
                   v-model="collectionSearch"
@@ -258,6 +258,15 @@
                     <el-icon><Search /></el-icon>
                   </template>
                 </el-input>
+                <el-button
+                  type="success"
+                  @click="getCollectionRecommendations"
+                  :loading="recommendingCollections"
+                  :disabled="!currentTask?.document_filename"
+                >
+                  <el-icon><MagicStick /></el-icon>
+                  智能推荐
+                </el-button>
                 <el-dropdown trigger="click" @command="handleNewStandardInReview">
                   <el-button type="primary">
                     <el-icon><Plus /></el-icon>
@@ -277,6 +286,37 @@
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
+              </div>
+
+              <!-- 智能推荐结果 -->
+              <div v-if="collectionRecommendations.length > 0" class="recommendation-section">
+                <div class="recommendation-header">
+                  <el-icon color="#67c23a"><MagicStick /></el-icon>
+                  <span>智能推荐</span>
+                  <el-button text type="info" size="small" @click="collectionRecommendations = []">
+                    清除推荐
+                  </el-button>
+                </div>
+                <div class="recommendation-list">
+                  <div
+                    v-for="rec in collectionRecommendations"
+                    :key="rec.collection_id"
+                    class="recommendation-card"
+                    :class="{ selected: selectedCollection?.id === rec.collection_id }"
+                    @click="selectRecommendedCollection(rec)"
+                  >
+                    <div class="rec-header">
+                      <span class="rec-name">{{ rec.collection_name }}</span>
+                      <el-tag type="success" size="small">
+                        相关度 {{ Math.round(rec.relevance_score * 100) }}%
+                      </el-tag>
+                    </div>
+                    <p class="rec-reason">{{ rec.match_reason }}</p>
+                    <div class="rec-meta">
+                      <el-tag size="small" type="info">{{ rec.standard_count }} 条审核条目</el-tag>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <!-- 标准集合列表 -->
@@ -575,6 +615,10 @@ const showRecommendDialog = ref(false)
 const recommendations = ref([])
 const selectedLibraryStandards = ref([])
 
+// 集合推荐相关
+const recommendingCollections = ref(false)
+const collectionRecommendations = ref([])
+
 const currentTask = computed(() => store.currentTask)
 const isCompleted = computed(() => currentTask.value?.status === 'completed')
 const isFailed = computed(() => currentTask.value?.status === 'failed')
@@ -727,6 +771,62 @@ function readFileAsText(file) {
       reader.readAsText(file)
     }
   })
+}
+
+// ==================== 集合智能推荐 ====================
+
+// 获取集合推荐
+async function getCollectionRecommendations() {
+  if (!currentTask.value?.document_filename) {
+    ElMessage.warning('请先上传文档')
+    return
+  }
+
+  recommendingCollections.value = true
+  try {
+    // 从 store 获取文档文本（如果有）或使用任务信息
+    const documentText = store.documentText || `文档名称: ${currentTask.value.document_filename}`
+
+    const response = await api.recommendCollections({
+      document_text: documentText.slice(0, 1000),
+      material_type: form.value.material_type
+    })
+
+    collectionRecommendations.value = response.data || []
+
+    if (collectionRecommendations.value.length === 0) {
+      ElMessage.info('没有找到匹配的标准集合推荐')
+    } else {
+      ElMessage.success(`推荐了 ${collectionRecommendations.value.length} 个标准集合`)
+    }
+  } catch (error) {
+    console.error('获取推荐失败:', error)
+    ElMessage.error('获取推荐失败: ' + (error.message || '请重试'))
+  } finally {
+    recommendingCollections.value = false
+  }
+}
+
+// 选择推荐的集合
+async function selectRecommendedCollection(rec) {
+  // 从集合列表中找到对应的集合
+  let collection = collections.value.find(c => c.id === rec.collection_id)
+
+  if (collection) {
+    // 如果标准列表为空，需要从 API 获取
+    if (!collection.standards || collection.standards.length === 0) {
+      try {
+        const response = await api.getCollection(collection.id)
+        collection.standards = response.data.standards || []
+        collection.standard_count = collection.standards.length
+      } catch (error) {
+        console.error('获取集合详情失败:', error)
+        ElMessage.error('获取标准详情失败')
+        return
+      }
+    }
+    selectedCollection.value = collection
+  }
 }
 
 // ==================== 标准选择相关函数 ====================
@@ -1329,6 +1429,77 @@ async function applyStandards() {
   gap: var(--spacing-3);
   align-items: center;
   margin-bottom: var(--spacing-4);
+}
+
+/* 智能推荐区域样式 */
+.recommendation-section {
+  margin-bottom: var(--spacing-4);
+  padding: var(--spacing-4);
+  background: var(--color-success-bg);
+  border-radius: var(--radius-md);
+  border: 1px solid #c2e7b0;
+}
+
+.recommendation-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-success);
+}
+
+.recommendation-header span {
+  flex: 1;
+}
+
+.recommendation-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.recommendation-card {
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-bg-card);
+  border: 2px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.recommendation-card:hover {
+  border-color: var(--color-success);
+  box-shadow: var(--shadow-sm);
+}
+
+.recommendation-card.selected {
+  border-color: var(--color-success);
+  background: #f0fdf4;
+}
+
+.rec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-2);
+}
+
+.rec-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.rec-reason {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+.rec-meta {
+  display: flex;
+  gap: var(--spacing-2);
 }
 
 /* 集合列表 */

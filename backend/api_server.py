@@ -49,6 +49,7 @@ from src.contract_review.prompts import (
     build_standard_recommendation_messages,
     build_standard_modification_messages,
     build_merge_special_requirements_messages,
+    build_collection_recommendation_messages,
 )
 from src.contract_review.llm_client import LLMClient
 
@@ -480,6 +481,24 @@ class StandardRecommendationResponse(BaseModel):
     relevance_score: float
     match_reason: str
     standard: StandardResponse
+
+
+# ---------- 标准集合推荐模型 ----------
+
+class RecommendCollectionsRequest(BaseModel):
+    """推荐标准集合请求"""
+    document_text: str  # 文档内容（前1000字）
+    material_type: str = "contract"
+
+
+class CollectionRecommendationItem(BaseModel):
+    """集合推荐项"""
+    collection_id: str
+    collection_name: str
+    relevance_score: float  # 0-1
+    match_reason: str
+    standard_count: int
+    usage_instruction: Optional[str] = None
 
 
 # ==================== 任务管理 API ====================
@@ -1463,6 +1482,7 @@ class CollectionResponse(BaseModel):
     id: str
     name: str
     description: str
+    usage_instruction: Optional[str] = None
     material_type: str
     is_preset: bool
     language: str = "zh-CN"
@@ -1492,6 +1512,7 @@ def _collection_to_response(collection, standards: list = None) -> CollectionRes
         id=collection.id,
         name=collection.name,
         description=collection.description,
+        usage_instruction=getattr(collection, 'usage_instruction', None),
         material_type=collection.material_type,
         is_preset=collection.is_preset,
         language=getattr(collection, 'language', 'zh-CN'),
@@ -1516,6 +1537,101 @@ async def list_collections(
         collections = [c for c in collections if c.material_type == material_type or c.material_type == "both"]
 
     return [_collection_to_response(c) for c in collections]
+
+
+@app.post("/api/standard-library/collections/recommend", response_model=List[CollectionRecommendationItem])
+async def recommend_collections(request: RecommendCollectionsRequest):
+    """
+    根据文档内容推荐标准集合（使用 LLM）
+
+    分析文档内容，根据各集合的 usage_instruction 推荐最适合的审核标准集合。
+    """
+    import json
+    import re
+
+    # 获取所有可用集合
+    collections = standard_library_manager.list_collections()
+
+    # 按材料类型筛选
+    if request.material_type:
+        collections = [
+            c for c in collections
+            if c.material_type == request.material_type or c.material_type == "both"
+        ]
+
+    if not collections:
+        return []
+
+    # 准备集合数据供 LLM 分析
+    collections_for_llm = []
+    for c in collections:
+        # 计算标准数量
+        library = standard_library_manager._load_library()
+        standard_count = len([s for s in library.standards if s.collection_id == c.id])
+
+        collections_for_llm.append({
+            "id": c.id,
+            "name": c.name,
+            "description": c.description,
+            "usage_instruction": getattr(c, 'usage_instruction', None),
+            "standard_count": standard_count,
+        })
+
+    try:
+        # 构建 Prompt
+        messages = build_collection_recommendation_messages(
+            document_text=request.document_text[:1000],
+            material_type=request.material_type,
+            collections=collections_for_llm,
+        )
+
+        # 调用 LLM
+        response = await llm_client.chat(messages, max_output_tokens=1000)
+
+        # 解析 JSON 响应
+        response = response.strip()
+        # 移除可能的 markdown 代码块
+        response = re.sub(r"```json\s*", "", response)
+        response = re.sub(r"```\s*$", "", response)
+
+        # 尝试找到 JSON 数组
+        start = response.find("[")
+        end = response.rfind("]")
+        if start != -1 and end != -1:
+            response = response[start:end + 1]
+
+        recommendations = json.loads(response)
+
+        # 构建响应
+        results = []
+        collection_map = {c.id: c for c in collections}
+        collection_count_map = {c["id"]: c["standard_count"] for c in collections_for_llm}
+
+        for rec in recommendations:
+            collection_id = rec.get("collection_id")
+            collection = collection_map.get(collection_id)
+            if collection:
+                results.append(CollectionRecommendationItem(
+                    collection_id=collection_id,
+                    collection_name=collection.name,
+                    relevance_score=float(rec.get("relevance_score", 0)),
+                    match_reason=rec.get("match_reason", ""),
+                    standard_count=collection_count_map.get(collection_id, 0),
+                    usage_instruction=getattr(collection, 'usage_instruction', None),
+                ))
+
+        # 按相关性排序
+        results.sort(key=lambda x: x.relevance_score, reverse=True)
+
+        logger.info(f"推荐 {len(results)} 个标准集合")
+        return results
+
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 LLM 响应失败: {e}")
+        raise HTTPException(status_code=500, detail="LLM 响应解析失败")
+    except Exception as e:
+        logger.error(f"推荐集合失败: {e}")
+        raise HTTPException(status_code=500, detail=f"推荐失败: {str(e)}")
 
 
 @app.get("/api/standard-library/collections/{collection_id}", response_model=CollectionWithStandardsResponse)
@@ -1554,6 +1670,7 @@ class UpdateCollectionRequest(BaseModel):
     """更新集合请求"""
     name: Optional[str] = None
     description: Optional[str] = None
+    usage_instruction: Optional[str] = None
     material_type: Optional[str] = None
     language: Optional[str] = None
 

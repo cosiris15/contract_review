@@ -145,6 +145,11 @@
             <span class="info-value">{{ standards.length }} 条</span>
           </div>
         </div>
+        <!-- 适用说明（用于智能推荐） -->
+        <div v-if="selectedCollection.usage_instruction" class="usage-instruction-display">
+          <span class="info-label">适用说明：</span>
+          <span class="info-value">{{ selectedCollection.usage_instruction }}</span>
+        </div>
         <el-button type="primary" text size="small" @click="editCollectionInfo(selectedCollection)">
           <el-icon><Edit /></el-icon>
           编辑标准信息
@@ -313,7 +318,7 @@
     <el-dialog
       v-model="showCollectionEditDialog"
       title="编辑标准信息"
-      width="500px"
+      width="600px"
     >
       <el-form :model="collectionForm" label-width="100px">
         <el-form-item label="标准名称" required>
@@ -323,9 +328,21 @@
           <el-input
             v-model="collectionForm.description"
             type="textarea"
-            :rows="3"
+            :rows="2"
             placeholder="描述该标准的适用场景"
           />
+        </el-form-item>
+        <el-form-item label="适用说明">
+          <el-input
+            v-model="collectionForm.usage_instruction"
+            type="textarea"
+            :rows="3"
+            placeholder="用于智能推荐的详细说明，例如：适用于各类商务合同的法务审阅，包括采购合同、销售合同、服务合同等。重点关注合同主体资格、权利义务平衡、付款条款、违约责任等核心条款。"
+          />
+          <div class="form-tip">
+            <el-icon><InfoFilled /></el-icon>
+            适用说明用于智能推荐功能，帮助 AI 判断该标准是否适合审阅文档
+          </div>
         </el-form-item>
         <el-form-item label="材料类型">
           <el-select v-model="collectionForm.material_type" style="width: 100%">
@@ -841,6 +858,7 @@ const editingCollection = ref(null)
 const collectionForm = reactive({
   name: '',
   description: '',
+  usage_instruction: '',
   material_type: 'both'
 })
 
@@ -848,6 +866,7 @@ function editCollectionInfo(col) {
   editingCollection.value = col
   collectionForm.name = col.name
   collectionForm.description = col.description
+  collectionForm.usage_instruction = col.usage_instruction || ''
   collectionForm.material_type = col.material_type
   showCollectionEditDialog.value = true
 }
@@ -863,6 +882,7 @@ async function saveCollectionInfo() {
     await api.updateCollection(editingCollection.value.id, {
       name: collectionForm.name,
       description: collectionForm.description,
+      usage_instruction: collectionForm.usage_instruction || null,
       material_type: collectionForm.material_type
     })
     ElMessage.success('更新成功')
@@ -872,6 +892,7 @@ async function saveCollectionInfo() {
     if (selectedCollection.value && selectedCollection.value.id === editingCollection.value.id) {
       selectedCollection.value.name = collectionForm.name
       selectedCollection.value.description = collectionForm.description
+      selectedCollection.value.usage_instruction = collectionForm.usage_instruction
       selectedCollection.value.material_type = collectionForm.material_type
     }
     loadCollections()
@@ -1509,6 +1530,24 @@ onMounted(async () => {
 
 .info-value {
   color: var(--color-text-primary);
+}
+
+.usage-instruction-display {
+  margin-top: var(--spacing-3);
+  padding: var(--spacing-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.form-tip {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 
 .table-card {

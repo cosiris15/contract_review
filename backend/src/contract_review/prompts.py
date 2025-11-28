@@ -955,3 +955,66 @@ STANDARD_CREATION_USER_PROMPT = STANDARD_CREATION_PROMPTS["zh-CN"]["user"]
 def get_standard_creation_prompts(language: Language = "zh-CN") -> dict:
     """获取指定语言的标准创建提示词"""
     return STANDARD_CREATION_PROMPTS.get(language, STANDARD_CREATION_PROMPTS["zh-CN"])
+
+
+# ==================== 标准集合推荐 Prompt ====================
+
+def build_collection_recommendation_messages(
+    document_text: str,
+    material_type: str,
+    collections: list,
+) -> List[Dict[str, Any]]:
+    """
+    构建标准集合推荐 Prompt
+
+    Args:
+        document_text: 待审阅文档文本（前1000字）
+        material_type: 材料类型 contract/marketing
+        collections: 可用的标准集合列表，每个集合包含 id, name, usage_instruction, standard_count
+
+    Returns:
+        消息列表
+    """
+    material_type_cn = "合同" if material_type == "contract" else "营销材料"
+
+    # 格式化可用集合
+    collections_lines = []
+    for c in collections:
+        usage = c.get("usage_instruction") or c.get("description") or "无说明"
+        count = c.get("standard_count", 0)
+        line = f"- [{c['id']}] {c['name']}（{count}条标准）: {usage}"
+        collections_lines.append(line)
+
+    collections_text = "\n".join(collections_lines)
+
+    system = f"""你是法务审阅专家。根据文档内容，从可用的审核标准集合中推荐最适合的 1-3 套。
+
+【任务说明】
+1. 分析文档内容，理解其业务场景、文档类型和关键内容
+2. 根据各集合的适用说明，选择最匹配的标准集合
+3. 为每个推荐的集合说明推荐理由
+
+【输出格式】
+输出纯 JSON 数组，每个元素包含：
+- collection_id: 推荐的集合 ID
+- relevance_score: 相关性评分（0-1，1 表示非常相关）
+- match_reason: 推荐理由（不超过 50 字）
+
+【注意事项】
+- 只推荐相关度 > 0.5 的集合
+- 按相关性从高到低排序
+- 最多推荐 3 个集合
+- 只输出 JSON 数组，不要添加 markdown 代码块或额外说明"""
+
+    user = f"""【待审阅的{material_type_cn}片段】
+{document_text[:1000]}
+
+【可用的审核标准集合】
+{collections_text}
+
+请分析文档并推荐最适合的审核标准集合。"""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]

@@ -86,6 +86,7 @@ class StandardCollection(BaseModel):
     id: str = Field(default_factory=generate_id)
     name: str  # 集合名称，如"电商平台合作协议审核标准"
     description: str = ""  # 适用场景说明
+    usage_instruction: Optional[str] = None  # 适用说明（用于智能推荐）
     material_type: str = "both"  # contract/marketing/both
     is_preset: bool = False  # 是否为系统预设（预设集合不可删除）
     language: Language = "zh-CN"  # 标准集的语言

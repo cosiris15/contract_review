@@ -448,6 +448,11 @@ export default {
     return api.get('/standard-library/collections', { params })
   },
 
+  // 推荐标准集合（根据文档内容智能推荐）
+  recommendCollections(data) {
+    return api.post('/standard-library/collections/recommend', data)
+  },
+
   // 获取单个集合（包含标准列表）
   getCollection(collectionId) {
     return api.get(`/standard-library/collections/${collectionId}`)
