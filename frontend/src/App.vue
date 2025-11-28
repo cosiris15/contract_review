@@ -31,6 +31,15 @@
               </el-button>
             </el-tooltip>
             <el-tag type="info" effect="plain" size="small" class="version-tag">v1.0.0</el-tag>
+            <!-- Clerk 用户认证 -->
+            <SignedOut>
+              <SignInButton mode="modal">
+                <el-button type="primary" size="small">登录</el-button>
+              </SignInButton>
+            </SignedOut>
+            <SignedIn>
+              <UserButton />
+            </SignedIn>
           </div>
         </el-header>
 
@@ -48,6 +57,7 @@
 import { onMounted } from 'vue'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import { HomeFilled, Setting, Tools } from '@element-plus/icons-vue'
+import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/vue'
 import SettingsDrawer from '@/components/common/SettingsDrawer.vue'
 import { useSettingsStore } from '@/store/settings'
 
