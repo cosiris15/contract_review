@@ -329,24 +329,25 @@
           />
         </el-form-item>
         <el-form-item label="适用说明">
-          <div class="usage-instruction-input">
+          <div class="usage-instruction-wrapper">
             <el-input
               v-model="collectionForm.usage_instruction"
               type="textarea"
-              :rows="3"
+              :rows="4"
               placeholder="用于智能推荐的详细说明，例如：适用于各类商务合同的法务审阅，包括采购合同、销售合同、服务合同等。重点关注合同主体资格、权利义务平衡、付款条款、违约责任等核心条款。"
+              class="usage-instruction-textarea"
             />
-            <el-button
-              type="primary"
-              text
-              size="small"
-              class="generate-btn"
-              @click="generateCollectionUsageInstruction"
-              :loading="generatingUsageInstruction"
-            >
-              <el-icon><MagicStick /></el-icon>
-              AI 生成
-            </el-button>
+            <div class="usage-instruction-actions">
+              <el-button
+                type="primary"
+                size="small"
+                @click="generateCollectionUsageInstruction"
+                :loading="generatingUsageInstruction"
+              >
+                <el-icon><MagicStick /></el-icon>
+                AI 生成
+              </el-button>
+            </div>
           </div>
           <div class="form-tip">
             <el-icon><InfoFilled /></el-icon>
@@ -1613,14 +1614,20 @@ onMounted(async () => {
 }
 
 /* 适用说明输入框带生成按钮 */
-.usage-instruction-input {
-  position: relative;
+.usage-instruction-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  width: 100%;
 }
 
-.usage-instruction-input .generate-btn {
-  position: absolute;
-  right: var(--spacing-2);
-  top: var(--spacing-2);
+.usage-instruction-wrapper .usage-instruction-textarea {
+  width: 100%;
+}
+
+.usage-instruction-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* 兼容旧样式 */
