@@ -468,6 +468,11 @@ export default {
     return api.put(`/standard-library/collections/${collectionId}`, data)
   },
 
+  // 为集合生成适用说明
+  generateCollectionUsageInstruction(collectionId) {
+    return api.post(`/standard-library/collections/${collectionId}/generate-usage-instruction`)
+  },
+
   // 删除集合（连同删除所有风险点）
   deleteCollection(collectionId, force = false) {
     return api.delete(`/standard-library/collections/${collectionId}`, {

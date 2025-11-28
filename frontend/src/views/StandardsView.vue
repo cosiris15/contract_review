@@ -125,35 +125,54 @@
           <el-icon><ArrowLeft /></el-icon>
           返回列表
         </el-button>
-        <h2>{{ selectedCollection.name }}</h2>
-        <el-tag v-if="selectedCollection.is_preset" size="small" type="info">系统预设</el-tag>
+        <div class="detail-title">
+          <h2>{{ selectedCollection.name }}</h2>
+          <div class="detail-tags">
+            <el-tag v-if="selectedCollection.is_preset" size="small" type="info">系统预设</el-tag>
+            <el-tag v-if="selectedCollection.language === 'en'" size="small" type="success">EN</el-tag>
+            <el-tag size="small">{{ formatMaterialType(selectedCollection.material_type) }}</el-tag>
+          </div>
+        </div>
+        <el-button type="primary" text @click="editCollectionInfo(selectedCollection)">
+          <el-icon><Edit /></el-icon>
+          编辑信息
+        </el-button>
       </div>
 
       <!-- 集合信息卡片 -->
       <el-card class="collection-info-card">
-        <div class="info-row">
-          <div class="info-item">
-            <span class="info-label">适用场景：</span>
-            <span class="info-value">{{ selectedCollection.description || '暂无描述' }}</span>
+        <div class="info-grid">
+          <div class="info-block">
+            <div class="info-block-label">适用场景</div>
+            <div class="info-block-value">{{ selectedCollection.description || '暂无描述' }}</div>
           </div>
-          <div class="info-item">
-            <span class="info-label">材料类型：</span>
-            <span class="info-value">{{ formatMaterialType(selectedCollection.material_type) }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">审核条目数量：</span>
-            <span class="info-value">{{ standards.length }} 条</span>
+          <div class="info-block stats">
+            <div class="stat-box">
+              <div class="stat-number">{{ standards.length }}</div>
+              <div class="stat-text">审核条目</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-number">{{ categories.length }}</div>
+              <div class="stat-text">分类</div>
+            </div>
           </div>
         </div>
         <!-- 适用说明（用于智能推荐） -->
-        <div v-if="selectedCollection.usage_instruction" class="usage-instruction-display">
-          <span class="info-label">适用说明：</span>
-          <span class="info-value">{{ selectedCollection.usage_instruction }}</span>
+        <div v-if="selectedCollection.usage_instruction" class="usage-instruction-block">
+          <div class="info-block-label">
+            <el-icon><InfoFilled /></el-icon>
+            适用说明（用于智能推荐）
+          </div>
+          <div class="usage-instruction-text">{{ selectedCollection.usage_instruction }}</div>
         </div>
-        <el-button type="primary" text size="small" @click="editCollectionInfo(selectedCollection)">
-          <el-icon><Edit /></el-icon>
-          编辑标准信息
-        </el-button>
+        <div v-else class="usage-instruction-empty">
+          <el-icon><InfoFilled /></el-icon>
+          <span>尚未设置适用说明，</span>
+          <el-button type="primary" text size="small" @click="editCollectionInfo(selectedCollection)">
+            点击编辑
+          </el-button>
+          <span>或使用 AI 自动生成</span>
+        </div>
       </el-card>
 
       <!-- 审核条目筛选和操作 -->
@@ -310,12 +329,25 @@
           />
         </el-form-item>
         <el-form-item label="适用说明">
-          <el-input
-            v-model="collectionForm.usage_instruction"
-            type="textarea"
-            :rows="3"
-            placeholder="用于智能推荐的详细说明，例如：适用于各类商务合同的法务审阅，包括采购合同、销售合同、服务合同等。重点关注合同主体资格、权利义务平衡、付款条款、违约责任等核心条款。"
-          />
+          <div class="usage-instruction-input">
+            <el-input
+              v-model="collectionForm.usage_instruction"
+              type="textarea"
+              :rows="3"
+              placeholder="用于智能推荐的详细说明，例如：适用于各类商务合同的法务审阅，包括采购合同、销售合同、服务合同等。重点关注合同主体资格、权利义务平衡、付款条款、违约责任等核心条款。"
+            />
+            <el-button
+              type="primary"
+              text
+              size="small"
+              class="generate-btn"
+              @click="generateCollectionUsageInstruction"
+              :loading="generatingUsageInstruction"
+            >
+              <el-icon><MagicStick /></el-icon>
+              AI 生成
+            </el-button>
+          </div>
           <div class="form-tip">
             <el-icon><InfoFilled /></el-icon>
             适用说明用于智能推荐功能，帮助 AI 判断该标准是否适合审阅文档
@@ -831,6 +863,7 @@ function backToList() {
 // ==================== 集合编辑相关 ====================
 const showCollectionEditDialog = ref(false)
 const savingCollection = ref(false)
+const generatingUsageInstruction = ref(false)
 const editingCollection = ref(null)
 const collectionForm = reactive({
   name: '',
@@ -846,6 +879,22 @@ function editCollectionInfo(col) {
   collectionForm.usage_instruction = col.usage_instruction || ''
   collectionForm.material_type = col.material_type
   showCollectionEditDialog.value = true
+}
+
+// AI 生成集合适用说明
+async function generateCollectionUsageInstruction() {
+  if (!editingCollection.value) return
+
+  generatingUsageInstruction.value = true
+  try {
+    const response = await api.generateCollectionUsageInstruction(editingCollection.value.id)
+    collectionForm.usage_instruction = response.data.usage_instruction
+    ElMessage.success('生成成功')
+  } catch (error) {
+    ElMessage.error('生成失败: ' + error.message)
+  } finally {
+    generatingUsageInstruction.value = false
+  }
 }
 
 async function saveCollectionInfo() {
@@ -1454,16 +1503,127 @@ onMounted(async () => {
   margin-bottom: var(--spacing-4);
 }
 
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4);
+  margin-bottom: var(--spacing-4);
+}
+
 .detail-header h2 {
   margin: 0;
   font-size: var(--font-size-xl);
   color: var(--color-text-primary);
 }
 
+.detail-title {
+  flex: 1;
+}
+
+.detail-title h2 {
+  margin: 0 0 var(--spacing-1) 0;
+}
+
+.detail-tags {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
 .collection-info-card {
   margin-bottom: var(--spacing-4);
 }
 
+/* 新的信息网格布局 */
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--spacing-6);
+  margin-bottom: var(--spacing-4);
+}
+
+.info-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.info-block-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.info-block-value {
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-relaxed);
+}
+
+.info-block.stats {
+  display: flex;
+  flex-direction: row;
+  gap: var(--spacing-6);
+}
+
+.stat-box {
+  text-align: center;
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  min-width: 80px;
+}
+
+.stat-number {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-primary);
+}
+
+.stat-text {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-1);
+}
+
+.usage-instruction-block {
+  padding: var(--spacing-4);
+  background: var(--color-primary-bg);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-primary);
+}
+
+.usage-instruction-text {
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+.usage-instruction-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+/* 适用说明输入框带生成按钮 */
+.usage-instruction-input {
+  position: relative;
+}
+
+.usage-instruction-input .generate-btn {
+  position: absolute;
+  right: var(--spacing-2);
+  top: var(--spacing-2);
+}
+
+/* 兼容旧样式 */
 .info-row {
   display: flex;
   flex-wrap: wrap;

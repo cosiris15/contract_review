@@ -536,8 +536,15 @@ class StandardLibraryManager:
                     break
 
             if existing_collection:
-                logger.info(f"Preset collection already exists: {template_name}")
-                continue
+                # 检查该集合是否有标准
+                existing_standards = [s for s in library.standards if s.collection_id == existing_collection.id]
+                if existing_standards:
+                    logger.info(f"Preset collection already exists with {len(existing_standards)} standards: {template_name}")
+                    continue
+                else:
+                    # 集合存在但为空，删除集合以便重新导入
+                    logger.info(f"Preset collection exists but is empty, re-importing: {template_name}")
+                    library.collections.remove(existing_collection)
 
             try:
                 # 解析模板文件

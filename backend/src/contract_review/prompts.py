@@ -957,6 +957,104 @@ def get_standard_creation_prompts(language: Language = "zh-CN") -> dict:
     return STANDARD_CREATION_PROMPTS.get(language, STANDARD_CREATION_PROMPTS["zh-CN"])
 
 
+# ==================== 标准集合适用说明生成 Prompt ====================
+
+def build_collection_usage_instruction_messages(
+    collection_name: str,
+    collection_description: str,
+    material_type: str,
+    standards: list,
+    language: str = "zh-CN",
+) -> List[Dict[str, Any]]:
+    """
+    为标准集合生成适用说明的 Prompt
+
+    Args:
+        collection_name: 集合名称
+        collection_description: 集合描述/适用场景
+        material_type: 材料类型 contract/marketing/both
+        standards: 集合包含的标准列表
+        language: 语言 zh-CN/en
+
+    Returns:
+        消息列表
+    """
+    material_type_map = {
+        "contract": "合同" if language == "zh-CN" else "Contracts",
+        "marketing": "营销材料" if language == "zh-CN" else "Marketing Materials",
+        "both": "合同和营销材料" if language == "zh-CN" else "Contracts and Marketing Materials",
+    }
+    material_type_label = material_type_map.get(material_type, material_type_map["both"])
+
+    # 格式化标准列表摘要
+    standards_summary = []
+    categories = {}
+    for s in standards[:20]:  # 最多取前 20 条
+        cat = s.get("category", "其他")
+        if cat not in categories:
+            categories[cat] = []
+        categories[cat].append(s.get("item", ""))
+
+    for cat, items in categories.items():
+        standards_summary.append(f"- {cat}: {', '.join(items[:5])}")
+
+    standards_text = "\n".join(standards_summary) if standards_summary else "暂无标准"
+
+    if language == "zh-CN":
+        system = """你是法务专家。根据审核标准集合的信息，生成一段简洁的"适用说明"。
+
+【输出要求】
+1. 说明应简洁明了，80-150字
+2. 重点包含：
+   - 适用的文档类型和业务场景
+   - 该标准集合的核心关注点
+   - 适合使用该标准的情况
+3. 使用专业但易懂的语言
+4. 便于用户快速判断该标准是否适合自己的文档
+
+直接输出适用说明文本，不要添加任何前缀、标记或解释。"""
+
+        user = f"""【标准集合信息】
+- 名称：{collection_name}
+- 适用场景：{collection_description or '未指定'}
+- 材料类型：{material_type_label}
+- 包含 {len(standards)} 条审核标准
+
+【标准概览】
+{standards_text}
+
+请为这套审核标准生成适用说明。"""
+    else:
+        system = """You are a legal expert. Generate a concise "usage instruction" for the review standard collection.
+
+【Output Requirements】
+1. Keep it concise, 80-150 words
+2. Include:
+   - Applicable document types and business scenarios
+   - Core focus areas of this standard collection
+   - When to use this standard
+3. Use professional but easy-to-understand language
+4. Help users quickly determine if this standard suits their documents
+
+Output the usage instruction text directly, without any prefix, markers, or explanations."""
+
+        user = f"""【Standard Collection Information】
+- Name: {collection_name}
+- Applicable Scenario: {collection_description or 'Not specified'}
+- Material Type: {material_type_label}
+- Contains {len(standards)} review standards
+
+【Standards Overview】
+{standards_text}
+
+Please generate a usage instruction for this review standard collection."""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 # ==================== 标准集合推荐 Prompt ====================
 
 def build_collection_recommendation_messages(

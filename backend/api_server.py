@@ -50,6 +50,7 @@ from src.contract_review.prompts import (
     build_standard_modification_messages,
     build_merge_special_requirements_messages,
     build_collection_recommendation_messages,
+    build_collection_usage_instruction_messages,
 )
 from src.contract_review.llm_client import LLMClient
 
@@ -1702,6 +1703,58 @@ async def update_collection(collection_id: str, request: UpdateCollectionRequest
 
     collection = standard_library_manager.get_collection(collection_id)
     return _collection_to_response(collection)
+
+
+@app.post("/api/standard-library/collections/{collection_id}/generate-usage-instruction")
+async def generate_collection_usage_instruction(collection_id: str):
+    """为集合生成适用说明（使用 LLM）"""
+    # 获取集合信息
+    result = standard_library_manager.get_collection_with_standards(collection_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    collection = result["collection"]
+    standards = result["standards"]
+
+    try:
+        # 构建标准列表摘要
+        standards_data = [
+            {"category": s.category, "item": s.item}
+            for s in standards
+        ]
+
+        # 获取集合语言
+        language = getattr(collection, 'language', 'zh-CN')
+
+        # 构建 Prompt
+        messages = build_collection_usage_instruction_messages(
+            collection_name=collection.name,
+            collection_description=collection.description or "",
+            material_type=collection.material_type,
+            standards=standards_data,
+            language=language,
+        )
+
+        # 调用 LLM
+        usage_instruction = await llm_client.chat(messages, max_output_tokens=300)
+        usage_instruction = usage_instruction.strip()
+
+        # 更新集合
+        standard_library_manager.update_collection(
+            collection_id,
+            {"usage_instruction": usage_instruction}
+        )
+
+        logger.info(f"为集合 {collection_id} 生成适用说明")
+
+        return {
+            "collection_id": collection_id,
+            "usage_instruction": usage_instruction,
+        }
+
+    except Exception as e:
+        logger.error(f"生成集合适用说明失败: {collection_id} - {e}")
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
 @app.delete("/api/standard-library/collections/{collection_id}")

@@ -21,13 +21,13 @@ from .models import MaterialType, ReviewStandard, ReviewStandardSet, RiskLevel
 class StandardParser:
     """审核标准解析器"""
 
-    # 表格列名映射（支持多种列名写法）
+    # 表格列名映射（支持多种列名写法，包括英文）
     COLUMN_MAPPINGS = {
-        "category": ["审核分类", "分类", "类别", "category"],
-        "item": ["审核要点", "要点", "检查项", "审核项", "item"],
-        "description": ["详细说明", "说明", "描述", "判断标准", "description"],
-        "risk_level": ["风险等级", "等级", "风险级别", "risk_level"],
-        "applicable_to": ["适用材料类型", "适用类型", "材料类型", "applicable_to"],
+        "category": ["审核分类", "分类", "类别", "category", "Category"],
+        "item": ["审核要点", "要点", "检查项", "审核项", "item", "Review Item", "review_item"],
+        "description": ["详细说明", "说明", "描述", "判断标准", "description", "Description"],
+        "risk_level": ["风险等级", "等级", "风险级别", "risk_level", "Risk Level", "risk level"],
+        "applicable_to": ["适用材料类型", "适用类型", "材料类型", "applicable_to", "Material Type", "material_type"],
     }
 
     # 风险等级映射
