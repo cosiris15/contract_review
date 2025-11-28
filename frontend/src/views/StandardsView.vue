@@ -228,21 +228,6 @@
               <span>{{ formatApplicableTo(row.applicable_to) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="usage_instruction" label="适用说明" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span v-if="row.usage_instruction">{{ row.usage_instruction }}</span>
-              <el-button
-                v-else
-                type="primary"
-                text
-                size="small"
-                @click="generateUsageInstruction(row)"
-                :loading="generatingIds.includes(row.id)"
-              >
-                生成
-              </el-button>
-            </template>
-          </el-table-column>
           <el-table-column label="操作" width="150" fixed="right">
             <template #default="{ row }">
               <el-button type="primary" text size="small" @click="editStandard(row)">
@@ -295,14 +280,6 @@
             <el-checkbox label="contract">合同</el-checkbox>
             <el-checkbox label="marketing">营销材料</el-checkbox>
           </el-checkbox-group>
-        </el-form-item>
-        <el-form-item label="适用说明">
-          <el-input
-            v-model="standardForm.usage_instruction"
-            type="textarea"
-            :rows="2"
-            placeholder="可选，说明何时使用该标准"
-          />
         </el-form-item>
       </el-form>
 
@@ -933,7 +910,6 @@ const categories = ref([])
 const searchKeyword = ref('')
 const filterCategory = ref('')
 const filterRiskLevel = ref('')
-const generatingIds = ref([])
 
 // 加载风险点列表
 async function loadStandards() {
@@ -985,8 +961,7 @@ const standardForm = reactive({
   item: '',
   description: '',
   risk_level: 'medium',
-  applicable_to: ['contract', 'marketing'],
-  usage_instruction: ''
+  applicable_to: ['contract', 'marketing']
 })
 
 function editStandard(row) {
@@ -996,8 +971,7 @@ function editStandard(row) {
     item: row.item,
     description: row.description,
     risk_level: row.risk_level,
-    applicable_to: row.applicable_to || ['contract', 'marketing'],
-    usage_instruction: row.usage_instruction || ''
+    applicable_to: row.applicable_to || ['contract', 'marketing']
   })
   showAddDialog.value = true
 }
@@ -1059,29 +1033,8 @@ function resetStandardForm() {
     item: '',
     description: '',
     risk_level: 'medium',
-    applicable_to: ['contract', 'marketing'],
-    usage_instruction: ''
+    applicable_to: ['contract', 'marketing']
   })
-}
-
-// 生成适用说明
-async function generateUsageInstruction(row) {
-  generatingIds.value.push(row.id)
-  try {
-    const response = await api.generateUsageInstruction({
-      standard_ids: [row.id],
-    })
-    if (response.data.success_count > 0) {
-      row.usage_instruction = response.data.results[0].usage_instruction
-      ElMessage.success('生成成功')
-    } else {
-      ElMessage.error('生成失败: ' + response.data.errors[0])
-    }
-  } catch (error) {
-    ElMessage.error('生成失败: ' + error.message)
-  } finally {
-    generatingIds.value = generatingIds.value.filter(id => id !== row.id)
-  }
 }
 
 // ==================== 导入标准（创建新集合） ====================
