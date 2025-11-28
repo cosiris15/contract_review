@@ -10,6 +10,10 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+
+# 加载 .env 文件（本地开发用）
+from dotenv import load_dotenv
+load_dotenv()
 from typing import List, Optional
 
 import httpx
@@ -38,6 +42,8 @@ from src.contract_review.redline_generator import generate_redline_document
 from src.contract_review.standard_parser import parse_standard_file
 from src.contract_review.storage import StorageManager
 from src.contract_review.tasks import TaskManager
+from src.contract_review.supabase_tasks import SupabaseTaskManager
+from src.contract_review.supabase_storage import SupabaseStorageManager
 from src.contract_review.prompts import (
     build_usage_instruction_messages,
     build_standard_recommendation_messages,
@@ -108,8 +114,18 @@ async def general_exception_handler(request, exc):
 
 
 # 初始化管理器
-task_manager = TaskManager(settings.review.tasks_dir)
-storage_manager = StorageManager(settings.review.tasks_dir)
+# 检查是否配置了 Supabase，如果是则使用 Supabase 版本
+USE_SUPABASE = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+
+if USE_SUPABASE:
+    logger.info("使用 Supabase 存储后端")
+    task_manager = SupabaseTaskManager()
+    storage_manager = SupabaseStorageManager()
+else:
+    logger.info("使用本地文件存储后端")
+    task_manager = TaskManager(settings.review.tasks_dir)
+    storage_manager = StorageManager(settings.review.tasks_dir)
+
 formatter = ResultFormatter()
 
 # 标准库目录
@@ -475,20 +491,35 @@ async def create_task(
 ):
     """创建审阅任务（需要登录）"""
     print(f"User {user_id} is creating a new task...")
-    task = task_manager.create_task(
-        name=request.name,
-        our_party=request.our_party,
-        material_type=request.material_type,
-        language=request.language,
-    )
+    if USE_SUPABASE:
+        task = task_manager.create_task(
+            name=request.name,
+            our_party=request.our_party,
+            user_id=user_id,
+            material_type=request.material_type,
+            language=request.language,
+        )
+    else:
+        task = task_manager.create_task(
+            name=request.name,
+            our_party=request.our_party,
+            material_type=request.material_type,
+            language=request.language,
+        )
     logger.info(f"创建任务: {task.id} - {task.name} (language={request.language}) by user {user_id}")
     return TaskResponse.from_task(task)
 
 
 @app.get("/api/tasks", response_model=List[TaskResponse])
-async def list_tasks(limit: int = Query(default=100, ge=1, le=500)):
-    """获取任务列表"""
-    tasks = task_manager.list_tasks(limit=limit)
+async def list_tasks(
+    limit: int = Query(default=100, ge=1, le=500),
+    user_id: str = Depends(get_current_user),
+):
+    """获取任务列表（需要登录，只返回当前用户的任务）"""
+    if USE_SUPABASE:
+        tasks = task_manager.list_tasks(user_id=user_id, limit=limit)
+    else:
+        tasks = task_manager.list_tasks(limit=limit)
     return [TaskResponse.from_task(t) for t in tasks]
 
 
@@ -502,9 +533,15 @@ async def get_task(task_id: str):
 
 
 @app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: str):
-    """删除任务"""
-    success = task_manager.delete_task(task_id)
+async def delete_task(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """删除任务（需要登录）"""
+    if USE_SUPABASE:
+        success = task_manager.delete_task(task_id, user_id)
+    else:
+        success = task_manager.delete_task(task_id)
     if not success:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"message": "删除成功"}
@@ -552,7 +589,10 @@ async def upload_document(
         )
 
     content = await file.read()
-    task_manager.save_document(task_id, file.filename, content)
+    if USE_SUPABASE:
+        task_manager.save_document(task_id, user_id, file.filename, content)
+    else:
+        task_manager.save_document(task_id, file.filename, content)
 
     logger.info(f"任务 {task_id} 上传文档: {file.filename}")
     return {"message": "上传成功", "filename": file.filename}
@@ -580,15 +620,22 @@ async def upload_standard(
         )
 
     content = await file.read()
-    task_manager.save_standard(task_id, file.filename, content)
+    if USE_SUPABASE:
+        task_manager.save_standard(task_id, user_id, file.filename, content)
+    else:
+        task_manager.save_standard(task_id, file.filename, content)
 
     logger.info(f"任务 {task_id} 上传审核标准: {file.filename}")
     return {"message": "上传成功", "filename": file.filename}
 
 
 @app.post("/api/tasks/{task_id}/standard/template")
-async def use_template(task_id: str, template_name: str = Query(...)):
-    """使用默认模板作为审核标准"""
+async def use_template(
+    task_id: str,
+    template_name: str = Query(...),
+    user_id: str = Depends(get_current_user),
+):
+    """使用默认模板作为审核标准（需要登录）"""
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -602,7 +649,10 @@ async def use_template(task_id: str, template_name: str = Query(...)):
 
     # 复制模板到任务目录
     content = template_path.read_bytes()
-    task_manager.save_standard(task_id, template_path.name, content)
+    if USE_SUPABASE:
+        task_manager.save_standard(task_id, user_id, template_path.name, content)
+    else:
+        task_manager.save_standard(task_id, template_path.name, content)
 
     # 更新任务
     task.standard_template = template_name
@@ -613,11 +663,12 @@ async def use_template(task_id: str, template_name: str = Query(...)):
 
 # ==================== 审阅执行 API ====================
 
-async def run_review(task_id: str, llm_provider: str = "deepseek"):
+async def run_review(task_id: str, user_id: str, llm_provider: str = "deepseek"):
     """后台执行审阅任务
 
     Args:
         task_id: 任务 ID
+        user_id: 用户 ID（用于 Supabase 存储路径）
         llm_provider: LLM 提供者，可选 "deepseek" 或 "gemini"
     """
     task = task_manager.get_task(task_id)
@@ -630,12 +681,18 @@ async def run_review(task_id: str, llm_provider: str = "deepseek"):
         task_manager.update_task(task)
 
         # 获取文档
-        doc_path = task_manager.get_document_path(task_id)
+        if USE_SUPABASE:
+            doc_path = task_manager.get_document_path(task_id, user_id)
+        else:
+            doc_path = task_manager.get_document_path(task_id)
         if not doc_path:
             raise ValueError("未上传文档")
 
         # 获取审核标准
-        std_path = task_manager.get_standard_path(task_id)
+        if USE_SUPABASE:
+            std_path = task_manager.get_standard_path(task_id, user_id)
+        else:
+            std_path = task_manager.get_standard_path(task_id)
         if not std_path:
             raise ValueError("未上传审核标准")
 
@@ -663,8 +720,11 @@ async def run_review(task_id: str, llm_provider: str = "deepseek"):
         )
 
         # 保存结果
-        task_dir = settings.review.tasks_dir / task_id
-        storage_manager.save_result(result, task_dir)
+        if USE_SUPABASE:
+            storage_manager.save_result(result)
+        else:
+            task_dir = settings.review.tasks_dir / task_id
+            storage_manager.save_result(result, task_dir)
 
         # 更新任务
         task.result = result
@@ -710,8 +770,8 @@ async def start_review(
     if llm_provider == "gemini" and not settings.gemini.api_key:
         raise HTTPException(status_code=400, detail="高级智能模式未配置，请联系管理员")
 
-    # 启动后台任务，传递 llm_provider 参数
-    background_tasks.add_task(run_review, task_id, llm_provider)
+    # 启动后台任务，传递 user_id 和 llm_provider 参数
+    background_tasks.add_task(run_review, task_id, user_id, llm_provider)
 
     task.update_status("reviewing", "审阅任务已启动")
     task.update_progress("analyzing", 0, "正在启动...")
@@ -771,8 +831,11 @@ async def get_result(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    task_dir = settings.review.tasks_dir / task_id
-    result = storage_manager.load_result(task_dir)
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
 
     if not result:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -791,8 +854,11 @@ async def update_modification(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    task_dir = settings.review.tasks_dir / task_id
-    result = storage_manager.load_result(task_dir)
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
 
     if not result:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -812,7 +878,10 @@ async def update_modification(
         raise HTTPException(status_code=404, detail="修改建议不存在")
 
     # 保存更新
-    storage_manager.update_result(task_dir, result)
+    if USE_SUPABASE:
+        storage_manager.update_result(task_id, result)
+    else:
+        storage_manager.update_result(task_dir, result)
 
     return {"message": "更新成功"}
 
@@ -829,8 +898,11 @@ async def update_action(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    task_dir = settings.review.tasks_dir / task_id
-    result = storage_manager.load_result(task_dir)
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
 
     if not result:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -863,7 +935,10 @@ async def update_action(
         raise HTTPException(status_code=404, detail="行动建议不存在")
 
     # 保存更新
-    storage_manager.update_result(task_dir, result)
+    if USE_SUPABASE:
+        storage_manager.update_result(task_id, result)
+    else:
+        storage_manager.update_result(task_dir, result)
 
     return {"message": "更新成功"}
 
@@ -873,8 +948,11 @@ async def update_action(
 @app.get("/api/tasks/{task_id}/export/json")
 async def export_json(task_id: str):
     """导出 JSON"""
-    task_dir = settings.review.tasks_dir / task_id
-    json_content = storage_manager.export_to_json(task_dir)
+    if USE_SUPABASE:
+        json_content = storage_manager.export_to_json(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        json_content = storage_manager.export_to_json(task_dir)
 
     if not json_content:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -891,8 +969,11 @@ async def export_json(task_id: str):
 @app.get("/api/tasks/{task_id}/export/excel")
 async def export_excel(task_id: str):
     """导出 Excel"""
-    task_dir = settings.review.tasks_dir / task_id
-    excel_content = storage_manager.export_to_excel(task_dir)
+    if USE_SUPABASE:
+        excel_content = storage_manager.export_to_excel(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        excel_content = storage_manager.export_to_excel(task_dir)
 
     if not excel_content:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -909,8 +990,11 @@ async def export_excel(task_id: str):
 @app.get("/api/tasks/{task_id}/export/csv")
 async def export_csv(task_id: str):
     """导出 CSV"""
-    task_dir = settings.review.tasks_dir / task_id
-    csv_content = storage_manager.export_to_csv(task_dir)
+    if USE_SUPABASE:
+        csv_content = storage_manager.export_to_csv(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        csv_content = storage_manager.export_to_csv(task_dir)
 
     if not csv_content:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -927,8 +1011,11 @@ async def export_csv(task_id: str):
 @app.get("/api/tasks/{task_id}/export/report")
 async def export_report(task_id: str):
     """导出 Markdown 摘要报告"""
-    task_dir = settings.review.tasks_dir / task_id
-    result = storage_manager.load_result(task_dir)
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
 
     if not result:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
@@ -951,9 +1038,13 @@ class ExportRedlineRequest(BaseModel):
 
 
 @app.post("/api/tasks/{task_id}/export/redline")
-async def export_redline(task_id: str, request: ExportRedlineRequest = None):
+async def export_redline(
+    task_id: str,
+    request: ExportRedlineRequest = None,
+    user_id: str = Depends(get_current_user),
+):
     """
-    导出带修订标记的 Word 文档
+    导出带修订标记的 Word 文档（需要登录）
 
     将用户确认的修改建议以 Track Changes 形式应用到原始文档。
     可选择将行动建议作为批注添加到对应风险点位置。
@@ -964,7 +1055,10 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 检查原始文档
-    doc_path = task_manager.get_document_path(task_id)
+    if USE_SUPABASE:
+        doc_path = task_manager.get_document_path(task_id, user_id)
+    else:
+        doc_path = task_manager.get_document_path(task_id)
     if not doc_path:
         raise HTTPException(status_code=400, detail="未找到原始文档")
 
@@ -975,8 +1069,11 @@ async def export_redline(task_id: str, request: ExportRedlineRequest = None):
         )
 
     # 获取审阅结果
-    task_dir = settings.review.tasks_dir / task_id
-    result = storage_manager.load_result(task_dir)
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
 
     if not result:
         raise HTTPException(status_code=404, detail="暂无审阅结果")
