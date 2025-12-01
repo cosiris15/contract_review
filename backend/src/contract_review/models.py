@@ -349,8 +349,10 @@ class ReviewTask(BaseModel):
     language: Language = "zh-CN"  # 审阅语言
 
     # 文件路径
-    document_filename: Optional[str] = None  # 上传的文档文件名
-    standard_filename: Optional[str] = None  # 上传的审核标准文件名
+    document_filename: Optional[str] = None  # 上传的文档文件名（原始名，用于显示）
+    document_storage_name: Optional[str] = None  # 文档存储名（安全名，用于 Storage）
+    standard_filename: Optional[str] = None  # 上传的审核标准文件名（原始名，用于显示）
+    standard_storage_name: Optional[str] = None  # 标准存储名（安全名，用于 Storage）
     standard_template: Optional[str] = None  # 使用的默认模板名称
 
     # 业务条线（可选）

@@ -13,8 +13,10 @@ CREATE TABLE tasks (
     status TEXT NOT NULL DEFAULT 'created',
     message TEXT,
     progress JSONB DEFAULT '{"stage": "idle", "percentage": 0, "message": ""}',
-    document_filename TEXT,
-    standard_filename TEXT,
+    document_filename TEXT,  -- 原始文件名（用于显示）
+    document_storage_name TEXT,  -- 安全存储名（UUID+扩展名，用于 Storage）
+    standard_filename TEXT,  -- 原始文件名（用于显示）
+    standard_storage_name TEXT,  -- 安全存储名（UUID+扩展名，用于 Storage）
     standard_template TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

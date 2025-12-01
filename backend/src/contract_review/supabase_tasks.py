@@ -44,7 +44,9 @@ class SupabaseTaskManager:
             message=row.get("message"),
             progress=ReviewTaskProgress(**progress_data) if progress_data else ReviewTaskProgress(),
             document_filename=row.get("document_filename"),
+            document_storage_name=row.get("document_storage_name"),
             standard_filename=row.get("standard_filename"),
+            standard_storage_name=row.get("standard_storage_name"),
             standard_template=row.get("standard_template"),
             created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")) if row.get("created_at") else datetime.now(),
             updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")) if row.get("updated_at") else datetime.now(),
@@ -63,7 +65,9 @@ class SupabaseTaskManager:
             "message": task.message,
             "progress": task.progress.model_dump() if task.progress else {},
             "document_filename": task.document_filename,
+            "document_storage_name": task.document_storage_name,
             "standard_filename": task.standard_filename,
+            "standard_storage_name": task.standard_storage_name,
             "standard_template": task.standard_template,
         }
 
@@ -190,6 +194,22 @@ class SupabaseTaskManager:
         """构建存储路径"""
         return f"{user_id}/{task_id}/{folder}/{filename}"
 
+    def _get_safe_storage_name(self, filename: str) -> str:
+        """
+        生成安全的存储文件名（避免中文等特殊字符）
+
+        Args:
+            filename: 原始文件名
+
+        Returns:
+            安全的存储文件名（UUID + 扩展名）
+        """
+        # 提取文件扩展名
+        ext = Path(filename).suffix.lower() if '.' in filename else ''
+        # 生成 UUID 作为存储文件名
+        safe_name = f"{uuid4().hex}{ext}"
+        return safe_name
+
     def save_document(self, task_id: str, user_id: str, filename: str, content: bytes) -> str:
         """
         保存上传的文档到 Supabase Storage
@@ -197,13 +217,15 @@ class SupabaseTaskManager:
         Args:
             task_id: 任务 ID
             user_id: 用户 ID
-            filename: 文件名
+            filename: 文件名（原始文件名，可能包含中文）
             content: 文件内容
 
         Returns:
             存储路径
         """
-        storage_path = self._get_storage_path(user_id, task_id, "documents", filename)
+        # 生成安全的存储文件名（避免中文等特殊字符导致的 InvalidKey 错误）
+        safe_filename = self._get_safe_storage_name(filename)
+        storage_path = self._get_storage_path(user_id, task_id, "documents", safe_filename)
 
         # 删除之前的文档
         try:
@@ -221,9 +243,10 @@ class SupabaseTaskManager:
             file_options={"content-type": "application/octet-stream", "upsert": "true"}
         )
 
-        # 更新任务
+        # 更新任务（保存原始文件名和安全存储名）
         self.client.table("tasks").update({
-            "document_filename": filename,
+            "document_filename": filename,  # 原始文件名用于显示
+            "document_storage_name": safe_filename,  # 安全存储名用于下载
             "updated_at": datetime.now().isoformat(),
         }).eq("id", task_id).execute()
 
@@ -236,13 +259,15 @@ class SupabaseTaskManager:
         Args:
             task_id: 任务 ID
             user_id: 用户 ID
-            filename: 文件名
+            filename: 文件名（原始文件名，可能包含中文）
             content: 文件内容
 
         Returns:
             存储路径
         """
-        storage_path = self._get_storage_path(user_id, task_id, "standards", filename)
+        # 生成安全的存储文件名（避免中文等特殊字符导致的 InvalidKey 错误）
+        safe_filename = self._get_safe_storage_name(filename)
+        storage_path = self._get_storage_path(user_id, task_id, "standards", safe_filename)
 
         # 删除之前的标准
         try:
@@ -260,9 +285,10 @@ class SupabaseTaskManager:
             file_options={"content-type": "application/octet-stream", "upsert": "true"}
         )
 
-        # 更新任务
+        # 更新任务（保存原始文件名和安全存储名）
         self.client.table("tasks").update({
-            "standard_filename": filename,
+            "standard_filename": filename,  # 原始文件名用于显示
+            "standard_storage_name": safe_filename,  # 安全存储名用于下载
             "standard_template": None,
             "updated_at": datetime.now().isoformat(),
         }).eq("id", task_id).execute()
@@ -284,7 +310,9 @@ class SupabaseTaskManager:
         if not task or not task.document_filename:
             return None
 
-        storage_path = self._get_storage_path(user_id, task_id, "documents", task.document_filename)
+        # 优先使用安全存储名，兼容旧数据使用原始文件名
+        storage_name = task.document_storage_name or task.document_filename
+        storage_path = self._get_storage_path(user_id, task_id, "documents", storage_name)
 
         try:
             # 下载到临时目录
@@ -292,6 +320,7 @@ class SupabaseTaskManager:
 
             local_dir = self._temp_dir / task_id / "documents"
             local_dir.mkdir(parents=True, exist_ok=True)
+            # 本地保存时使用原始文件名（方便后续处理识别文件类型）
             local_path = local_dir / task.document_filename
             local_path.write_bytes(response)
 
@@ -315,7 +344,9 @@ class SupabaseTaskManager:
         if not task or not task.standard_filename:
             return None
 
-        storage_path = self._get_storage_path(user_id, task_id, "standards", task.standard_filename)
+        # 优先使用安全存储名，兼容旧数据使用原始文件名
+        storage_name = task.standard_storage_name or task.standard_filename
+        storage_path = self._get_storage_path(user_id, task_id, "standards", storage_name)
 
         try:
             # 下载到临时目录
@@ -323,6 +354,7 @@ class SupabaseTaskManager:
 
             local_dir = self._temp_dir / task_id / "standards"
             local_dir.mkdir(parents=True, exist_ok=True)
+            # 本地保存时使用原始文件名（方便后续处理识别文件类型）
             local_path = local_dir / task.standard_filename
             local_path.write_bytes(response)
 
