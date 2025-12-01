@@ -163,18 +163,29 @@
               </div>
             </div>
 
-            <!-- 特殊要求输入（可选） -->
-            <div class="special-requirements">
+            <!-- 特殊要求输入（可选但优先级最高） -->
+            <div class="special-requirements" :class="{ 'has-content': specialRequirements.trim() }">
               <div class="special-header" @click="showSpecialInput = !showSpecialInput">
                 <el-icon><Edit /></el-icon>
                 <span>本次特殊要求</span>
-                <el-tag size="small" type="info">可选</el-tag>
+                <el-tag size="small" type="warning">最高优先级</el-tag>
                 <el-icon class="expand-icon" :class="{ expanded: showSpecialInput }">
                   <ArrowDown />
                 </el-icon>
               </div>
               <el-collapse-transition>
                 <div v-show="showSpecialInput" class="special-content">
+                  <el-alert
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    class="priority-alert"
+                  >
+                    <template #title>
+                      <span class="priority-alert-title">特殊要求优先级说明</span>
+                    </template>
+                    当特殊要求与审阅标准或业务条线背景信息冲突时，将以特殊要求为准。
+                  </el-alert>
                   <el-input
                     v-model="specialRequirements"
                     type="textarea"
@@ -183,7 +194,7 @@
                   />
                   <div class="special-actions">
                     <el-button
-                      type="primary"
+                      type="warning"
                       size="small"
                       :loading="merging"
                       :disabled="!specialRequirements.trim() || !selectedStandards.length"
@@ -1857,6 +1868,12 @@ async function applyStandards() {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
   overflow: hidden;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.special-requirements.has-content {
+  border-color: var(--el-color-warning);
+  box-shadow: 0 0 0 2px var(--el-color-warning-light-8);
 }
 
 .special-header {
@@ -1870,13 +1887,26 @@ async function applyStandards() {
   transition: background 0.2s;
 }
 
+.special-requirements.has-content .special-header {
+  background: var(--el-color-warning-light-9);
+}
+
 .special-header:hover {
   background: var(--color-bg-secondary);
+}
+
+.special-requirements.has-content .special-header:hover {
+  background: var(--el-color-warning-light-8);
 }
 
 .special-header span {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+
+.special-requirements.has-content .special-header span {
+  color: var(--el-color-warning-dark-2);
+  font-weight: 500;
 }
 
 .expand-icon {
@@ -1891,6 +1921,14 @@ async function applyStandards() {
 .special-content {
   padding: var(--spacing-4);
   background: var(--color-bg-card);
+}
+
+.priority-alert {
+  margin-bottom: var(--spacing-3);
+}
+
+.priority-alert-title {
+  font-weight: 500;
 }
 
 .special-actions {

@@ -230,11 +230,18 @@ def build_risk_identification_messages(
         if business_context_text:
             business_section = f"""
 {business_context_text}
+【信息优先级说明】
+本次审阅中信息来源的优先级从高到低依次为：
+1. 审核标准（已整合特殊要求，优先级最高）
+2. 业务条线背景信息（优先级次之）
+
+说明：如果用户在本次任务中输入了特殊要求，这些要求已被整合到审核标准中。当审核标准的描述与业务背景信息存在冲突时，以审核标准为准。
+
 【业务上下文与审核标准的关系】
 - 业务上下文说明"为什么这些条款对我方重要"，帮助您理解风险的业务影响
 - 审核标准说明"如何判断条款是否有问题"，是您进行专业判断的依据
 - 审阅时应结合两者：用业务视角评估风险重要性，用标准进行专业判断
-- 优先关注业务背景中标有★的高优先级要点
+- 优先关注业务背景中标有★的高优先级要点，但如果审核标准有不同指示，以标准为准
 
 """
 
@@ -280,11 +287,18 @@ def build_risk_identification_messages(
         if business_context_text:
             business_section = f"""
 {business_context_text}
+【Priority Order】
+Information sources for this review are prioritized as follows (highest to lowest):
+1. Review Standards (may include merged special requirements, highest priority)
+2. Business Context (secondary priority)
+
+Note: If the user entered special requirements for this task, they have been merged into the review standards. When review standards conflict with business context, follow the standards.
+
 【Business Context and Review Standards Relationship】
 - Business context explains "why these clauses matter to us", helping you understand the business impact of risks
 - Review standards explain "how to determine if a clause is problematic", serving as the basis for professional judgment
 - Combine both during review: assess risk importance from business perspective, make professional judgments using standards
-- Prioritize items marked with ★ in the business context
+- Prioritize items marked with ★ in the business context, but if review standards indicate otherwise, follow the standards
 
 """
 
@@ -847,13 +861,22 @@ def build_merge_special_requirements_messages(
 - 我方身份：{our_party}
 - 材料类型：{material_type_cn}
 
+【优先级说明】
+在本次审阅中，信息来源的优先级从高到低依次为：
+1. 特殊要求（最高优先级）- 用户本次输入的特定审核要求
+2. 业务条线背景信息（中等优先级）- 业务场景的通用关注点
+3. 审阅标准（基础优先级）- 通用的审核标准库
+
+当信息存在冲突时，以优先级高的信息为准。
+
 【整合原则】
-1. 特殊要求的优先级高于一般标准，应该优先体现用户的特殊关注点
+1. 特殊要求的优先级最高，当与审核标准或业务背景信息冲突时，以特殊要求为准
 2. 可以通过以下方式整合：
    - 修改现有标准的描述，加入特殊要求的关注点
    - 提升相关标准的风险等级（如果特殊要求强调了某方面的重要性）
    - 新增标准条目（如果特殊要求涉及现有标准未覆盖的内容）
    - 删除不适用的标准（如果特殊要求明确排除了某些内容）
+   - 覆盖业务背景中的默认设定（如果特殊要求与业务场景的通用做法不同）
 3. 保持标准的专业性和可操作性
 4. 每条标准的 description 应该清晰、具体，便于后续审阅时使用
 
