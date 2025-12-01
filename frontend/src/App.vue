@@ -21,6 +21,10 @@
                 <el-icon><Setting /></el-icon>
                 <span>标准管理</span>
               </router-link>
+              <router-link to="/business" class="nav-link">
+                <el-icon><Briefcase /></el-icon>
+                <span>业务管理</span>
+              </router-link>
             </nav>
           </div>
           <div class="header-right">
@@ -59,7 +63,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
-import { HomeFilled, FolderOpened, Setting, Tools } from '@element-plus/icons-vue'
+import { HomeFilled, FolderOpened, Setting, Tools, Briefcase } from '@element-plus/icons-vue'
 import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from '@clerk/vue'
 import SettingsDrawer from '@/components/common/SettingsDrawer.vue'
 import { useSettingsStore } from '@/store/settings'

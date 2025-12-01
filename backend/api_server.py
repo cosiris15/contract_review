@@ -38,6 +38,7 @@ from src.contract_review.models import (
 from src.contract_review.result_formatter import ResultFormatter, generate_summary_report
 from src.contract_review.review_engine import ReviewEngine
 from src.contract_review.standard_library import StandardLibraryManager
+from src.contract_review.business_library import BusinessLibraryManager
 from src.contract_review.redline_generator import generate_redline_document
 from src.contract_review.standard_parser import parse_standard_file
 from src.contract_review.storage import StorageManager
@@ -133,6 +134,10 @@ formatter = ResultFormatter()
 # 标准库目录
 STANDARD_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "standard_library"
 standard_library_manager = StandardLibraryManager(STANDARD_LIBRARY_DIR)
+
+# 业务条线库目录
+BUSINESS_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "business_library"
+business_library_manager = BusinessLibraryManager(BUSINESS_LIBRARY_DIR)
 
 # LLM 客户端
 llm_client = LLMClient(settings.llm)
@@ -683,13 +688,19 @@ async def use_template(
 
 # ==================== 审阅执行 API ====================
 
-async def run_review(task_id: str, user_id: str, llm_provider: str = "deepseek"):
+async def run_review(
+    task_id: str,
+    user_id: str,
+    llm_provider: str = "deepseek",
+    business_line_id: Optional[str] = None,
+):
     """后台执行审阅任务
 
     Args:
         task_id: 任务 ID
         user_id: 用户 ID（用于 Supabase 存储路径）
         llm_provider: LLM 提供者，可选 "deepseek" 或 "gemini"
+        business_line_id: 业务条线 ID（可选，用于获取业务上下文）
     """
     task = task_manager.get_task(task_id)
     if not task:
@@ -722,6 +733,27 @@ async def run_review(task_id: str, user_id: str, llm_provider: str = "deepseek")
         # 解析审核标准
         standard_set = parse_standard_file(std_path)
 
+        # 获取业务上下文（如果指定了业务条线）
+        business_context = None
+        if business_line_id:
+            business_line = business_library_manager.get_business_line(business_line_id)
+            if business_line:
+                business_context = {
+                    "business_line_id": business_line.id,
+                    "business_line_name": business_line.name,
+                    "industry": business_line.industry,
+                    "contexts": [
+                        {
+                            "category": ctx.category,
+                            "item": ctx.item,
+                            "description": ctx.description,
+                            "priority": ctx.priority,
+                        }
+                        for ctx in business_line.contexts
+                    ],
+                }
+                logger.info(f"使用业务条线: {business_line.name} ({len(business_line.contexts)} 条背景信息)")
+
         # 进度回调
         def progress_callback(stage: str, percentage: int, message: str):
             task.update_progress(stage, percentage, message)
@@ -737,6 +769,7 @@ async def run_review(task_id: str, user_id: str, llm_provider: str = "deepseek")
             task_id=task_id,
             language=getattr(task, 'language', 'zh-CN'),
             progress_callback=progress_callback,
+            business_context=business_context,
         )
 
         # 保存结果
@@ -764,6 +797,7 @@ async def start_review(
     task_id: str,
     background_tasks: BackgroundTasks,
     llm_provider: str = Query(default="deepseek", regex="^(deepseek|gemini)$"),
+    business_line_id: Optional[str] = Query(default=None, description="业务条线ID（可选）"),
     user_id: str = Depends(get_current_user),
 ):
     """开始审阅（需要登录）
@@ -771,6 +805,7 @@ async def start_review(
     Args:
         task_id: 任务 ID
         llm_provider: LLM 提供者，可选 "deepseek"（初级）或 "gemini"（高级）
+        business_line_id: 业务条线 ID（可选，用于提供业务上下文）
     """
     print(f"User {user_id} is starting review for task {task_id}...")
     task = task_manager.get_task(task_id)
@@ -790,8 +825,15 @@ async def start_review(
     if llm_provider == "gemini" and not settings.gemini.api_key:
         raise HTTPException(status_code=400, detail="高级智能模式未配置，请联系管理员")
 
-    # 启动后台任务，传递 user_id 和 llm_provider 参数
-    background_tasks.add_task(run_review, task_id, user_id, llm_provider)
+    # 验证业务条线（如果提供了）
+    if business_line_id:
+        business_line = business_library_manager.get_business_line(business_line_id)
+        if not business_line:
+            raise HTTPException(status_code=400, detail="指定的业务条线不存在")
+        logger.info(f"任务 {task_id} 将使用业务条线: {business_line.name}")
+
+    # 启动后台任务，传递 user_id、llm_provider 和 business_line_id 参数
+    background_tasks.add_task(run_review, task_id, user_id, llm_provider, business_line_id)
 
     task.update_status("reviewing", "审阅任务已启动")
     task.update_progress("analyzing", 0, "正在启动...")
@@ -2483,6 +2525,359 @@ async def merge_special_requirements(request: MergeSpecialRequirementsRequest):
     except Exception as e:
         logger.error(f"整合特殊要求失败: {e}")
         raise HTTPException(status_code=500, detail=f"整合失败: {str(e)}")
+
+
+# ==================== 业务条线管理 API ====================
+
+class BusinessLineCreate(BaseModel):
+    """创建业务条线请求"""
+    name: str
+    description: str = ""
+    industry: str = ""
+    language: str = "zh-CN"
+
+
+class BusinessLineUpdate(BaseModel):
+    """更新业务条线请求"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    industry: Optional[str] = None
+
+
+class BusinessContextCreate(BaseModel):
+    """创建业务背景信息请求"""
+    category: str  # core_focus, typical_risks, compliance, business_practices, negotiation_priorities
+    item: str
+    description: str
+    priority: str = "medium"  # high, medium, low
+    tags: List[str] = []
+
+
+class BusinessContextUpdate(BaseModel):
+    """更新业务背景信息请求"""
+    category: Optional[str] = None
+    item: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class BusinessContextBatchCreate(BaseModel):
+    """批量创建业务背景信息请求"""
+    contexts: List[BusinessContextCreate]
+
+
+class BusinessLineResponse(BaseModel):
+    """业务条线响应"""
+    id: str
+    name: str
+    description: str
+    industry: str
+    is_preset: bool
+    language: str
+    context_count: int
+    created_at: str
+    updated_at: str
+
+
+class BusinessContextResponse(BaseModel):
+    """业务背景信息响应"""
+    id: str
+    business_line_id: str
+    category: str
+    item: str
+    description: str
+    priority: str
+    tags: List[str]
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class BusinessLineDetailResponse(BusinessLineResponse):
+    """业务条线详情响应（含背景信息）"""
+    contexts: List[BusinessContextResponse]
+
+
+@app.get("/api/business-lines", response_model=List[BusinessLineResponse])
+async def list_business_lines(
+    language: Optional[str] = Query(default=None),
+    include_preset: bool = Query(default=True),
+    user_id: str = Depends(get_current_user),
+):
+    """获取业务条线列表（需要登录）"""
+    lines = business_library_manager.list_business_lines(
+        user_id=user_id,
+        language=language,
+        include_preset=include_preset,
+    )
+    return [
+        BusinessLineResponse(
+            id=line.id,
+            name=line.name,
+            description=line.description,
+            industry=line.industry,
+            is_preset=line.is_preset,
+            language=line.language,
+            context_count=line.context_count,
+            created_at=line.created_at.isoformat() if line.created_at else "",
+            updated_at=line.updated_at.isoformat() if line.updated_at else "",
+        )
+        for line in lines
+    ]
+
+
+@app.get("/api/business-lines/{line_id}", response_model=BusinessLineDetailResponse)
+async def get_business_line(
+    line_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """获取业务条线详情（含背景信息）"""
+    line = business_library_manager.get_business_line(line_id)
+    if not line:
+        raise HTTPException(status_code=404, detail="业务条线不存在")
+
+    return BusinessLineDetailResponse(
+        id=line.id,
+        name=line.name,
+        description=line.description,
+        industry=line.industry,
+        is_preset=line.is_preset,
+        language=line.language,
+        context_count=line.context_count,
+        created_at=line.created_at.isoformat() if line.created_at else "",
+        updated_at=line.updated_at.isoformat() if line.updated_at else "",
+        contexts=[
+            BusinessContextResponse(
+                id=ctx.id,
+                business_line_id=ctx.business_line_id or "",
+                category=ctx.category,
+                item=ctx.item,
+                description=ctx.description,
+                priority=ctx.priority,
+                tags=ctx.tags,
+                created_at=ctx.created_at.isoformat() if ctx.created_at else None,
+                updated_at=ctx.updated_at.isoformat() if ctx.updated_at else None,
+            )
+            for ctx in line.contexts
+        ],
+    )
+
+
+@app.post("/api/business-lines", response_model=BusinessLineResponse)
+async def create_business_line(
+    request: BusinessLineCreate,
+    user_id: str = Depends(get_current_user),
+):
+    """创建业务条线（需要登录）"""
+    line = business_library_manager.create_business_line(
+        name=request.name,
+        user_id=user_id,
+        description=request.description,
+        industry=request.industry,
+        is_preset=False,  # 用户创建的不能是预设
+        language=request.language,
+    )
+    return BusinessLineResponse(
+        id=line.id,
+        name=line.name,
+        description=line.description,
+        industry=line.industry,
+        is_preset=line.is_preset,
+        language=line.language,
+        context_count=0,
+        created_at=line.created_at.isoformat() if line.created_at else "",
+        updated_at=line.updated_at.isoformat() if line.updated_at else "",
+    )
+
+
+@app.put("/api/business-lines/{line_id}", response_model=BusinessLineResponse)
+async def update_business_line(
+    line_id: str,
+    request: BusinessLineUpdate,
+    user_id: str = Depends(get_current_user),
+):
+    """更新业务条线（需要登录）"""
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    line = business_library_manager.update_business_line(line_id, updates)
+    if not line:
+        raise HTTPException(status_code=404, detail="业务条线不存在或无法编辑")
+
+    context_count = business_library_manager._load_library().get_line_context_count(line_id)
+    return BusinessLineResponse(
+        id=line.id,
+        name=line.name,
+        description=line.description,
+        industry=line.industry,
+        is_preset=line.is_preset,
+        language=line.language,
+        context_count=context_count,
+        created_at=line.created_at.isoformat() if line.created_at else "",
+        updated_at=line.updated_at.isoformat() if line.updated_at else "",
+    )
+
+
+@app.delete("/api/business-lines/{line_id}")
+async def delete_business_line(
+    line_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """删除业务条线（需要登录）"""
+    success = business_library_manager.delete_business_line(line_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="业务条线不存在或无法删除")
+    return {"message": "删除成功"}
+
+
+# ==================== 业务背景信息管理 API ====================
+
+@app.get("/api/business-lines/{line_id}/contexts", response_model=List[BusinessContextResponse])
+async def list_business_contexts(
+    line_id: str,
+    category: Optional[str] = Query(default=None),
+    user_id: str = Depends(get_current_user),
+):
+    """获取业务条线的背景信息列表"""
+    contexts = business_library_manager.list_contexts(line_id, category=category)
+    return [
+        BusinessContextResponse(
+            id=ctx.id,
+            business_line_id=ctx.business_line_id or "",
+            category=ctx.category,
+            item=ctx.item,
+            description=ctx.description,
+            priority=ctx.priority,
+            tags=ctx.tags,
+            created_at=ctx.created_at.isoformat() if ctx.created_at else None,
+            updated_at=ctx.updated_at.isoformat() if ctx.updated_at else None,
+        )
+        for ctx in contexts
+    ]
+
+
+@app.post("/api/business-lines/{line_id}/contexts", response_model=BusinessContextResponse)
+async def add_business_context(
+    line_id: str,
+    request: BusinessContextCreate,
+    user_id: str = Depends(get_current_user),
+):
+    """添加业务背景信息（需要登录）"""
+    from src.contract_review.models import BusinessContext
+
+    # 检查业务条线是否存在
+    line = business_library_manager.get_business_line(line_id)
+    if not line:
+        raise HTTPException(status_code=404, detail="业务条线不存在")
+
+    # 预设业务条线不能添加内容
+    if line.is_preset:
+        raise HTTPException(status_code=400, detail="预设业务条线不能添加内容")
+
+    context = BusinessContext(
+        business_line_id=line_id,
+        category=request.category,
+        item=request.item,
+        description=request.description,
+        priority=request.priority,
+        tags=request.tags,
+    )
+
+    context_id = business_library_manager.add_context(context)
+    created_ctx = business_library_manager.get_context(context_id)
+
+    return BusinessContextResponse(
+        id=created_ctx.id,
+        business_line_id=created_ctx.business_line_id or "",
+        category=created_ctx.category,
+        item=created_ctx.item,
+        description=created_ctx.description,
+        priority=created_ctx.priority,
+        tags=created_ctx.tags,
+        created_at=created_ctx.created_at.isoformat() if created_ctx.created_at else None,
+        updated_at=created_ctx.updated_at.isoformat() if created_ctx.updated_at else None,
+    )
+
+
+@app.post("/api/business-lines/{line_id}/contexts/batch")
+async def add_business_contexts_batch(
+    line_id: str,
+    request: BusinessContextBatchCreate,
+    user_id: str = Depends(get_current_user),
+):
+    """批量添加业务背景信息（需要登录）"""
+    from src.contract_review.models import BusinessContext
+
+    # 检查业务条线是否存在
+    line = business_library_manager.get_business_line(line_id)
+    if not line:
+        raise HTTPException(status_code=404, detail="业务条线不存在")
+
+    if line.is_preset:
+        raise HTTPException(status_code=400, detail="预设业务条线不能添加内容")
+
+    contexts = [
+        BusinessContext(
+            business_line_id=line_id,
+            category=ctx.category,
+            item=ctx.item,
+            description=ctx.description,
+            priority=ctx.priority,
+            tags=ctx.tags,
+        )
+        for ctx in request.contexts
+    ]
+
+    ids = business_library_manager.add_contexts_batch(contexts)
+    return {"message": f"成功添加 {len(ids)} 条背景信息", "ids": ids}
+
+
+@app.put("/api/business-contexts/{context_id}", response_model=BusinessContextResponse)
+async def update_business_context(
+    context_id: str,
+    request: BusinessContextUpdate,
+    user_id: str = Depends(get_current_user),
+):
+    """更新业务背景信息（需要登录）"""
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    ctx = business_library_manager.update_context(context_id, updates)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="背景信息不存在或无法编辑")
+
+    return BusinessContextResponse(
+        id=ctx.id,
+        business_line_id=ctx.business_line_id or "",
+        category=ctx.category,
+        item=ctx.item,
+        description=ctx.description,
+        priority=ctx.priority,
+        tags=ctx.tags,
+        created_at=ctx.created_at.isoformat() if ctx.created_at else None,
+        updated_at=ctx.updated_at.isoformat() if ctx.updated_at else None,
+    )
+
+
+@app.delete("/api/business-contexts/{context_id}")
+async def delete_business_context(
+    context_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """删除业务背景信息（需要登录）"""
+    success = business_library_manager.delete_context(context_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="背景信息不存在或无法删除")
+    return {"message": "删除成功"}
+
+
+@app.get("/api/business-categories")
+async def get_business_categories(
+    language: str = Query(default="zh-CN"),
+):
+    """获取业务背景分类列表"""
+    categories = business_library_manager.get_categories()
+    display_names = business_library_manager.get_category_display_names(language)
+    return [
+        {"id": cat, "name": display_names.get(cat, cat)}
+        for cat in categories
+    ]
 
 
 # ==================== 健康检查 ====================

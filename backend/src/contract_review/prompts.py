@@ -9,11 +9,11 @@ Prompt 模板模块
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from .models import Language, MaterialType, ReviewStandard, RiskPoint
+from .models import BusinessContext, Language, MaterialType, ReviewStandard, RiskPoint
 
-PROMPT_VERSION = "1.1"
+PROMPT_VERSION = "1.2"  # 升级版本：支持业务上下文
 
 # ==================== 多语言文本映射 ====================
 
@@ -111,6 +111,79 @@ def format_risks_summary(
     return "\n".join(lines)
 
 
+# ==================== 业务上下文格式化 ====================
+
+BUSINESS_CONTEXT_CATEGORY_NAMES = {
+    "zh-CN": {
+        "core_focus": "核心关注点",
+        "typical_risks": "典型风险",
+        "compliance": "合规要求",
+        "business_practices": "业务惯例",
+        "negotiation_priorities": "谈判要点",
+    },
+    "en": {
+        "core_focus": "Core Focus",
+        "typical_risks": "Typical Risks",
+        "compliance": "Compliance Requirements",
+        "business_practices": "Business Practices",
+        "negotiation_priorities": "Negotiation Priorities",
+    }
+}
+
+
+def format_business_context_for_prompt(
+    business_line_name: str,
+    contexts: List[BusinessContext],
+    language: Language = "zh-CN",
+) -> str:
+    """
+    将业务背景信息格式化为 Prompt 文本
+
+    Args:
+        business_line_name: 业务条线名称
+        contexts: 业务背景信息列表
+        language: 语言
+
+    Returns:
+        格式化后的文本
+    """
+    if not contexts:
+        return ""
+
+    category_names = BUSINESS_CONTEXT_CATEGORY_NAMES.get(language, BUSINESS_CONTEXT_CATEGORY_NAMES["zh-CN"])
+
+    # 按分类分组
+    by_category: Dict[str, List[str]] = {}
+    for ctx in contexts:
+        cat = ctx.category
+        if cat not in by_category:
+            by_category[cat] = []
+        # 高优先级标记星号
+        priority_marker = "★ " if ctx.priority == "high" else ""
+        by_category[cat].append(f"- {priority_marker}{ctx.item}：{ctx.description}")
+
+    lines = []
+    if language == "zh-CN":
+        lines.append(f"【业务背景：{business_line_name}】")
+        lines.append("本次审阅服务于以下业务场景，请在审阅时充分考虑业务特性：")
+    else:
+        lines.append(f"【Business Context: {business_line_name}】")
+        lines.append("This review serves the following business scenario. Please consider these business characteristics:")
+
+    lines.append("")
+
+    # 按固定顺序输出各分类
+    category_order = ["core_focus", "typical_risks", "compliance", "business_practices", "negotiation_priorities"]
+    for cat in category_order:
+        if cat in by_category:
+            cat_name = category_names.get(cat, cat)
+            lines.append(f"▶ {cat_name}：")
+            lines.extend(by_category[cat])
+            lines.append("")
+
+    return "\n".join(lines)
+
+
 # ==================== Stage 1: 风险识别 Prompt ====================
 
 def build_risk_identification_messages(
@@ -119,6 +192,7 @@ def build_risk_identification_messages(
     material_type: MaterialType,
     review_standards: List[ReviewStandard],
     language: Language = "zh-CN",
+    business_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     构建风险识别 Prompt
@@ -129,6 +203,9 @@ def build_risk_identification_messages(
         material_type: 材料类型（contract/marketing）
         review_standards: 审核标准列表
         language: 审阅语言
+        business_context: 业务上下文（可选）
+            - name: 业务条线名称
+            - contexts: BusinessContext 列表
 
     Returns:
         消息列表
@@ -138,16 +215,39 @@ def build_risk_identification_messages(
     standards_text = format_standards_for_prompt(review_standards, language)
     jurisdiction_instruction = JURISDICTION_INSTRUCTIONS.get(language, "")
 
+    # 格式化业务上下文（如果有）
+    business_context_text = ""
+    if business_context and business_context.get("contexts"):
+        business_context_text = format_business_context_for_prompt(
+            business_context.get("name", ""),
+            business_context.get("contexts", []),
+            language,
+        )
+
     if language == "zh-CN":
+        # 构建业务上下文说明部分
+        business_section = ""
+        if business_context_text:
+            business_section = f"""
+{business_context_text}
+【业务上下文与审核标准的关系】
+- 业务上下文说明"为什么这些条款对我方重要"，帮助您理解风险的业务影响
+- 审核标准说明"如何判断条款是否有问题"，是您进行专业判断的依据
+- 审阅时应结合两者：用业务视角评估风险重要性，用标准进行专业判断
+- 优先关注业务背景中标有★的高优先级要点
+
+"""
+
         system = f"""你是一位资深法务审阅专家，专门负责审阅{material_type_label}文本。
 你的任务是根据给定的审核标准，识别文档中的风险点。
 {jurisdiction_instruction}
-【审阅原则】
+{business_section}【审阅原则】
 1. 严格站在"{our_party}"的立场进行审阅，以保护我方利益为核心目标
 2. 严格按照审核标准逐项检查，不要遗漏任何可能的风险
 3. 对每个风险点提供明确、具体的判定理由
 4. 准确标注风险等级（high/medium/low）
 5. 摘录相关原文片段作为证据
+{("6. 优先关注业务背景中强调的风险关注点" if business_context_text else "")}
 
 【输出格式】
 输出纯 JSON 数组，不要添加 markdown 代码块标记。每个元素包含以下字段：
@@ -176,15 +276,28 @@ def build_risk_identification_messages(
 请根据上述审核标准，识别文档中的所有风险点。以纯 JSON 数组格式输出，不要添加 markdown 代码块。"""
 
     else:  # English
+        business_section = ""
+        if business_context_text:
+            business_section = f"""
+{business_context_text}
+【Business Context and Review Standards Relationship】
+- Business context explains "why these clauses matter to us", helping you understand the business impact of risks
+- Review standards explain "how to determine if a clause is problematic", serving as the basis for professional judgment
+- Combine both during review: assess risk importance from business perspective, make professional judgments using standards
+- Prioritize items marked with ★ in the business context
+
+"""
+
         system = f"""You are a senior legal review expert specializing in {material_type_label} review.
 Your task is to identify risk points in the document based on the given review standards.
 {jurisdiction_instruction}
-【Review Principles】
+{business_section}【Review Principles】
 1. Review strictly from the perspective of "{our_party}" to protect our interests
 2. Check each review standard thoroughly, do not miss any potential risks
 3. Provide clear and specific reasons for each risk identification
 4. Accurately label risk levels (high/medium/low)
 5. Extract relevant original text as evidence
+{("6. Prioritize risk areas emphasized in the business context" if business_context_text else "")}
 
 【Output Format】
 Output a pure JSON array without markdown code block markers. Each element should contain:
@@ -227,6 +340,7 @@ def build_modification_suggestion_messages(
     material_type: MaterialType,
     document_context: str = "",
     language: Language = "zh-CN",
+    business_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     构建修改建议 Prompt
@@ -238,6 +352,7 @@ def build_modification_suggestion_messages(
         material_type: 材料类型
         document_context: 上下文片段（可选）
         language: 审阅语言
+        business_context: 业务上下文（可选）
 
     Returns:
         消息列表
@@ -245,6 +360,21 @@ def build_modification_suggestion_messages(
     texts = TEXTS[language]
     material_type_label = texts["material_type"][material_type]
     risk_level_label = texts["risk_level"].get(risk_point.risk_level, texts["risk_level"]["medium"])
+
+    # 格式化业务上下文中的业务惯例和谈判要点（如果有）
+    business_guidance = ""
+    if business_context and business_context.get("contexts"):
+        contexts = business_context.get("contexts", [])
+        practices = [c for c in contexts if c.category in ("business_practices", "negotiation_priorities")]
+        if practices:
+            if language == "zh-CN":
+                business_guidance = "\n【业务惯例参考】\n修改建议应考虑以下业务惯例：\n"
+                for p in practices[:5]:
+                    business_guidance += f"- {p.item}：{p.description}\n"
+            else:
+                business_guidance = "\n【Business Practice Reference】\nConsider the following business practices:\n"
+                for p in practices[:5]:
+                    business_guidance += f"- {p.item}: {p.description}\n"
 
     if language == "zh-CN":
         system = f"""你是一位资深法务文本修改专家。
@@ -267,7 +397,7 @@ def build_modification_suggestion_messages(
    - 如果只需替换一个词，就只替换那个词
    - 绝不能因为要修改一处就顺便"优化"其他部分
 5. 确保修改后的文本逻辑清晰、表述准确
-
+{business_guidance}
 【输出格式】
 输出纯 JSON 对象，不要添加 markdown 代码块标记，包含以下字段：
 - suggested_text: 建议修改后的完整文本（保留原文未修改的部分，只改动需要修改的词/短语）
@@ -326,7 +456,7 @@ In legal practice, text modifications should follow the "minimal change principl
    - If only a word needs replacement, replace only that word
    - Never "optimize" other parts just because you're modifying one section
 5. Ensure the modified text is logically clear and accurately expressed
-
+{business_guidance}
 【Output Format】
 Output a pure JSON object without markdown code block markers, containing:
 - suggested_text: Complete text after modification (preserve unchanged parts, only modify necessary words/phrases)
@@ -372,6 +502,7 @@ def build_action_recommendation_messages(
     our_party: str,
     material_type: MaterialType,
     language: Language = "zh-CN",
+    business_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     构建行动建议 Prompt
@@ -382,6 +513,7 @@ def build_action_recommendation_messages(
         our_party: 我方身份
         material_type: 材料类型
         language: 审阅语言
+        business_context: 业务上下文（可选）
 
     Returns:
         消息列表
@@ -389,6 +521,23 @@ def build_action_recommendation_messages(
     texts = TEXTS[language]
     material_type_label = texts["material_type"][material_type]
     risks_summary = format_risks_summary(risks, language)
+
+    # 格式化业务上下文中的合规要求和业务惯例（如果有）
+    business_guidance = ""
+    if business_context and business_context.get("contexts"):
+        contexts = business_context.get("contexts", [])
+        relevant = [c for c in contexts if c.category in ("compliance", "business_practices")]
+        if relevant:
+            if language == "zh-CN":
+                business_guidance = "\n【业务合规参考】\n行动建议应考虑以下合规要求和业务惯例：\n"
+                for r in relevant[:6]:
+                    priority_marker = "★ " if r.priority == "high" else ""
+                    business_guidance += f"- {priority_marker}{r.item}：{r.description}\n"
+            else:
+                business_guidance = "\n【Business Compliance Reference】\nConsider the following compliance requirements and business practices:\n"
+                for r in relevant[:6]:
+                    priority_marker = "★ " if r.priority == "high" else ""
+                    business_guidance += f"- {priority_marker}{r.item}: {r.description}\n"
 
     if language == "zh-CN":
         system = f"""你是一位资深法务顾问。
@@ -401,7 +550,7 @@ def build_action_recommendation_messages(
 4. 签署/发布前需要核实的事项
 5. 其他风险防范措施
 6. 后续跟进事项
-
+{business_guidance}
 【输出格式】
 输出纯 JSON 数组，不要添加 markdown 代码块标记。每个元素包含以下字段：
 - related_risk_ids: 关联的风险点ID列表（数组格式）
@@ -443,7 +592,7 @@ Based on the identified risk points, you need to provide action recommendations 
 4. Matters to verify before signing/publishing
 5. Other risk prevention measures
 6. Follow-up items
-
+{business_guidance}
 【Output Format】
 Output a pure JSON array without markdown code block markers. Each element should contain:
 - related_risk_ids: List of related risk point IDs (array format)
@@ -1116,3 +1265,114 @@ def build_collection_recommendation_messages(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+# ==================== 业务条线创建 Prompt ====================
+
+BUSINESS_LINE_CREATION_PROMPTS = {
+    "zh-CN": {
+        "system": """你是一位资深企业法务顾问，擅长分析业务特性并提炼法务审核要点。
+
+## 任务
+根据用户提供的业务信息，生成一套完整的业务背景配置，用于指导合同/营销材料审阅。
+
+## 输出格式要求
+生成 5 个分类的业务背景条目：
+1. core_focus (核心关注点): 该业务线最需要关注的 3-5 个要点
+2. typical_risks (典型风险): 该业务线常见的 5-8 个风险点
+3. compliance (合规要求): 该业务线需要遵守的 2-4 个合规要求
+4. business_practices (业务惯例): 该业务线的 3-5 个通用惯例
+5. negotiation_priorities (谈判要点): 该业务线谈判时的 3-5 个优先事项
+
+## 生成原则
+1. **业务导向**：紧密围绕用户描述的业务特性，不要生成通用的法务常识
+2. **具体可用**：每条背景信息应足够具体，能直接指导审阅
+3. **角色立场**：考虑用户在业务中的典型角色（甲方/乙方/平台方等）
+4. **行业特性**：体现行业特有的风险和关注点
+5. **优先级合理**：每个分类中约 30% 标记为 high 优先级
+
+## 输出格式
+必须输出有效的 JSON 对象：
+{
+  "business_line_name": "建议的业务线名称，不超过15字",
+  "description": "业务线描述，50-100字",
+  "industry": "所属行业",
+  "contexts": [
+    {
+      "category": "core_focus|typical_risks|compliance|business_practices|negotiation_priorities",
+      "item": "要点名称，10-20字",
+      "description": "详细说明，30-80字",
+      "priority": "high|medium|low"
+    }
+  ],
+  "generation_summary": "生成摘要，说明重点覆盖了哪些方面"
+}
+
+只输出 JSON 对象，不要添加 markdown 代码块。""",
+        "user": """## 业务信息
+
+**行业领域**: {industry}
+**业务描述**: {business_description}
+**典型交易对手**: {typical_counterparties}
+**主要合同类型**: {main_contract_types}
+**核心关注点**: {key_concerns}
+**我方典型角色**: {our_typical_role}
+
+请根据以上业务信息，生成完整的业务背景配置。"""
+    },
+    "en": {
+        "system": """You are a senior corporate legal consultant, skilled in analyzing business characteristics and extracting legal review points.
+
+## Task
+Based on the business information provided by the user, generate a complete business context configuration to guide contract/marketing material review.
+
+## Output Format Requirements
+Generate business context items in 5 categories:
+1. core_focus: 3-5 key focus areas for this business line
+2. typical_risks: 5-8 common risk points for this business line
+3. compliance: 2-4 compliance requirements for this business line
+4. business_practices: 3-5 common practices for this business line
+5. negotiation_priorities: 3-5 negotiation priorities for this business line
+
+## Generation Principles
+1. **Business-oriented**: Focus closely on the user's described business characteristics, avoid generic legal knowledge
+2. **Specific and actionable**: Each context item should be specific enough to directly guide reviews
+3. **Role perspective**: Consider the user's typical role in business (Party A/Party B/Platform, etc.)
+4. **Industry characteristics**: Reflect industry-specific risks and focus areas
+5. **Reasonable priority**: About 30% of items in each category should be marked as high priority
+
+## Output Format
+Must output a valid JSON object:
+{
+  "business_line_name": "Suggested business line name, max 30 characters",
+  "description": "Business line description, 50-100 words",
+  "industry": "Industry",
+  "contexts": [
+    {
+      "category": "core_focus|typical_risks|compliance|business_practices|negotiation_priorities",
+      "item": "Item name, 10-30 words",
+      "description": "Detailed description, 30-80 words",
+      "priority": "high|medium|low"
+    }
+  ],
+  "generation_summary": "Generation summary, explain what areas are covered"
+}
+
+Output only JSON object, do not add markdown code blocks.""",
+        "user": """## Business Information
+
+**Industry**: {industry}
+**Business Description**: {business_description}
+**Typical Counterparties**: {typical_counterparties}
+**Main Contract Types**: {main_contract_types}
+**Key Concerns**: {key_concerns}
+**Our Typical Role**: {our_typical_role}
+
+Please generate a complete business context configuration based on the above information."""
+    }
+}
+
+
+def get_business_line_creation_prompts(language: Language = "zh-CN") -> dict:
+    """获取指定语言的业务条线创建提示词"""
+    return BUSINESS_LINE_CREATION_PROMPTS.get(language, BUSINESS_LINE_CREATION_PROMPTS["zh-CN"])

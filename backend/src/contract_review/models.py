@@ -25,6 +25,15 @@ TaskStatus = Literal["created", "uploading", "reviewing", "completed", "failed"]
 # 支持的语言（简化为两种：中文-中国法律体系，英文-普通法体系）
 Language = Literal["zh-CN", "en"]
 
+# 业务背景分类
+BusinessContextCategory = Literal[
+    "core_focus",            # 核心关注点
+    "typical_risks",         # 典型风险
+    "compliance",            # 合规要求
+    "business_practices",    # 业务惯例
+    "negotiation_priorities" # 谈判要点
+]
+
 
 def generate_id() -> str:
     """生成短 UUID"""
@@ -162,6 +171,51 @@ class StandardRecommendation(BaseModel):
     match_reason: str  # 匹配原因
 
 
+# ==================== 业务条线模型 ====================
+
+class BusinessContext(BaseModel):
+    """业务背景信息条目"""
+    id: str = Field(default_factory=generate_id)
+    business_line_id: Optional[str] = None  # 所属业务条线ID
+    category: BusinessContextCategory  # 分类
+    item: str  # 要点名称
+    description: str  # 详细说明
+    priority: RiskLevel = "medium"  # 重要程度: high/medium/low
+    tags: List[str] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class BusinessLine(BaseModel):
+    """业务条线"""
+    id: str = Field(default_factory=generate_id)
+    user_id: Optional[str] = None  # 所属用户ID，NULL表示系统预设
+    name: str  # 业务线名称
+    description: str = ""  # 业务线描述
+    industry: str = ""  # 所属行业
+    is_preset: bool = False  # 是否为系统预设
+    language: Language = "zh-CN"
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class BusinessLineWithContexts(BusinessLine):
+    """带背景信息的业务条线（用于API响应）"""
+    contexts: List[BusinessContext] = Field(default_factory=list)
+    context_count: int = 0
+
+    def get_contexts_by_category(self, category: BusinessContextCategory) -> List[BusinessContext]:
+        """按分类获取背景信息"""
+        return [c for c in self.contexts if c.category == category]
+
+
+class BusinessLineRecommendation(BaseModel):
+    """业务条线推荐结果"""
+    business_line_id: str
+    relevance_score: float  # 0-1 相关性评分
+    match_reason: str  # 推荐理由
+
+
 # ==================== 风险点模型 ====================
 
 class TextLocation(BaseModel):
@@ -237,6 +291,10 @@ class ReviewResult(BaseModel):
     review_standards_used: str  # 使用的标准集名称
     language: Language = "zh-CN"  # 审阅语言
 
+    # 业务条线信息（可选）
+    business_line_id: Optional[str] = None  # 使用的业务条线ID
+    business_line_name: Optional[str] = None  # 使用的业务条线名称
+
     # 审阅产出
     risks: List[RiskPoint] = Field(default_factory=list)
     modifications: List[ModificationSuggestion] = Field(default_factory=list)
@@ -294,6 +352,9 @@ class ReviewTask(BaseModel):
     document_filename: Optional[str] = None  # 上传的文档文件名
     standard_filename: Optional[str] = None  # 上传的审核标准文件名
     standard_template: Optional[str] = None  # 使用的默认模板名称
+
+    # 业务条线（可选）
+    business_line_id: Optional[str] = None  # 关联的业务条线ID
 
     # 结果
     result: Optional[ReviewResult] = None

@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .config import Settings
 from .gemini_client import GeminiClient
@@ -80,6 +80,7 @@ class ReviewEngine:
         task_id: str,
         language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
+        business_context: Optional[Dict[str, Any]] = None,
     ) -> ReviewResult:
         """
         执行完整的文档审阅流程
@@ -92,6 +93,7 @@ class ReviewEngine:
             task_id: 任务 ID
             language: 审阅语言
             progress_callback: 进度回调函数 (stage, percentage, message)
+            business_context: 业务上下文（可选），包含业务条线信息和背景要点
 
         Returns:
             ReviewResult 审阅结果
@@ -134,6 +136,7 @@ class ReviewEngine:
             material_type,
             applicable_standards,
             language,
+            business_context,
         )
         logger.info(f"识别到 {len(risks)} 个风险点")
 
@@ -146,6 +149,7 @@ class ReviewEngine:
             material_type,
             language,
             progress_callback,
+            business_context,
         )
         logger.info(f"生成 {len(modifications)} 条修改建议")
 
@@ -157,6 +161,7 @@ class ReviewEngine:
             our_party,
             material_type,
             language,
+            business_context,
         )
         logger.info(f"生成 {len(actions)} 条行动建议")
 
@@ -168,6 +173,13 @@ class ReviewEngine:
             if language == "zh-CN"
             else f"{len(applicable_standards)} standards applied"
         )
+        # 提取业务条线信息
+        business_line_id = None
+        business_line_name = None
+        if business_context:
+            business_line_id = business_context.get("business_line_id")
+            business_line_name = business_context.get("business_line_name")
+
         result = ReviewResult(
             task_id=task_id,
             document_name=document.metadata.get("filename", "unknown"),
@@ -176,6 +188,8 @@ class ReviewEngine:
             our_party=our_party,
             review_standards_used=standards_desc,
             language=language,
+            business_line_id=business_line_id,
+            business_line_name=business_line_name,
             risks=risks,
             modifications=modifications,
             actions=actions,
@@ -198,6 +212,7 @@ class ReviewEngine:
         material_type: MaterialType,
         standards: List[ReviewStandard],
         language: Language = "zh-CN",
+        business_context: Optional[Dict[str, Any]] = None,
     ) -> List[RiskPoint]:
         """Stage 1: 风险识别"""
         messages = build_risk_identification_messages(
@@ -206,6 +221,7 @@ class ReviewEngine:
             material_type=material_type,
             review_standards=standards,
             language=language,
+            business_context=business_context,
         )
 
         response = await self.llm.chat(messages, max_output_tokens=4000)
@@ -257,6 +273,7 @@ class ReviewEngine:
         material_type: MaterialType,
         language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
+        business_context: Optional[Dict[str, Any]] = None,
     ) -> List[ModificationSuggestion]:
         """Stage 2: 生成修改建议"""
         if not risks:
@@ -297,6 +314,7 @@ class ReviewEngine:
                 our_party=our_party,
                 material_type=material_type,
                 language=language,
+                business_context=business_context,
             )
 
             try:
@@ -337,6 +355,7 @@ class ReviewEngine:
         our_party: str,
         material_type: MaterialType,
         language: Language = "zh-CN",
+        business_context: Optional[Dict[str, Any]] = None,
     ) -> List[ActionRecommendation]:
         """Stage 3: 生成行动建议"""
         if not risks:
@@ -357,6 +376,7 @@ class ReviewEngine:
             our_party=our_party,
             material_type=material_type,
             language=language,
+            business_context=business_context,
         )
 
         response = await self.llm.chat(messages, max_output_tokens=3000)

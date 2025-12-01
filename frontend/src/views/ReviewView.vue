@@ -469,6 +469,57 @@
 
           <el-divider />
 
+          <!-- 步骤 4: 业务条线选择（可选） -->
+          <div class="business-section">
+            <div class="section-header" @click="showBusinessSelector = !showBusinessSelector">
+              <h4>
+                <el-icon><Briefcase /></el-icon>
+                业务条线
+                <el-tag size="small" type="info">可选</el-tag>
+              </h4>
+              <el-icon class="expand-icon" :class="{ expanded: showBusinessSelector }">
+                <ArrowDown />
+              </el-icon>
+            </div>
+            <el-collapse-transition>
+              <div v-show="showBusinessSelector" class="business-content">
+                <p class="business-tip">
+                  选择业务条线后，审阅时将根据业务背景信息提供更有针对性的建议
+                </p>
+                <el-select
+                  v-model="selectedBusinessLineId"
+                  placeholder="选择业务条线（可选）"
+                  clearable
+                  style="width: 100%"
+                  :loading="loadingBusinessLines"
+                >
+                  <el-option
+                    v-for="line in businessLines"
+                    :key="line.id"
+                    :label="line.name + (line.is_preset ? ' (预设)' : '')"
+                    :value="line.id"
+                  >
+                    <div class="business-option">
+                      <span>{{ line.name }}</span>
+                      <el-tag v-if="line.is_preset" size="small" type="info">预设</el-tag>
+                      <span class="context-count">{{ line.context_count }} 条背景</span>
+                    </div>
+                  </el-option>
+                </el-select>
+                <div v-if="selectedBusinessLine" class="selected-business-info">
+                  <el-icon color="#67c23a"><CircleCheck /></el-icon>
+                  <span>已选: {{ selectedBusinessLine.name }}</span>
+                  <span class="business-meta">{{ selectedBusinessLine.context_count }} 条背景信息</span>
+                  <router-link to="/business" class="manage-link">
+                    <el-button text type="primary" size="small">管理业务条线</el-button>
+                  </router-link>
+                </div>
+              </div>
+            </el-collapse-transition>
+          </div>
+
+          <el-divider />
+
           <!-- 开始审阅按钮 -->
           <el-button
             type="primary"
@@ -564,7 +615,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
-import { Loading, Search, Folder, CircleCheck, InfoFilled } from '@element-plus/icons-vue'
+import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const route = useRoute()
@@ -619,6 +670,17 @@ const selectedLibraryStandards = ref([])
 const recommendingCollections = ref(false)
 const collectionRecommendations = ref([])
 
+// 业务条线相关状态
+const showBusinessSelector = ref(false)
+const businessLines = ref([])
+const loadingBusinessLines = ref(false)
+const selectedBusinessLineId = ref(null)
+
+const selectedBusinessLine = computed(() => {
+  if (!selectedBusinessLineId.value) return null
+  return businessLines.value.find(line => line.id === selectedBusinessLineId.value)
+})
+
 const currentTask = computed(() => store.currentTask)
 const isCompleted = computed(() => currentTask.value?.status === 'completed')
 const isFailed = computed(() => currentTask.value?.status === 'failed')
@@ -663,6 +725,9 @@ onMounted(async () => {
   } catch (error) {
     console.error('加载标准集合失败:', error)
   }
+
+  // 加载业务条线列表
+  loadBusinessLines()
 
   // 如果有 taskId，加载任务
   if (taskId.value) {
@@ -979,9 +1044,23 @@ async function startReview() {
   }
 
   try {
-    await store.startReview(taskId.value)
+    // 传递业务条线ID（如果选择了的话）
+    await store.startReview(taskId.value, selectedBusinessLineId.value)
   } catch (error) {
     ElMessage.error(error.message || '启动审阅失败')
+  }
+}
+
+// 加载业务条线列表
+async function loadBusinessLines() {
+  loadingBusinessLines.value = true
+  try {
+    const response = await api.getBusinessLines({ include_preset: true })
+    businessLines.value = response.data
+  } catch (error) {
+    console.error('加载业务条线失败:', error)
+  } finally {
+    loadingBusinessLines.value = false
   }
 }
 
@@ -1738,6 +1817,84 @@ async function applyStandards() {
 
 .applied-standard span {
   flex: 1;
+}
+
+/* ==================== 业务条线选择样式 ==================== */
+
+.business-section {
+  margin-top: var(--spacing-4);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.business-section .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-bg-hover);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.business-section .section-header:hover {
+  background: var(--color-bg-secondary);
+}
+
+.business-section .section-header h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-weight: normal;
+}
+
+.business-content {
+  padding: var(--spacing-4);
+  background: var(--color-bg-card);
+}
+
+.business-tip {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin: 0 0 var(--spacing-3) 0;
+}
+
+.business-option {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.business-option .context-count {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.selected-business-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-success-bg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+}
+
+.selected-business-info .business-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.selected-business-info .manage-link {
+  margin-left: auto;
 }
 
 /* ==================== 整合预览样式 ==================== */

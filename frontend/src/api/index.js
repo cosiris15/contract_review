@@ -235,10 +235,14 @@ export default {
   },
 
   // 审阅
-  startReview(taskId, llmProvider = 'deepseek') {
-    return api.post(`/tasks/${taskId}/review`, null, {
-      params: { llm_provider: llmProvider }
-    })
+  // llmProvider: 'deepseek' | 'gemini'
+  // businessLineId: 业务条线ID（可选）
+  startReview(taskId, llmProvider = 'deepseek', businessLineId = null) {
+    const params = { llm_provider: llmProvider }
+    if (businessLineId) {
+      params.business_line_id = businessLineId
+    }
+    return api.post(`/tasks/${taskId}/review`, null, { params })
   },
 
   // 结果
@@ -512,5 +516,63 @@ export default {
   // 整合特殊要求到审核标准
   mergeSpecialRequirements(data) {
     return api.post('/standards/merge-special-requirements', data)
+  },
+
+  // ==================== 业务条线管理 ====================
+
+  // 获取业务条线列表
+  // params: { language?, include_preset? }
+  getBusinessLines(params = {}) {
+    return api.get('/business-lines', { params })
+  },
+
+  // 获取业务条线详情（含背景信息）
+  getBusinessLine(lineId) {
+    return api.get(`/business-lines/${lineId}`)
+  },
+
+  // 创建业务条线
+  createBusinessLine(data) {
+    return api.post('/business-lines', data)
+  },
+
+  // 更新业务条线
+  updateBusinessLine(lineId, data) {
+    return api.put(`/business-lines/${lineId}`, data)
+  },
+
+  // 删除业务条线
+  deleteBusinessLine(lineId) {
+    return api.delete(`/business-lines/${lineId}`)
+  },
+
+  // 获取业务条线的背景信息列表
+  getBusinessContexts(lineId, params = {}) {
+    return api.get(`/business-lines/${lineId}/contexts`, { params })
+  },
+
+  // 添加业务背景信息
+  addBusinessContext(lineId, data) {
+    return api.post(`/business-lines/${lineId}/contexts`, data)
+  },
+
+  // 批量添加业务背景信息
+  addBusinessContextsBatch(lineId, contexts) {
+    return api.post(`/business-lines/${lineId}/contexts/batch`, { contexts })
+  },
+
+  // 更新业务背景信息
+  updateBusinessContext(contextId, data) {
+    return api.put(`/business-contexts/${contextId}`, data)
+  },
+
+  // 删除业务背景信息
+  deleteBusinessContext(contextId) {
+    return api.delete(`/business-contexts/${contextId}`)
+  },
+
+  // 获取业务背景分类列表
+  getBusinessCategories(language = 'zh-CN') {
+    return api.get('/business-categories', { params: { language } })
   }
 }
