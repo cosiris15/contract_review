@@ -45,6 +45,7 @@ from src.contract_review.storage import StorageManager
 from src.contract_review.tasks import TaskManager
 from src.contract_review.supabase_tasks import SupabaseTaskManager
 from src.contract_review.supabase_storage import SupabaseStorageManager
+from src.contract_review.supabase_business import SupabaseBusinessManager
 from src.contract_review.prompts import (
     build_usage_instruction_messages,
     build_standard_recommendation_messages,
@@ -135,9 +136,12 @@ formatter = ResultFormatter()
 STANDARD_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "standard_library"
 standard_library_manager = StandardLibraryManager(STANDARD_LIBRARY_DIR)
 
-# 业务条线库目录
-BUSINESS_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "business_library"
-business_library_manager = BusinessLibraryManager(BUSINESS_LIBRARY_DIR)
+# 业务条线管理器（根据存储后端选择）
+if USE_SUPABASE:
+    business_library_manager = SupabaseBusinessManager()
+else:
+    BUSINESS_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "business_library"
+    business_library_manager = BusinessLibraryManager(BUSINESS_LIBRARY_DIR)
 
 # LLM 客户端
 llm_client = LLMClient(settings.llm)
@@ -2702,7 +2706,9 @@ async def update_business_line(
     if not line:
         raise HTTPException(status_code=404, detail="业务条线不存在或无法编辑")
 
-    context_count = business_library_manager._load_library().get_line_context_count(line_id)
+    # 获取更新后的完整业务线信息（含 context_count）
+    updated_line = business_library_manager.get_business_line(line_id)
+    context_count = updated_line.context_count if updated_line else 0
     return BusinessLineResponse(
         id=line.id,
         name=line.name,

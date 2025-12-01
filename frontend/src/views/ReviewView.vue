@@ -104,18 +104,28 @@
 
           <el-divider />
 
-          <!-- 步骤 3: 审核标准选择 -->
-          <div class="standard-section">
+          <!-- 步骤 3: 任务要求配置 -->
+          <div class="task-requirements-section">
             <h4>
               <el-icon><List /></el-icon>
-              审核标准
+              任务要求
             </h4>
 
-            <!-- 标准选择入口 -->
-            <div class="standard-selection-entry">
+            <!-- 审阅标准与业务条线选择入口 -->
+            <div class="requirement-selection-entry">
               <el-button type="primary" @click="openStandardSelector">
                 <el-icon><Collection /></el-icon>
-                选择审核标准
+                审阅标准
+                <el-tag v-if="selectedStandards.length" size="small" type="success" class="btn-tag">
+                  {{ selectedStandards.length }}
+                </el-tag>
+              </el-button>
+              <el-button @click="openBusinessSelector">
+                <el-icon><Briefcase /></el-icon>
+                业务条线
+                <el-tag v-if="selectedBusinessLineId" size="small" type="success" class="btn-tag">
+                  1
+                </el-tag>
               </el-button>
             </div>
 
@@ -467,56 +477,95 @@
             </template>
           </el-dialog>
 
-          <el-divider />
-
-          <!-- 步骤 4: 业务条线选择（可选） -->
-          <div class="business-section">
-            <div class="section-header" @click="showBusinessSelector = !showBusinessSelector">
-              <h4>
-                <el-icon><Briefcase /></el-icon>
-                业务条线
-                <el-tag size="small" type="info">可选</el-tag>
-              </h4>
-              <el-icon class="expand-icon" :class="{ expanded: showBusinessSelector }">
-                <ArrowDown />
-              </el-icon>
-            </div>
-            <el-collapse-transition>
-              <div v-show="showBusinessSelector" class="business-content">
-                <p class="business-tip">
-                  选择业务条线后，审阅时将根据业务背景信息提供更有针对性的建议
-                </p>
-                <el-select
-                  v-model="selectedBusinessLineId"
-                  placeholder="选择业务条线（可选）"
+          <!-- 业务条线选择对话框 -->
+          <el-dialog
+            v-model="showBusinessLineDialog"
+            title="选择业务条线"
+            width="800px"
+          >
+            <div class="business-selector">
+              <!-- 搜索框和操作按钮 -->
+              <div class="selector-header">
+                <el-input
+                  v-model="businessLineSearch"
+                  placeholder="搜索业务条线..."
                   clearable
-                  style="width: 100%"
-                  :loading="loadingBusinessLines"
+                  style="flex: 1"
                 >
-                  <el-option
-                    v-for="line in businessLines"
-                    :key="line.id"
-                    :label="line.name + (line.is_preset ? ' (预设)' : '')"
-                    :value="line.id"
-                  >
-                    <div class="business-option">
-                      <span>{{ line.name }}</span>
-                      <el-tag v-if="line.is_preset" size="small" type="info">预设</el-tag>
-                      <span class="context-count">{{ line.context_count }} 条背景</span>
-                    </div>
-                  </el-option>
-                </el-select>
-                <div v-if="selectedBusinessLine" class="selected-business-info">
-                  <el-icon color="#67c23a"><CircleCheck /></el-icon>
-                  <span>已选: {{ selectedBusinessLine.name }}</span>
-                  <span class="business-meta">{{ selectedBusinessLine.context_count }} 条背景信息</span>
-                  <router-link to="/business" class="manage-link">
-                    <el-button text type="primary" size="small">管理业务条线</el-button>
-                  </router-link>
-                </div>
+                  <template #prefix>
+                    <el-icon><Search /></el-icon>
+                  </template>
+                </el-input>
+                <router-link to="/business">
+                  <el-button type="primary">
+                    <el-icon><Plus /></el-icon>
+                    管理业务条线
+                  </el-button>
+                </router-link>
               </div>
-            </el-collapse-transition>
-          </div>
+
+              <!-- 提示说明 -->
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-bottom: 16px"
+              >
+                选择业务条线后，审阅时将根据业务背景信息提供更有针对性的建议（可选）
+              </el-alert>
+
+              <!-- 业务条线列表 -->
+              <div class="business-line-list" v-loading="loadingBusinessLines">
+                <div
+                  v-for="line in filteredBusinessLines"
+                  :key="line.id"
+                  class="business-line-card"
+                  :class="{ selected: tempSelectedBusinessLineId === line.id }"
+                  @click="selectBusinessLineInDialog(line)"
+                >
+                  <div class="business-line-header">
+                    <el-icon :size="24" :color="tempSelectedBusinessLineId === line.id ? '#409eff' : '#909399'">
+                      <Briefcase />
+                    </el-icon>
+                    <div class="business-line-info">
+                      <span class="business-line-name">{{ line.name }}</span>
+                      <span class="business-line-meta">
+                        <el-tag size="small" type="info">{{ line.context_count }} 条背景信息</el-tag>
+                        <el-tag v-if="line.is_preset" size="small" type="success">预设</el-tag>
+                        <el-tag v-if="line.industry" size="small">{{ line.industry }}</el-tag>
+                      </span>
+                    </div>
+                    <el-icon v-if="tempSelectedBusinessLineId === line.id" class="check-icon" color="#409eff">
+                      <CircleCheck />
+                    </el-icon>
+                  </div>
+                  <p v-if="line.description" class="business-line-desc">{{ line.description }}</p>
+                </div>
+
+                <el-empty v-if="filteredBusinessLines.length === 0 && !loadingBusinessLines" description="暂无业务条线">
+                  <router-link to="/business">
+                    <el-button type="primary">前往创建</el-button>
+                  </router-link>
+                </el-empty>
+              </div>
+
+              <!-- 当前选择状态 -->
+              <div v-if="tempSelectedBusinessLine" class="selection-summary">
+                <el-icon><InfoFilled /></el-icon>
+                <span>已选择「{{ tempSelectedBusinessLine.name }}」，共 {{ tempSelectedBusinessLine.context_count }} 条背景信息</span>
+              </div>
+            </div>
+
+            <template #footer>
+              <el-button @click="showBusinessLineDialog = false">取消</el-button>
+              <el-button v-if="selectedBusinessLineId" type="danger" text @click="clearBusinessLineSelection">
+                清除选择
+              </el-button>
+              <el-button type="primary" @click="confirmBusinessLineSelection">
+                确认选择
+              </el-button>
+            </template>
+          </el-dialog>
 
           <el-divider />
 
@@ -615,7 +664,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
-import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase } from '@element-plus/icons-vue'
+import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const route = useRoute()
@@ -671,14 +720,31 @@ const recommendingCollections = ref(false)
 const collectionRecommendations = ref([])
 
 // 业务条线相关状态
-const showBusinessSelector = ref(false)
+const showBusinessLineDialog = ref(false)
+const businessLineSearch = ref('')
 const businessLines = ref([])
 const loadingBusinessLines = ref(false)
 const selectedBusinessLineId = ref(null)
+const tempSelectedBusinessLineId = ref(null)
 
 const selectedBusinessLine = computed(() => {
   if (!selectedBusinessLineId.value) return null
   return businessLines.value.find(line => line.id === selectedBusinessLineId.value)
+})
+
+const tempSelectedBusinessLine = computed(() => {
+  if (!tempSelectedBusinessLineId.value) return null
+  return businessLines.value.find(line => line.id === tempSelectedBusinessLineId.value)
+})
+
+const filteredBusinessLines = computed(() => {
+  if (!businessLineSearch.value) return businessLines.value
+  const keyword = businessLineSearch.value.toLowerCase()
+  return businessLines.value.filter(line =>
+    line.name.toLowerCase().includes(keyword) ||
+    (line.description && line.description.toLowerCase().includes(keyword)) ||
+    (line.industry && line.industry.toLowerCase().includes(keyword))
+  )
 })
 
 const currentTask = computed(() => store.currentTask)
@@ -1062,6 +1128,43 @@ async function loadBusinessLines() {
   } finally {
     loadingBusinessLines.value = false
   }
+}
+
+// 打开业务条线选择对话框
+function openBusinessSelector() {
+  tempSelectedBusinessLineId.value = selectedBusinessLineId.value
+  businessLineSearch.value = ''
+  showBusinessLineDialog.value = true
+  // 如果业务条线列表为空，重新加载
+  if (businessLines.value.length === 0) {
+    loadBusinessLines()
+  }
+}
+
+// 对话框内选择业务条线
+function selectBusinessLineInDialog(line) {
+  if (tempSelectedBusinessLineId.value === line.id) {
+    tempSelectedBusinessLineId.value = null
+  } else {
+    tempSelectedBusinessLineId.value = line.id
+  }
+}
+
+// 确认业务条线选择
+function confirmBusinessLineSelection() {
+  selectedBusinessLineId.value = tempSelectedBusinessLineId.value
+  showBusinessLineDialog.value = false
+  if (selectedBusinessLineId.value) {
+    ElMessage.success(`已选择业务条线: ${selectedBusinessLine.value?.name}`)
+  }
+}
+
+// 清除业务条线选择
+function clearBusinessLineSelection() {
+  selectedBusinessLineId.value = null
+  tempSelectedBusinessLineId.value = null
+  showBusinessLineDialog.value = false
+  ElMessage.info('已清除业务条线选择')
 }
 
 function retryReview() {
@@ -1895,6 +1998,110 @@ async function applyStandards() {
 
 .selected-business-info .manage-link {
   margin-left: auto;
+}
+
+/* ==================== 任务要求布局样式 ==================== */
+
+.task-requirements-section h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.requirement-selection-entry {
+  display: flex;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
+}
+
+.requirement-selection-entry .el-button {
+  flex: 1;
+  justify-content: center;
+  position: relative;
+}
+
+.requirement-selection-entry .btn-tag {
+  margin-left: var(--spacing-2);
+}
+
+/* ==================== 业务条线选择对话框样式 ==================== */
+
+.business-selector {
+  min-height: 300px;
+}
+
+.business-selector .selector-header {
+  display: flex;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
+}
+
+.business-line-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  max-height: 350px;
+  overflow-y: auto;
+  padding-right: var(--spacing-2);
+}
+
+.business-line-card {
+  padding: var(--spacing-4);
+  border: 2px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.business-line-card:hover {
+  border-color: var(--color-border-dark);
+  box-shadow: var(--shadow-sm);
+}
+
+.business-line-card.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.business-line-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+}
+
+.business-line-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.business-line-name {
+  display: block;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-1);
+}
+
+.business-line-meta {
+  display: flex;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
+}
+
+.business-line-desc {
+  margin: var(--spacing-2) 0 0;
+  padding-left: calc(24px + var(--spacing-3));
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-normal);
+}
+
+.business-line-card .check-icon {
+  flex-shrink: 0;
 }
 
 /* ==================== 整合预览样式 ==================== */
