@@ -167,35 +167,28 @@
             <div class="special-requirements" :class="{ 'has-content': specialRequirements.trim() }">
               <div class="special-header" @click="showSpecialInput = !showSpecialInput">
                 <el-icon><Edit /></el-icon>
-                <span>本次特殊要求</span>
-                <el-tag size="small" type="warning">最高优先级</el-tag>
+                <span class="special-title">本次特殊要求</span>
+                <span class="special-priority-hint">优先级最高</span>
                 <el-icon class="expand-icon" :class="{ expanded: showSpecialInput }">
                   <ArrowDown />
                 </el-icon>
               </div>
               <el-collapse-transition>
                 <div v-show="showSpecialInput" class="special-content">
-                  <el-alert
-                    type="warning"
-                    :closable="false"
-                    show-icon
-                    class="priority-alert"
-                  >
-                    <template #title>
-                      <span class="priority-alert-title">特殊要求优先级说明</span>
-                    </template>
-                    当特殊要求与审阅标准或业务条线背景信息冲突时，将以特殊要求为准。
-                  </el-alert>
+                  <p class="special-desc">
+                    输入本次项目的特殊审核要求。当与审阅标准或业务背景冲突时，以此处要求为准。
+                  </p>
                   <el-input
                     v-model="specialRequirements"
                     type="textarea"
-                    :rows="3"
-                    placeholder="输入本次项目的特殊审核要求，例如：&#10;• 本项目为政府采购，需特别关注合规要求&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;• 涉及数据跨境，需审核数据安全条款"
+                    :rows="5"
+                    :autosize="{ minRows: 5, maxRows: 10 }"
+                    placeholder="例如：&#10;&#10;• 本项目为政府采购，需特别关注合规要求&#10;&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;&#10;• 涉及数据跨境，需审核数据安全条款"
                   />
-                  <div class="special-actions">
+                  <div class="special-footer">
                     <el-button
-                      type="warning"
-                      size="small"
+                      type="primary"
+                      size="default"
                       :loading="merging"
                       :disabled="!specialRequirements.trim() || !selectedStandards.length"
                       @click="mergeSpecialRequirements"
@@ -203,7 +196,7 @@
                       <el-icon><MagicStick /></el-icon>
                       整合到本次审核
                     </el-button>
-                    <span class="special-tip">AI 将根据特殊要求调整本次审核使用的标准（不影响标准库）</span>
+                    <span class="special-tip">AI 将根据特殊要求调整审核标准，不影响标准库</span>
                   </div>
                 </div>
               </el-collapse-transition>
@@ -1872,8 +1865,8 @@ async function applyStandards() {
 }
 
 .special-requirements.has-content {
-  border-color: var(--el-color-warning);
-  box-shadow: 0 0 0 2px var(--el-color-warning-light-8);
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 0 0 1px var(--el-color-primary-light-8);
 }
 
 .special-header {
@@ -1888,7 +1881,7 @@ async function applyStandards() {
 }
 
 .special-requirements.has-content .special-header {
-  background: var(--el-color-warning-light-9);
+  background: var(--el-color-primary-light-9);
 }
 
 .special-header:hover {
@@ -1896,22 +1889,36 @@ async function applyStandards() {
 }
 
 .special-requirements.has-content .special-header:hover {
-  background: var(--el-color-warning-light-8);
+  background: var(--el-color-primary-light-8);
 }
 
-.special-header span {
+.special-title {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+  font-weight: 500;
 }
 
-.special-requirements.has-content .special-header span {
-  color: var(--el-color-warning-dark-2);
-  font-weight: 500;
+.special-requirements.has-content .special-title {
+  color: var(--el-color-primary);
+}
+
+.special-priority-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  padding: 2px 8px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.special-requirements.has-content .special-priority-hint {
+  background: var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
 }
 
 .expand-icon {
   margin-left: auto;
   transition: transform 0.3s;
+  color: var(--color-text-tertiary);
 }
 
 .expand-icon.expanded {
@@ -1920,27 +1927,40 @@ async function applyStandards() {
 
 .special-content {
   padding: var(--spacing-4);
+  padding-top: var(--spacing-3);
   background: var(--color-bg-card);
 }
 
-.priority-alert {
-  margin-bottom: var(--spacing-3);
+.special-desc {
+  margin: 0 0 var(--spacing-3) 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
 }
 
-.priority-alert-title {
-  font-weight: 500;
+.special-content :deep(.el-textarea__inner) {
+  font-size: var(--font-size-sm);
+  line-height: 1.8;
+  padding: var(--spacing-3);
 }
 
-.special-actions {
+.special-content :deep(.el-textarea__inner::placeholder) {
+  color: var(--color-text-quaternary);
+  line-height: 1.8;
+}
+
+.special-footer {
   display: flex;
   align-items: center;
   gap: var(--spacing-3);
   margin-top: var(--spacing-3);
+  padding-top: var(--spacing-3);
+  border-top: 1px solid var(--color-border-lighter);
 }
 
 .special-tip {
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-quaternary);
 }
 
 /* 已应用标准状态 */
