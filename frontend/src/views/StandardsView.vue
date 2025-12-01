@@ -518,12 +518,12 @@
               </el-radio-group>
             </el-form-item>
 
-            <el-form-item label="业务场景描述" required>
+            <el-form-item label="适用场景" required>
               <el-input
                 v-model="creationForm.business_scenario"
                 type="textarea"
                 :rows="3"
-                placeholder="请详细描述您的业务场景，例如：我们是一家软件公司，需要审核与客户签订的SaaS服务协议，主要涉及订阅费用、服务级别承诺、数据安全等条款..."
+                placeholder="请描述该审阅标准的适用场景，例如：审核SaaS服务协议，涉及订阅费用、服务级别承诺、数据安全等条款..."
                 maxlength="500"
                 show-word-limit
               />
