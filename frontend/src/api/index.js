@@ -288,7 +288,8 @@ export default {
       modification_ids: modificationIds,
       include_comments: includeComments
     }, {
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 300000  // Redline 生成可能耗时较长，设置 5 分钟超时
     })
   },
 
