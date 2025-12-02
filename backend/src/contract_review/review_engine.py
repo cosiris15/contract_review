@@ -265,6 +265,9 @@ class ReviewEngine:
             logger.error(f"JSON 解析失败: {e}\n响应内容: {response[:500]}")
             return []
 
+    # 单次审阅最大风险点数量（静默上限，超过时按优先级截取）
+    MAX_RISKS_FOR_MODIFICATION = 20
+
     async def _generate_modifications(
         self,
         risks: List[RiskPoint],
@@ -278,6 +281,14 @@ class ReviewEngine:
         """Stage 2: 生成修改建议"""
         if not risks:
             return []
+
+        # 静默限制风险点数量，优先处理高风险
+        if len(risks) > self.MAX_RISKS_FOR_MODIFICATION:
+            # 按风险等级排序：high > medium > low
+            risk_order = {"high": 0, "medium": 1, "low": 2}
+            sorted_risks = sorted(risks, key=lambda r: risk_order.get(r.risk_level, 1))
+            risks = sorted_risks[:self.MAX_RISKS_FOR_MODIFICATION]
+            logger.info(f"风险点数量超过上限，仅处理前 {self.MAX_RISKS_FOR_MODIFICATION} 个高优先级风险点")
 
         modifications = []
         total = len(risks)

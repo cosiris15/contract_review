@@ -608,6 +608,11 @@ async def get_task_status(task_id: str):
 
 # ==================== 文件上传 API ====================
 
+# 文件大小限制（MB）
+MAX_DOCUMENT_SIZE_MB = 10  # 待审阅文档最大 10MB
+MAX_STANDARD_SIZE_MB = 5   # 审核标准最大 5MB
+
+
 @app.post("/api/tasks/{task_id}/document")
 async def upload_document(
     task_id: str,
@@ -630,6 +635,14 @@ async def upload_document(
         )
 
     content = await file.read()
+
+    # 检查文件大小
+    file_size_mb = len(content) / (1024 * 1024)
+    if file_size_mb > MAX_DOCUMENT_SIZE_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件过大（{file_size_mb:.1f}MB）。待审阅文档最大支持 {MAX_DOCUMENT_SIZE_MB}MB",
+        )
     if USE_SUPABASE:
         task_manager.save_document(task_id, user_id, file.filename, content)
     else:
@@ -661,6 +674,15 @@ async def upload_standard(
         )
 
     content = await file.read()
+
+    # 检查文件大小
+    file_size_mb = len(content) / (1024 * 1024)
+    if file_size_mb > MAX_STANDARD_SIZE_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件过大（{file_size_mb:.1f}MB）。审核标准文件最大支持 {MAX_STANDARD_SIZE_MB}MB",
+        )
+
     if USE_SUPABASE:
         task_manager.save_standard(task_id, user_id, file.filename, content)
     else:
