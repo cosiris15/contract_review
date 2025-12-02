@@ -2427,9 +2427,20 @@ async def save_standards_to_library(request: SaveToLibraryRequest):
 
 # ==================== LLM 相关 API ====================
 
+# 批量生成使用说明的最大标准数量
+MAX_BATCH_USAGE_INSTRUCTION = 20
+
+
 @app.post("/api/standards/generate-usage-instruction")
 async def generate_usage_instruction(request: GenerateUsageInstructionRequest):
     """为指定标准生成适用说明（使用 LLM）"""
+    # 限制单次处理的标准数量
+    if len(request.standard_ids) > MAX_BATCH_USAGE_INSTRUCTION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单次最多处理 {MAX_BATCH_USAGE_INSTRUCTION} 个标准，当前请求 {len(request.standard_ids)} 个",
+        )
+
     results = []
     errors = []
 
@@ -2474,6 +2485,11 @@ async def generate_usage_instruction(request: GenerateUsageInstructionRequest):
     }
 
 
+# 推荐标准时的文档长度限制和标准数量限制
+MAX_RECOMMEND_DOC_CHARS = 10000  # 最多使用文档前 10000 字符
+MAX_RECOMMEND_STANDARDS = 50     # 最多考虑 50 个标准
+
+
 @app.post("/api/standards/recommend", response_model=List[StandardRecommendationResponse])
 async def recommend_standards(request: RecommendStandardsRequest):
     """根据文档内容推荐审核标准（使用 LLM）"""
@@ -2488,10 +2504,26 @@ async def recommend_standards(request: RecommendStandardsRequest):
     if not available_standards:
         return []
 
+    # 限制标准数量（优先使用高风险标准）
+    if len(available_standards) > MAX_RECOMMEND_STANDARDS:
+        # 按风险等级排序：high > medium > low
+        risk_order = {"high": 0, "medium": 1, "low": 2}
+        available_standards = sorted(
+            available_standards,
+            key=lambda s: risk_order.get(s.risk_level, 1)
+        )[:MAX_RECOMMEND_STANDARDS]
+        logger.info(f"推荐标准：标准数量 {len(available_standards)} 超过限制，已截取前 {MAX_RECOMMEND_STANDARDS} 个高优先级标准")
+
+    # 限制文档长度
+    doc_text = request.document_text
+    if len(doc_text) > MAX_RECOMMEND_DOC_CHARS:
+        doc_text = doc_text[:MAX_RECOMMEND_DOC_CHARS]
+        logger.info(f"推荐标准：文档长度超过限制，已截取前 {MAX_RECOMMEND_DOC_CHARS} 字符")
+
     try:
         # 构建 Prompt
         messages = build_standard_recommendation_messages(
-            document_text=request.document_text,
+            document_text=doc_text,
             material_type=request.material_type,
             available_standards=available_standards,
         )
