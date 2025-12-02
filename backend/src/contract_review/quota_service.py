@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # 产品配置
 PRODUCT_ID = "contract"  # 本产品标识
-DEFAULT_FREE_CREDITS = 3  # 新用户赠送次数
+DEFAULT_FREE_CREDITS = 20  # 新用户赠送次数
 
 
 @dataclass
