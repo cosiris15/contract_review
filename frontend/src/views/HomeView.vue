@@ -19,112 +19,121 @@
       </template>
     </el-alert>
 
-    <!-- 欢迎区域 -->
-    <div class="welcome-section">
-      <div class="welcome-card">
-        <div class="welcome-content">
-          <h1 class="welcome-title">十行合同</h1>
-          <p class="welcome-desc">助力法务审阅合同、营销材料等文本，识别风险点并提供专业的修改建议。</p>
-          <div class="welcome-actions">
-            <el-button
-              type="primary"
-              size="large"
-              @click="goToNewReview"
-              class="action-btn"
-            >
-              <el-icon><Plus /></el-icon>
-              新建审阅任务
-            </el-button>
-            <el-button
-              size="large"
-              @click="goToDocuments"
-              class="action-btn"
-            >
-              <el-icon><FolderOpened /></el-icon>
-              查看所有文档
-            </el-button>
-          </div>
+    <!-- 主内容区 - 全屏Hero布局 -->
+    <div class="hero-section">
+      <!-- 左侧：主标题和操作区 -->
+      <div class="hero-content">
+        <div class="hero-badge">
+          <el-icon><Cpu /></el-icon>
+          <span>AI 驱动的智能审阅</span>
         </div>
-        <div class="welcome-features">
-          <div class="feature-item">
+        <h1 class="hero-title">十行合同</h1>
+        <p class="hero-subtitle">
+          专业的法务文本智能审阅平台，助力法务团队高效审阅合同、营销材料等各类文本，
+          快速识别风险点并提供专业的修改建议。
+        </p>
+        <div class="hero-actions">
+          <el-button
+            type="primary"
+            size="large"
+            @click="goToNewReview"
+            class="action-btn primary-action"
+          >
+            <el-icon><Plus /></el-icon>
+            新建审阅任务
+          </el-button>
+          <el-button
+            size="large"
+            @click="goToDocuments"
+            class="action-btn secondary-action"
+          >
+            <el-icon><FolderOpened /></el-icon>
+            文档管理
+          </el-button>
+        </div>
+
+        <!-- 快速入口 -->
+        <div class="quick-links">
+          <router-link to="/standards" class="quick-link">
+            <el-icon><Setting /></el-icon>
+            <span>审阅标准管理</span>
+          </router-link>
+          <router-link to="/business" class="quick-link">
+            <el-icon><Briefcase /></el-icon>
+            <span>业务类型管理</span>
+          </router-link>
+        </div>
+      </div>
+
+      <!-- 右侧：功能特性展示 -->
+      <div class="hero-features">
+        <div class="features-grid">
+          <div class="feature-card">
             <div class="feature-icon">
-              <el-icon :size="28"><Search /></el-icon>
+              <el-icon :size="32"><Search /></el-icon>
             </div>
-            <h3>智能风险识别</h3>
-            <p>基于审核标准自动识别文本中的潜在法务风险</p>
+            <div class="feature-content">
+              <h3>智能风险识别</h3>
+              <p>基于定制化审核标准，自动识别文本中的潜在法务风险，不遗漏任何关键问题</p>
+            </div>
           </div>
-          <div class="feature-item">
+
+          <div class="feature-card">
             <div class="feature-icon">
-              <el-icon :size="28"><Edit /></el-icon>
+              <el-icon :size="32"><Edit /></el-icon>
             </div>
-            <h3>修改建议</h3>
-            <p>针对每个风险点提供具体可执行的文本修改方案</p>
+            <div class="feature-content">
+              <h3>专业修改建议</h3>
+              <p>针对每个风险点提供具体可执行的文本修改方案，直接复制使用</p>
+            </div>
           </div>
-          <div class="feature-item">
+
+          <div class="feature-card">
             <div class="feature-icon">
-              <el-icon :size="28"><List /></el-icon>
+              <el-icon :size="32"><List /></el-icon>
             </div>
-            <h3>行动建议</h3>
-            <p>提供文本修改之外的补充措施与注意事项</p>
+            <div class="feature-content">
+              <h3>行动建议清单</h3>
+              <p>提供文本修改之外的补充措施与注意事项，全面把控风险</p>
+            </div>
           </div>
-          <div class="feature-item">
+
+          <div class="feature-card">
             <div class="feature-icon">
-              <el-icon :size="28"><Download /></el-icon>
+              <el-icon :size="32"><Download /></el-icon>
             </div>
-            <h3>修订版导出</h3>
-            <p>一键导出带修订标记的 Word 文档，方便对照查阅</p>
+            <div class="feature-content">
+              <h3>一键导出修订版</h3>
+              <p>导出带修订标记的 Word 文档，方便对照查阅与团队协作</p>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 简单统计 -->
-    <div class="stats-section" v-if="backendStatus === 'ready'">
-      <div class="stats-card">
-        <div class="stat-item">
-          <div class="stat-value">{{ totalDocuments }}</div>
-          <div class="stat-label">文档总数</div>
-        </div>
-        <div class="stat-divider"></div>
-        <div class="stat-item">
-          <div class="stat-value completed">{{ completedDocuments }}</div>
-          <div class="stat-label">已完成</div>
-        </div>
-        <div class="stat-divider"></div>
-        <div class="stat-item">
-          <div class="stat-value in-progress">{{ inProgressDocuments }}</div>
-          <div class="stat-label">进行中</div>
-        </div>
-      </div>
+    <!-- 底部装饰 -->
+    <div class="hero-decoration">
+      <div class="decoration-line"></div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
-import { Plus, FolderOpened, Search, Edit, List, Download } from '@element-plus/icons-vue'
+import { Plus, FolderOpened, Search, Edit, List, Download, Cpu, Setting, Briefcase } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
-
-const tasks = ref([])
 
 // 后端连接状态（简化版，仅在出错时显示）
 const backendStatus = ref('ready') // 默认就绪，付费版不需要冷启动等待
 const connectionError = ref('')
 const isRetrying = ref(false)
 
-// 统计数据
-const totalDocuments = computed(() => tasks.value.length)
-const completedDocuments = computed(() => tasks.value.filter(t => t.status === 'completed').length)
-const inProgressDocuments = computed(() =>
-  tasks.value.filter(t => t.status === 'reviewing' || t.status === 'created' || t.status === 'uploading').length
-)
-
 onMounted(() => {
-  // 后台静默加载任务列表（不阻塞 UI）
+  // 后台静默加载（预热连接）
   fetchTasks()
 })
 
@@ -140,7 +149,6 @@ async function retryConnection() {
 async function fetchTasks() {
   try {
     await store.fetchTasks()
-    tasks.value = store.tasks
     backendStatus.value = 'ready'
   } catch (error) {
     console.error('获取任务列表失败:', error)
@@ -165,8 +173,9 @@ function goToDocuments() {
 
 <style scoped>
 .home-view {
-  max-width: var(--max-width);
-  margin: 0 auto;
+  min-height: calc(100vh - var(--header-height) - var(--spacing-6) * 2);
+  display: flex;
+  flex-direction: column;
 }
 
 /* 状态提示样式 */
@@ -192,178 +201,259 @@ function goToDocuments() {
   gap: var(--spacing-4);
 }
 
-.backend-hint {
-  margin-top: var(--spacing-3);
-  color: var(--color-text-tertiary);
+/* Hero 区域 */
+.hero-section {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-10);
+  align-items: center;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--spacing-8) 0;
+}
+
+/* 左侧内容区 */
+.hero-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-5);
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  background: linear-gradient(135deg, var(--color-primary-bg) 0%, var(--color-primary-bg-hover) 100%);
+  border: 1px solid var(--color-primary-lighter);
+  border-radius: 999px;
+  color: var(--color-primary);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  width: fit-content;
 }
 
-/* 欢迎区域 */
-.welcome-section {
-  margin-bottom: var(--spacing-6);
-}
-
-.welcome-card {
-  background: var(--color-bg-card);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-10);
-  box-shadow: var(--shadow-md);
-}
-
-.welcome-content {
-  text-align: center;
-  margin-bottom: var(--spacing-10);
-}
-
-.welcome-title {
-  font-size: var(--font-size-3xl);
+.hero-title {
+  font-size: 56px;
   font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
-  margin-bottom: var(--spacing-3);
+  line-height: 1.1;
+  letter-spacing: -1px;
+  background: linear-gradient(135deg, var(--color-text-primary) 0%, var(--color-primary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-.welcome-desc {
+.hero-subtitle {
+  font-size: var(--font-size-lg);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-md);
-  margin-bottom: var(--spacing-6);
   line-height: var(--line-height-relaxed);
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
+  max-width: 520px;
 }
 
-.welcome-actions {
+.hero-actions {
   display: flex;
-  justify-content: center;
   gap: var(--spacing-4);
+  margin-top: var(--spacing-3);
 }
 
-/* 按钮点击即时反馈 */
 .action-btn {
-  transition: transform 0.1s ease, box-shadow 0.1s ease !important;
+  padding: var(--spacing-4) var(--spacing-6);
+  font-size: var(--font-size-md);
+  height: auto;
+  transition: transform 0.15s ease, box-shadow 0.15s ease !important;
 }
 
 .action-btn:active {
   transform: scale(0.97) !important;
 }
 
-.welcome-features {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--spacing-5);
+.primary-action {
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
 }
 
-.feature-item {
-  text-align: center;
-  padding: var(--spacing-5) var(--spacing-3);
-  border-radius: var(--radius-lg);
-  transition: all 0.2s;
+.primary-action:hover {
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
 }
 
-.feature-item:hover {
+.secondary-action {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-dark);
+  color: var(--color-text-primary);
+}
+
+.secondary-action:hover {
   background: var(--color-bg-secondary);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* 快速入口 */
+.quick-links {
+  display: flex;
+  gap: var(--spacing-6);
+  margin-top: var(--spacing-4);
+  padding-top: var(--spacing-5);
+  border-top: 1px solid var(--color-border-light);
+}
+
+.quick-link {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+  font-size: var(--font-size-sm);
+  transition: color 0.2s;
+}
+
+.quick-link:hover {
+  color: var(--color-primary);
+}
+
+.quick-link .el-icon {
+  font-size: var(--font-size-md);
+}
+
+/* 右侧功能展示 */
+.hero-features {
+  display: flex;
+  align-items: center;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-4);
+  width: 100%;
+}
+
+.feature-card {
+  display: flex;
+  gap: var(--spacing-4);
+  padding: var(--spacing-5);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-light);
+  transition: all 0.25s ease;
+}
+
+.feature-card:hover {
+  border-color: var(--color-primary-lighter);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
+  transform: translateY(-2px);
 }
 
 .feature-icon {
+  flex-shrink: 0;
   width: 56px;
   height: 56px;
-  margin: 0 auto var(--spacing-3);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-primary-bg);
+  background: linear-gradient(135deg, var(--color-primary-bg) 0%, var(--color-primary-bg-hover) 100%);
   border-radius: var(--radius-lg);
   color: var(--color-primary);
 }
 
-.feature-item h3 {
-  margin: 0 0 var(--spacing-2);
+.feature-content h3 {
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+  margin-bottom: var(--spacing-2);
 }
 
-.feature-item p {
-  color: var(--color-text-tertiary);
+.feature-content p {
   font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
   line-height: var(--line-height-normal);
 }
 
-/* 统计区域 */
-.stats-section {
-  margin-bottom: var(--spacing-6);
+/* 底部装饰 */
+.hero-decoration {
+  padding: var(--spacing-8) 0 var(--spacing-4);
 }
 
-.stats-card {
-  background: var(--color-bg-card);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-6);
-  box-shadow: var(--shadow-md);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: var(--spacing-8);
+.decoration-line {
+  height: 3px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--color-primary-lighter) 20%,
+    var(--color-primary) 50%,
+    var(--color-primary-lighter) 80%,
+    transparent 100%);
+  border-radius: 999px;
+  opacity: 0.4;
 }
 
-.stat-item {
-  text-align: center;
-  padding: 0 var(--spacing-6);
-}
+/* 响应式布局 */
+@media (max-width: 1200px) {
+  .hero-section {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-8);
+    text-align: center;
+  }
 
-.stat-value {
-  font-size: var(--font-size-3xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  margin-bottom: var(--spacing-1);
-}
+  .hero-content {
+    align-items: center;
+  }
 
-.stat-value.completed {
-  color: var(--color-success);
-}
+  .hero-subtitle {
+    max-width: 600px;
+  }
 
-.stat-value.in-progress {
-  color: var(--color-warning);
-}
+  .hero-actions {
+    justify-content: center;
+  }
 
-.stat-label {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
-}
+  .quick-links {
+    justify-content: center;
+  }
 
-.stat-divider {
-  width: 1px;
-  height: 48px;
-  background: var(--color-border);
-}
-
-/* 响应式 */
-@media (max-width: 1024px) {
-  .welcome-features {
-    grid-template-columns: repeat(2, 1fr);
+  .features-grid {
+    max-width: 600px;
+    margin: 0 auto;
   }
 }
 
 @media (max-width: 768px) {
-  .welcome-card {
-    padding: var(--spacing-6);
+  .hero-title {
+    font-size: 40px;
   }
 
-  .welcome-actions {
+  .hero-subtitle {
+    font-size: var(--font-size-base);
+  }
+
+  .hero-actions {
     flex-direction: column;
+    width: 100%;
+    max-width: 320px;
   }
 
-  .welcome-features {
+  .action-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .features-grid {
     grid-template-columns: 1fr;
   }
 
-  .stats-card {
+  .feature-card {
     flex-direction: column;
-    gap: var(--spacing-4);
+    text-align: center;
   }
 
-  .stat-divider {
-    width: 100%;
-    height: 1px;
+  .feature-icon {
+    margin: 0 auto;
+  }
+
+  .quick-links {
+    flex-direction: column;
+    gap: var(--spacing-3);
   }
 }
 </style>

@@ -22,6 +22,46 @@
       </div>
     </div>
 
+    <!-- 统计卡片区域 -->
+    <div class="stats-cards">
+      <div class="stat-card">
+        <div class="stat-icon total">
+          <el-icon :size="24"><Document /></el-icon>
+        </div>
+        <div class="stat-info">
+          <div class="stat-value">{{ totalCount }}</div>
+          <div class="stat-label">文档总数</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon completed">
+          <el-icon :size="24"><CircleCheck /></el-icon>
+        </div>
+        <div class="stat-info">
+          <div class="stat-value completed">{{ completedCount }}</div>
+          <div class="stat-label">已完成</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon in-progress">
+          <el-icon :size="24"><Loading /></el-icon>
+        </div>
+        <div class="stat-info">
+          <div class="stat-value in-progress">{{ inProgressCount }}</div>
+          <div class="stat-label">进行中</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon failed">
+          <el-icon :size="24"><CircleClose /></el-icon>
+        </div>
+        <div class="stat-info">
+          <div class="stat-value failed">{{ failedCount }}</div>
+          <div class="stat-label">失败</div>
+        </div>
+      </div>
+    </div>
+
     <!-- 筛选区域 -->
     <el-card class="filter-card">
       <div class="filter-row">
@@ -83,13 +123,9 @@
       </div>
     </el-card>
 
-    <!-- 统计信息 -->
-    <div class="stats-bar" v-if="tasks.length > 0">
-      <span>共 {{ filteredTasks.length }} 个文档</span>
-      <span class="stats-divider">|</span>
-      <span>已完成 {{ completedCount }} 个</span>
-      <span class="stats-divider">|</span>
-      <span>进行中 {{ inProgressCount }} 个</span>
+    <!-- 筛选结果统计 -->
+    <div class="filter-results" v-if="tasks.length > 0 && (searchKeyword || filterStatus || filterMaterialType)">
+      <span>筛选结果：共 {{ filteredTasks.length }} 个文档</span>
     </div>
 
     <!-- 文档列表 -->
@@ -203,7 +239,7 @@ import { useReviewStore } from '@/store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Plus, Delete, Refresh, Document,
-  User, Clock, View, Edit
+  User, Clock, View, Edit, CircleCheck, Loading, CircleClose
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -282,12 +318,18 @@ const paginatedTasks = computed(() => {
   return filteredTasks.value.slice(start, end)
 })
 
+const totalCount = computed(() => tasks.value.length)
+
 const completedCount = computed(() =>
   tasks.value.filter(t => t.status === 'completed').length
 )
 
 const inProgressCount = computed(() =>
   tasks.value.filter(t => t.status === 'reviewing' || t.status === 'created' || t.status === 'uploading').length
+)
+
+const failedCount = computed(() =>
+  tasks.value.filter(t => t.status === 'failed').length
 )
 
 const selectAll = computed({
@@ -538,21 +580,100 @@ function formatTime(isoString) {
   align-items: center;
 }
 
-/* 统计信息 */
-.stats-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3) var(--spacing-4);
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--spacing-4);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+/* 统计卡片区域 */
+.stats-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-4);
+  margin-bottom: var(--spacing-5);
 }
 
-.stats-divider {
-  color: var(--color-border-dark);
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4);
+  padding: var(--spacing-5);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-light);
+  transition: all 0.2s ease;
+}
+
+.stat-card:hover {
+  border-color: var(--color-border-dark);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+}
+
+.stat-icon.total {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+.stat-icon.completed {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.stat-icon.in-progress {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.stat-icon.failed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.stat-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-value {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.stat-value.completed {
+  color: var(--color-success);
+}
+
+.stat-value.in-progress {
+  color: var(--color-warning);
+}
+
+.stat-value.failed {
+  color: var(--color-danger);
+}
+
+.stat-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+/* 筛选结果提示 */
+.filter-results {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-primary-bg);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-4);
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 /* 全选行 */
@@ -662,6 +783,12 @@ function formatTime(isoString) {
 }
 
 /* 响应式 */
+@media (max-width: 1024px) {
+  .stats-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 @media (max-width: 768px) {
   .page-header {
     flex-direction: column;
@@ -674,6 +801,24 @@ function formatTime(isoString) {
 
   .header-actions .el-button {
     flex: 1;
+  }
+
+  .stats-cards {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-3);
+  }
+
+  .stat-card {
+    padding: var(--spacing-4);
+  }
+
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .stat-value {
+    font-size: var(--font-size-xl);
   }
 
   .filter-row {
@@ -693,6 +838,12 @@ function formatTime(isoString) {
     flex-direction: column;
     width: 100%;
     margin-top: var(--spacing-3);
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-cards {
+    grid-template-columns: 1fr;
   }
 }
 </style>
