@@ -105,7 +105,7 @@
               :auto-upload="false"
               :show-file-list="false"
               :on-change="handleDocumentChange"
-              accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.md"
+              accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.md,.txt"
             >
               <div v-if="currentTask?.document_filename" class="uploaded-file">
                 <el-icon :size="40" color="#67c23a"><DocumentChecked /></el-icon>

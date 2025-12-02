@@ -22,7 +22,7 @@ from docx import Document
 from .models import LoadedDocument
 
 # 支持的文档格式（待审阅文档）
-DOCUMENT_EXTENSIONS = {".md", ".docx", ".xlsx", ".pdf"}
+DOCUMENT_EXTENSIONS = {".md", ".txt", ".docx", ".xlsx", ".pdf"}
 # 支持的图片格式
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 # 支持的表格格式（用于审核标准）

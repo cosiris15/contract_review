@@ -611,7 +611,7 @@ async def upload_document(
 
     # 检查文件类型
     suffix = Path(file.filename).suffix.lower()
-    allowed = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".docx", ".xlsx", ".md"}
+    allowed = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".docx", ".xlsx", ".md", ".txt"}
     if suffix not in allowed:
         raise HTTPException(
             status_code=400,
