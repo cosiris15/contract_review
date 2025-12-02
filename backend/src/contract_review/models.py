@@ -303,6 +303,9 @@ class ReviewResult(BaseModel):
     # 统计摘要
     summary: ReviewSummary = Field(default_factory=ReviewSummary)
 
+    # 系统提示（如风险点截取提示）
+    notices: List[str] = Field(default_factory=list)
+
     # 元数据
     reviewed_at: datetime = Field(default_factory=datetime.now)
     llm_model: str = ""

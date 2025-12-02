@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import Settings
 from .gemini_client import GeminiClient
@@ -142,7 +142,7 @@ class ReviewEngine:
 
         # Stage 2: 生成修改建议
         update_progress("generating", 40, mod_msg_tpl.format(len(risks)))
-        modifications = await self._generate_modifications(
+        modifications, truncation_notice = await self._generate_modifications(
             risks,
             document.text,
             our_party,
@@ -152,6 +152,8 @@ class ReviewEngine:
             business_context,
         )
         logger.info(f"生成 {len(modifications)} 条修改建议")
+        if truncation_notice:
+            logger.info(f"风险点截取提示: {truncation_notice}")
 
         # Stage 3: 生成行动建议
         update_progress("generating", 80, action_msg)
@@ -180,6 +182,11 @@ class ReviewEngine:
             business_line_id = business_context.get("business_line_id")
             business_line_name = business_context.get("business_line_name")
 
+        # 收集系统提示
+        notices = []
+        if truncation_notice:
+            notices.append(truncation_notice)
+
         result = ReviewResult(
             task_id=task_id,
             document_name=document.metadata.get("filename", "unknown"),
@@ -193,6 +200,7 @@ class ReviewEngine:
             risks=risks,
             modifications=modifications,
             actions=actions,
+            notices=notices,
             reviewed_at=datetime.now(),
             llm_model=self.settings.gemini.model if self.llm_provider == "gemini" else self.settings.llm.model,
             prompt_version=PROMPT_VERSION,
@@ -265,8 +273,8 @@ class ReviewEngine:
             logger.error(f"JSON 解析失败: {e}\n响应内容: {response[:500]}")
             return []
 
-    # 单次审阅最大风险点数量（静默上限，超过时按优先级截取）
-    MAX_RISKS_FOR_MODIFICATION = 20
+    # 单次审阅最大风险点数量（超过时按优先级截取并提示用户）
+    MAX_RISKS_FOR_MODIFICATION = 40
 
     async def _generate_modifications(
         self,
@@ -277,18 +285,33 @@ class ReviewEngine:
         language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
         business_context: Optional[Dict[str, Any]] = None,
-    ) -> List[ModificationSuggestion]:
-        """Stage 2: 生成修改建议"""
-        if not risks:
-            return []
+    ) -> Tuple[List[ModificationSuggestion], Optional[str]]:
+        """
+        Stage 2: 生成修改建议
 
-        # 静默限制风险点数量，优先处理高风险
+        Returns:
+            Tuple[修改建议列表, 风险点截取提示（如果有截取）]
+        """
+        if not risks:
+            return [], None
+
+        truncation_notice = None
+        original_count = len(risks)
+
+        # 限制风险点数量，优先处理高风险，并友好提示用户
         if len(risks) > self.MAX_RISKS_FOR_MODIFICATION:
             # 按风险等级排序：high > medium > low
             risk_order = {"high": 0, "medium": 1, "low": 2}
             sorted_risks = sorted(risks, key=lambda r: risk_order.get(r.risk_level, 1))
             risks = sorted_risks[:self.MAX_RISKS_FOR_MODIFICATION]
-            logger.info(f"风险点数量超过上限，仅处理前 {self.MAX_RISKS_FOR_MODIFICATION} 个高优先级风险点")
+            skipped_count = original_count - self.MAX_RISKS_FOR_MODIFICATION
+
+            if language == "zh-CN":
+                truncation_notice = f"本文档共识别出 {original_count} 个风险点，系统已优先处理 {self.MAX_RISKS_FOR_MODIFICATION} 个高优先级风险点，{skipped_count} 个低优先级风险点暂未生成修改建议。"
+            else:
+                truncation_notice = f"This document has {original_count} risks identified. The system prioritized {self.MAX_RISKS_FOR_MODIFICATION} high-priority risks. {skipped_count} lower-priority risks were not processed."
+
+            logger.info(f"风险点数量 {original_count} 超过上限 {self.MAX_RISKS_FOR_MODIFICATION}，已截取并提示用户")
 
         modifications = []
         total = len(risks)
@@ -337,7 +360,7 @@ class ReviewEngine:
                 logger.error(f"生成修改建议失败: {e}")
                 continue
 
-        return modifications
+        return modifications, truncation_notice
 
     def _parse_modification_response(
         self, response: str, risk_id: str, original_text: str

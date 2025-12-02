@@ -1,5 +1,16 @@
 <template>
   <div class="result-view" v-loading="loading">
+    <!-- 系统提示（如风险点截取提示） -->
+    <el-alert
+      v-for="(notice, index) in result?.notices || []"
+      :key="index"
+      :title="notice"
+      type="info"
+      show-icon
+      :closable="true"
+      style="margin-bottom: 12px;"
+    />
+
     <!-- 顶部信息栏 -->
     <div class="result-header">
       <div class="header-info">
