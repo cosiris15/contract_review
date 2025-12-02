@@ -4,7 +4,9 @@
 支持加载多种格式的文档：
 - 文本格式：.md, .txt
 - Word 文档：.docx
+- Excel 文档：.xlsx
 - PDF 文档：.pdf
+- 图片格式：.jpg, .jpeg, .png, .webp
 - 表格格式：.xlsx, .xls, .csv（用于审核标准）
 """
 
@@ -19,12 +21,14 @@ from docx import Document
 
 from .models import LoadedDocument
 
-# 支持的文档格式
-DOCUMENT_EXTENSIONS = {".md", ".txt", ".docx", ".pdf"}
+# 支持的文档格式（待审阅文档）
+DOCUMENT_EXTENSIONS = {".md", ".docx", ".xlsx", ".pdf"}
+# 支持的图片格式
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 # 支持的表格格式（用于审核标准）
 TABLE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 # 所有支持的格式
-SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | TABLE_EXTENSIONS
+SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS | TABLE_EXTENSIONS
 
 
 def scan_documents(root: Path, extensions: Optional[set] = None) -> List[Path]:
@@ -154,6 +158,11 @@ def is_document_file(path: Path) -> bool:
     return path.suffix.lower() in DOCUMENT_EXTENSIONS
 
 
+def is_image_file(path: Path) -> bool:
+    """检查是否为图片文件"""
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
 def is_table_file(path: Path) -> bool:
     """检查是否为表格文件"""
     return path.suffix.lower() in TABLE_EXTENSIONS
@@ -164,11 +173,13 @@ def get_file_type(path: Path) -> Optional[str]:
     获取文件类型
 
     Returns:
-        "document" | "table" | None
+        "document" | "image" | "table" | None
     """
     suffix = path.suffix.lower()
     if suffix in DOCUMENT_EXTENSIONS:
         return "document"
+    elif suffix in IMAGE_EXTENSIONS:
+        return "image"
     elif suffix in TABLE_EXTENSIONS:
         return "table"
     return None

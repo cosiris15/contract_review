@@ -611,11 +611,11 @@ async def upload_document(
 
     # 检查文件类型
     suffix = Path(file.filename).suffix.lower()
-    allowed = {".md", ".txt", ".docx", ".pdf"}
+    allowed = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".docx", ".xlsx", ".md"}
     if suffix not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件类型。支持的格式: {', '.join(allowed)}",
+            detail=f"不支持的文件类型。支持的格式: PDF、图片、Word、Excel、Markdown",
         )
 
     content = await file.read()
