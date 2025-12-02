@@ -1096,6 +1096,293 @@ class ExportRedlineRequest(BaseModel):
     include_comments: bool = False  # 是否将行动建议作为批注添加
 
 
+# ==================== Redline 异步导出相关 ====================
+
+from dataclasses import dataclass
+from typing import Dict
+from datetime import datetime, timedelta
+import threading
+
+@dataclass
+class RedlineExportJob:
+    """Redline 导出任务"""
+    task_id: str
+    user_id: str
+    status: str  # pending, processing, completed, failed
+    progress: int  # 0-100
+    message: str
+    document_bytes: Optional[bytes] = None
+    filename: Optional[str] = None
+    created_at: datetime = None
+    completed_at: datetime = None
+    error: Optional[str] = None
+    # 统计信息
+    applied_count: int = 0
+    skipped_count: int = 0
+    comments_added: int = 0
+    comments_skipped: int = 0
+
+# 内存缓存存储导出任务（键: task_id）
+_redline_export_jobs: Dict[str, RedlineExportJob] = {}
+_redline_jobs_lock = threading.Lock()
+
+def _cleanup_old_jobs():
+    """清理超过1小时的导出任务"""
+    with _redline_jobs_lock:
+        now = datetime.now()
+        expired_keys = [
+            k for k, v in _redline_export_jobs.items()
+            if v.created_at and (now - v.created_at) > timedelta(hours=1)
+        ]
+        for k in expired_keys:
+            del _redline_export_jobs[k]
+
+
+async def _run_redline_export(
+    job: RedlineExportJob,
+    doc_path: Path,
+    result: ReviewResult,
+    request: Optional[ExportRedlineRequest],
+):
+    """后台执行 Redline 导出"""
+    try:
+        job.status = "processing"
+        job.progress = 10
+        job.message = "正在准备文档..."
+
+        # 筛选要应用的修改
+        if request and request.modification_ids:
+            modifications = [
+                m for m in result.modifications
+                if m.id in request.modification_ids
+            ]
+            filter_confirmed = False
+        else:
+            modifications = result.modifications
+            filter_confirmed = True
+
+        include_comments = request.include_comments if request else False
+
+        job.progress = 30
+        job.message = "正在应用修改..."
+
+        # 生成 Redline 文档
+        redline_result = generate_redline_document(
+            docx_path=doc_path,
+            modifications=modifications,
+            author="十行助理",
+            filter_confirmed=filter_confirmed,
+            actions=result.actions if include_comments else None,
+            risks=result.risks if include_comments else None,
+            include_comments=include_comments,
+        )
+
+        job.progress = 90
+        job.message = "正在完成导出..."
+
+        if not redline_result.success:
+            error_msg = "; ".join(redline_result.skipped_reasons[:3])
+            job.status = "failed"
+            job.error = f"生成失败: {error_msg}"
+            job.message = job.error
+            return
+
+        # 生成文件名
+        original_name = doc_path.stem
+        filename = f"{original_name}_redline.docx"
+
+        # 保存结果
+        job.document_bytes = redline_result.document_bytes
+        job.filename = filename
+        job.applied_count = redline_result.applied_count
+        job.skipped_count = redline_result.skipped_count
+        job.comments_added = redline_result.comments_added
+        job.comments_skipped = redline_result.comments_skipped
+        job.status = "completed"
+        job.progress = 100
+        job.message = "导出完成"
+        job.completed_at = datetime.now()
+
+        logger.info(
+            f"任务 {job.task_id} Redline 导出完成: 应用 {redline_result.applied_count} 条修改，"
+            f"添加 {redline_result.comments_added} 条批注"
+        )
+
+    except Exception as e:
+        logger.error(f"Redline 导出失败: {e}", exc_info=True)
+        job.status = "failed"
+        job.error = str(e)
+        job.message = f"导出失败: {str(e)}"
+
+
+@app.post("/api/tasks/{task_id}/export/redline/start")
+async def start_redline_export(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    request: ExportRedlineRequest = None,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    启动后台 Redline 导出任务（需要登录）
+
+    返回任务状态，前端可以轮询 /status 端点查询进度。
+    """
+    # 清理过期任务
+    _cleanup_old_jobs()
+
+    # 检查是否已有进行中的任务
+    with _redline_jobs_lock:
+        existing_job = _redline_export_jobs.get(task_id)
+        if existing_job and existing_job.status in ("pending", "processing"):
+            return {
+                "job_id": task_id,
+                "status": existing_job.status,
+                "progress": existing_job.progress,
+                "message": existing_job.message,
+            }
+
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 检查原始文档
+    if USE_SUPABASE:
+        doc_path = task_manager.get_document_path(task_id, user_id)
+    else:
+        doc_path = task_manager.get_document_path(task_id)
+    if not doc_path:
+        raise HTTPException(status_code=400, detail="未找到原始文档")
+
+    if doc_path.suffix.lower() != '.docx':
+        raise HTTPException(
+            status_code=400,
+            detail=f"Redline 导出只支持 .docx 格式，当前文档格式为 {doc_path.suffix}"
+        )
+
+    # 获取审阅结果
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
+
+    if not result:
+        raise HTTPException(status_code=404, detail="暂无审阅结果")
+
+    # 检查是否有内容可导出
+    if request and request.modification_ids:
+        confirmed_count = len(request.modification_ids)
+    else:
+        confirmed_count = sum(1 for m in result.modifications if m.user_confirmed)
+
+    include_comments = request.include_comments if request else False
+    has_actions = bool(result.actions) if include_comments else False
+
+    if confirmed_count == 0 and not has_actions:
+        raise HTTPException(status_code=400, detail="没有已确认的修改建议或行动建议")
+
+    # 创建导出任务
+    job = RedlineExportJob(
+        task_id=task_id,
+        user_id=user_id,
+        status="pending",
+        progress=0,
+        message="正在排队...",
+        created_at=datetime.now(),
+    )
+
+    with _redline_jobs_lock:
+        _redline_export_jobs[task_id] = job
+
+    # 启动后台任务
+    background_tasks.add_task(_run_redline_export, job, doc_path, result, request)
+
+    return {
+        "job_id": task_id,
+        "status": "pending",
+        "progress": 0,
+        "message": "导出任务已启动",
+    }
+
+
+@app.get("/api/tasks/{task_id}/export/redline/status")
+async def get_redline_export_status(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    查询 Redline 导出任务状态（需要登录）
+    """
+    with _redline_jobs_lock:
+        job = _redline_export_jobs.get(task_id)
+
+    if not job:
+        return {
+            "job_id": task_id,
+            "status": "not_found",
+            "progress": 0,
+            "message": "没有找到导出任务",
+        }
+
+    response = {
+        "job_id": task_id,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+    }
+
+    if job.status == "completed":
+        response["applied_count"] = job.applied_count
+        response["skipped_count"] = job.skipped_count
+        response["comments_added"] = job.comments_added
+        response["comments_skipped"] = job.comments_skipped
+        response["filename"] = job.filename
+    elif job.status == "failed":
+        response["error"] = job.error
+
+    return response
+
+
+@app.get("/api/tasks/{task_id}/export/redline/download")
+async def download_redline_export(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    下载已完成的 Redline 导出文件（需要登录）
+    """
+    with _redline_jobs_lock:
+        job = _redline_export_jobs.get(task_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail="没有找到导出任务")
+
+    if job.status != "completed":
+        raise HTTPException(status_code=400, detail=f"导出任务未完成，当前状态: {job.status}")
+
+    if not job.document_bytes:
+        raise HTTPException(status_code=500, detail="导出文件丢失")
+
+    # URL 编码文件名以支持中文
+    from urllib.parse import quote
+    filename_encoded = quote(job.filename or "redline.docx")
+    content_disposition = f"attachment; filename*=UTF-8''{filename_encoded}"
+
+    return Response(
+        content=job.document_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": content_disposition,
+            "X-Redline-Applied": str(job.applied_count),
+            "X-Redline-Skipped": str(job.skipped_count),
+            "X-Comments-Added": str(job.comments_added),
+            "X-Comments-Skipped": str(job.comments_skipped),
+        },
+    )
+
+
+# ==================== 原同步导出 API（保留兼容性）====================
+
 @app.post("/api/tasks/{task_id}/export/redline")
 async def export_redline(
     task_id: str,

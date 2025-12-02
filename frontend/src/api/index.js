@@ -282,7 +282,25 @@ export default {
     return `https://contract-review-z9te.onrender.com/api/tasks/${taskId}/export/report`
   },
 
-  // Redline 导出
+  // Redline 导出（异步模式）
+  startRedlineExport(taskId, modificationIds = null, includeComments = false) {
+    return api.post(`/tasks/${taskId}/export/redline/start`, {
+      modification_ids: modificationIds,
+      include_comments: includeComments
+    })
+  },
+
+  getRedlineExportStatus(taskId) {
+    return api.get(`/tasks/${taskId}/export/redline/status`)
+  },
+
+  downloadRedlineExport(taskId) {
+    return api.get(`/tasks/${taskId}/export/redline/download`, {
+      responseType: 'blob'
+    })
+  },
+
+  // Redline 导出（同步模式，保留兼容性）
   exportRedline(taskId, modificationIds = null, includeComments = false) {
     return api.post(`/tasks/${taskId}/export/redline`, {
       modification_ids: modificationIds,

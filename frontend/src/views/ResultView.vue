@@ -105,15 +105,48 @@
         </div>
       </div>
 
+      <!-- 导出进度显示 -->
+      <div v-if="redlineExportStatus" class="export-progress">
+        <el-divider />
+        <div class="progress-header">
+          <span>{{ redlineExportStatus.message }}</span>
+          <el-tag v-if="redlineExportStatus.status === 'completed'" type="success" size="small">完成</el-tag>
+          <el-tag v-else-if="redlineExportStatus.status === 'failed'" type="danger" size="small">失败</el-tag>
+          <el-tag v-else type="info" size="small">{{ redlineExportStatus.progress }}%</el-tag>
+        </div>
+        <el-progress
+          :percentage="redlineExportStatus.progress"
+          :status="redlineExportStatus.status === 'completed' ? 'success' : redlineExportStatus.status === 'failed' ? 'exception' : ''"
+          :stroke-width="10"
+          style="margin-top: 8px;"
+        />
+        <div v-if="redlineExportStatus.status === 'completed'" class="export-result">
+          <p>应用 {{ redlineExportStatus.applied_count }} 条修改，跳过 {{ redlineExportStatus.skipped_count }} 条</p>
+          <p v-if="includeComments">添加 {{ redlineExportStatus.comments_added }} 条批注</p>
+        </div>
+        <div v-if="redlineExportStatus.status === 'failed'" class="export-error">
+          <el-alert :title="redlineExportStatus.error || '导出失败'" type="error" show-icon :closable="false" />
+        </div>
+      </div>
+
       <template #footer>
-        <el-button @click="showRedlineDialog = false">取消</el-button>
+        <el-button @click="closeRedlineDialog">{{ redlineExportStatus?.status === 'completed' ? '关闭' : '取消' }}</el-button>
         <el-button
+          v-if="redlineExportStatus?.status === 'completed'"
+          type="success"
+          @click="handleDownloadRedline"
+          :loading="redlineDownloading"
+        >
+          下载文件
+        </el-button>
+        <el-button
+          v-else
           type="primary"
           @click="handleExportRedline"
           :loading="redlineExporting"
           :disabled="confirmedCount === 0 && (!includeComments || !hasCommentableActions)"
         >
-          导出
+          {{ redlineExporting ? '正在导出...' : '开始导出' }}
         </el-button>
       </template>
     </el-dialog>
@@ -401,6 +434,9 @@ const redlineExporting = ref(false)
 const redlinePreview = ref(null)
 const showRedlineDialog = ref(false)
 const includeComments = ref(false)
+const redlineExportStatus = ref(null)  // 导出任务状态
+const redlineDownloading = ref(false)  // 下载中状态
+let redlineStatusPoller = null  // 状态轮询定时器
 
 // 独立存储 UI 状态，不受 store 重载影响
 const modificationUIStates = ref({}) // { modId: { showDiff: true, isEditing: false, editText: '' } }
@@ -887,21 +923,75 @@ function handleExport(command) {
   }
 }
 
+// 关闭 Redline 对话框
+function closeRedlineDialog() {
+  // 停止轮询
+  if (redlineStatusPoller) {
+    clearInterval(redlineStatusPoller)
+    redlineStatusPoller = null
+  }
+  showRedlineDialog.value = false
+  // 重置状态（延迟重置，让关闭动画完成）
+  setTimeout(() => {
+    redlineExportStatus.value = null
+  }, 300)
+}
+
+// 轮询导出状态
+async function pollRedlineStatus() {
+  try {
+    const res = await api.getRedlineExportStatus(taskId.value)
+    redlineExportStatus.value = res.data
+
+    // 如果完成或失败，停止轮询
+    if (res.data.status === 'completed' || res.data.status === 'failed') {
+      if (redlineStatusPoller) {
+        clearInterval(redlineStatusPoller)
+        redlineStatusPoller = null
+      }
+      redlineExporting.value = false
+    }
+  } catch (error) {
+    console.error('获取导出状态失败:', error)
+  }
+}
+
+// 启动异步导出
 async function handleExportRedline() {
   redlineExporting.value = true
-  try {
-    const res = await api.exportRedline(taskId.value, null, includeComments.value)
+  redlineExportStatus.value = { status: 'pending', progress: 0, message: '正在启动导出...' }
 
-    // 从响应头获取文件名（支持 UTF-8 编码）
+  try {
+    // 启动后台导出任务
+    const res = await api.startRedlineExport(taskId.value, null, includeComments.value)
+    redlineExportStatus.value = res.data
+
+    // 开始轮询状态
+    if (redlineStatusPoller) {
+      clearInterval(redlineStatusPoller)
+    }
+    redlineStatusPoller = setInterval(pollRedlineStatus, 1000)  // 每秒轮询一次
+  } catch (error) {
+    console.error('启动导出失败:', error)
+    redlineExportStatus.value = { status: 'failed', progress: 0, message: '启动失败', error: error.message }
+    redlineExporting.value = false
+  }
+}
+
+// 下载已完成的导出文件
+async function handleDownloadRedline() {
+  redlineDownloading.value = true
+  try {
+    const res = await api.downloadRedlineExport(taskId.value)
+
+    // 从响应头获取文件名
     const contentDisposition = res.headers['content-disposition']
     let filename = 'document_redline.docx'
     if (contentDisposition) {
-      // 优先匹配 filename*=UTF-8'' 格式（RFC 5987）
       const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;\s]+)/)
       if (utf8Match) {
         filename = decodeURIComponent(utf8Match[1])
       } else {
-        // 回退到普通 filename 格式
         const match = contentDisposition.match(/filename="?([^"]+)"?/)
         if (match) filename = match[1]
       }
@@ -920,38 +1010,13 @@ async function handleExportRedline() {
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
 
-    // 显示成功信息
-    const applied = parseInt(res.headers['x-redline-applied'] || '0')
-    const commentsAdded = parseInt(res.headers['x-comments-added'] || '0')
-    const skipped = parseInt(res.headers['x-redline-skipped'] || '0')
-    const commentsSkipped = parseInt(res.headers['x-comments-skipped'] || '0')
-    const totalSkipped = skipped + commentsSkipped
-
-    let message = '导出成功！'
-    if (applied > 0) {
-      message += `已应用 ${applied} 条修改`
-    }
-    if (commentsAdded > 0) {
-      message += `${applied > 0 ? '，' : ''}添加 ${commentsAdded} 条批注`
-    }
-
-    // 如果有跳过的项目，显示警告
-    if (totalSkipped > 0) {
-      ElMessage.warning({
-        message: `${message}，但有 ${totalSkipped} 条未能应用（可能是原文在文档中找不到匹配）`,
-        duration: 6000
-      })
-    } else {
-      ElMessage.success(message)
-    }
-
-    // 关闭对话框
-    showRedlineDialog.value = false
+    ElMessage.success('文件下载成功')
+    closeRedlineDialog()
   } catch (error) {
-    console.error('导出 Redline 失败:', error)
-    ElMessage.error(error.message || '导出失败，请重试')
+    console.error('下载失败:', error)
+    ElMessage.error(error.message || '下载失败，请重试')
   } finally {
-    redlineExporting.value = false
+    redlineDownloading.value = false
   }
 }
 </script>
@@ -1161,5 +1226,36 @@ async function handleExportRedline() {
 
 .option-count strong {
   color: var(--color-primary);
+}
+
+/* 导出进度样式 */
+.export-progress {
+  margin-top: var(--spacing-2);
+}
+
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.export-result {
+  margin-top: var(--spacing-3);
+  padding: var(--spacing-3);
+  background: var(--color-success-bg);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+}
+
+.export-result p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.export-error {
+  margin-top: var(--spacing-3);
 }
 </style>
