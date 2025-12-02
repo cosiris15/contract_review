@@ -94,7 +94,7 @@ router.onError((error, to, from) => {
 })
 
 router.beforeEach((to, from, next) => {
-  document.title = `${to.meta.title || '法务文本审阅系统'} - 法务文本审阅系统`
+  document.title = `${to.meta.title || '十行合同'} - 十行合同`
   next()
 })
 
