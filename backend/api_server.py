@@ -745,16 +745,9 @@ async def run_review(
                 business_context = {
                     "business_line_id": business_line.id,
                     "business_line_name": business_line.name,
+                    "name": business_line.name,  # prompts.py 使用 "name" 键
                     "industry": business_line.industry,
-                    "contexts": [
-                        {
-                            "category": ctx.category,
-                            "item": ctx.item,
-                            "description": ctx.description,
-                            "priority": ctx.priority,
-                        }
-                        for ctx in business_line.contexts
-                    ],
+                    "contexts": business_line.contexts,  # 直接传递 BusinessContext 对象列表
                 }
                 logger.info(f"使用业务条线: {business_line.name} ({len(business_line.contexts)} 条背景信息)")
 
