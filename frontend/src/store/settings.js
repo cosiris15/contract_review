@@ -4,7 +4,7 @@ const STORAGE_KEY = 'contract_review_settings'
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
-    // 智能水平: 'advanced' (高级/Gemini) | 'basic' (初级/DeepSeek)
+    // 模型选择: 'advanced' (国际模型/Gemini) | 'basic' (国内模型/DeepSeek)
     intelligenceLevel: 'advanced',
     // 设置抽屉是否显示
     settingsDrawerVisible: false,
@@ -18,14 +18,14 @@ export const useSettingsStore = defineStore('settings', {
 
     // 获取显示文案
     intelligenceLevelText: (state) => {
-      return state.intelligenceLevel === 'advanced' ? '高级' : '初级'
+      return state.intelligenceLevel === 'advanced' ? '国际模型' : '国内模型'
     },
 
     // 获取详细描述
     intelligenceLevelDescription: (state) => {
       return state.intelligenceLevel === 'advanced'
-        ? '更精准的风险识别和建议'
-        : '快速审阅，经济实惠'
+        ? '使用 Gemini'
+        : '使用 DeepSeek'
     }
   },
 

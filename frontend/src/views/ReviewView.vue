@@ -92,7 +92,10 @@
               <div v-if="currentTask?.document_filename" class="uploaded-file">
                 <el-icon :size="40" color="#67c23a"><DocumentChecked /></el-icon>
                 <span>{{ currentTask.document_filename }}</span>
-                <el-button type="primary" text size="small">重新上传</el-button>
+                <div class="uploaded-file-actions">
+                  <el-button type="primary" text size="small">重新上传</el-button>
+                  <el-button type="danger" text size="small" @click.stop="handleClearDocument">取消</el-button>
+                </div>
               </div>
               <div v-else class="upload-placeholder">
                 <el-icon :size="40"><UploadFilled /></el-icon>
@@ -865,6 +868,14 @@ async function handleDocumentChange(file) {
   }
 }
 
+// 取消已上传的文档（清除显示状态，允许重新拖入）
+function handleClearDocument() {
+  if (currentTask.value) {
+    currentTask.value.document_filename = null
+    currentTask.value.document_storage_name = null
+  }
+}
+
 // 检测文档语言
 async function detectDocumentLanguage(file) {
   try {
@@ -1424,9 +1435,14 @@ async function applyStandards() {
   color: var(--color-success);
 }
 
-.uploaded-file span {
+.uploaded-file > span {
   color: var(--color-text-primary);
   font-size: var(--font-size-base);
+}
+
+.uploaded-file-actions {
+  display: flex;
+  gap: var(--spacing-2);
 }
 
 .standard-status {

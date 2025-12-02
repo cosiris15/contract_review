@@ -8,14 +8,14 @@
     :close-on-press-escape="true"
   >
     <div class="settings-content">
-      <!-- 智能水平设置 -->
+      <!-- 模型选择设置 -->
       <div class="settings-section">
         <div class="section-header">
           <el-icon class="section-icon"><Cpu /></el-icon>
-          <span class="section-title">智能水平</span>
+          <span class="section-title">审阅模型</span>
         </div>
         <div class="section-description">
-          选择审阅时使用的智能分析能力
+          选择审阅时使用的 AI 模型
         </div>
 
         <el-radio-group
@@ -26,11 +26,10 @@
           <el-radio value="advanced" class="intelligence-radio">
             <div class="radio-content">
               <div class="radio-header">
-                <span class="radio-title">高级</span>
-                <el-tag type="success" size="small" effect="plain">推荐</el-tag>
+                <span class="radio-title">国际模型</span>
               </div>
               <div class="radio-description">
-                更精准的风险识别和建议
+                使用 Gemini，适合国际化场景
               </div>
             </div>
           </el-radio>
@@ -38,10 +37,10 @@
           <el-radio value="basic" class="intelligence-radio">
             <div class="radio-content">
               <div class="radio-header">
-                <span class="radio-title">初级</span>
+                <span class="radio-title">国内模型</span>
               </div>
               <div class="radio-description">
-                快速审阅，经济实惠
+                使用 DeepSeek，国内访问更稳定
               </div>
             </div>
           </el-radio>
