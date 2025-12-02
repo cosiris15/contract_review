@@ -42,26 +42,6 @@
             <el-icon><Plus /></el-icon>
             新建审阅任务
           </el-button>
-          <el-button
-            size="large"
-            @click="goToDocuments"
-            class="action-btn secondary-action"
-          >
-            <el-icon><FolderOpened /></el-icon>
-            文档管理
-          </el-button>
-        </div>
-
-        <!-- 快速入口 -->
-        <div class="quick-links">
-          <router-link to="/standards" class="quick-link">
-            <el-icon><Setting /></el-icon>
-            <span>审阅标准管理</span>
-          </router-link>
-          <router-link to="/business" class="quick-link">
-            <el-icon><Briefcase /></el-icon>
-            <span>业务类型管理</span>
-          </router-link>
         </div>
       </div>
 
@@ -122,7 +102,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
-import { Plus, FolderOpened, Search, Edit, List, Download, Cpu, Setting, Briefcase } from '@element-plus/icons-vue'
+import { Plus, Search, Edit, List, Download, Cpu } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
@@ -164,10 +144,6 @@ function goToNewReview() {
   // 立即跳转，不阻塞
   store.resetState()
   router.push('/review')
-}
-
-function goToDocuments() {
-  router.push('/documents')
 }
 </script>
 
@@ -255,7 +231,7 @@ function goToDocuments() {
 
 .hero-actions {
   display: flex;
-  gap: var(--spacing-4);
+  justify-content: center;
   margin-top: var(--spacing-3);
 }
 
@@ -276,45 +252,6 @@ function goToDocuments() {
 
 .primary-action:hover {
   box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
-}
-
-.secondary-action {
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border-dark);
-  color: var(--color-text-primary);
-}
-
-.secondary-action:hover {
-  background: var(--color-bg-secondary);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-/* 快速入口 */
-.quick-links {
-  display: flex;
-  gap: var(--spacing-6);
-  margin-top: var(--spacing-4);
-  padding-top: var(--spacing-5);
-  border-top: 1px solid var(--color-border-light);
-}
-
-.quick-link {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  color: var(--color-text-tertiary);
-  text-decoration: none;
-  font-size: var(--font-size-sm);
-  transition: color 0.2s;
-}
-
-.quick-link:hover {
-  color: var(--color-primary);
-}
-
-.quick-link .el-icon {
-  font-size: var(--font-size-md);
 }
 
 /* 右侧功能展示 */
@@ -404,14 +341,6 @@ function goToDocuments() {
     max-width: 600px;
   }
 
-  .hero-actions {
-    justify-content: center;
-  }
-
-  .quick-links {
-    justify-content: center;
-  }
-
   .features-grid {
     max-width: 600px;
     margin: 0 auto;
@@ -427,17 +356,6 @@ function goToDocuments() {
     font-size: var(--font-size-base);
   }
 
-  .hero-actions {
-    flex-direction: column;
-    width: 100%;
-    max-width: 320px;
-  }
-
-  .action-btn {
-    width: 100%;
-    justify-content: center;
-  }
-
   .features-grid {
     grid-template-columns: 1fr;
   }
@@ -449,11 +367,6 @@ function goToDocuments() {
 
   .feature-icon {
     margin: 0 auto;
-  }
-
-  .quick-links {
-    flex-direction: column;
-    gap: var(--spacing-3);
   }
 }
 </style>
