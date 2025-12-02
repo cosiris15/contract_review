@@ -231,7 +231,7 @@ function goToNewReview() {
 
 .hero-actions {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   margin-top: var(--spacing-3);
 }
 
@@ -339,6 +339,10 @@ function goToNewReview() {
 
   .hero-subtitle {
     max-width: 600px;
+  }
+
+  .hero-actions {
+    justify-content: center;
   }
 
   .features-grid {
