@@ -52,8 +52,8 @@
     <div class="welcome-section">
       <div class="welcome-card">
         <div class="welcome-content">
-          <h1 class="welcome-title">十行小助</h1>
-          <p class="welcome-desc">使用 AI 技术从法务角度审阅合同、营销材料等文本，自动识别风险点并提供专业的修改建议。</p>
+          <h1 class="welcome-title">十行合同</h1>
+          <p class="welcome-desc">助力法务审阅合同、营销材料等文本，识别风险点并提供专业的修改建议。</p>
           <div class="welcome-actions">
             <el-button
               type="primary"
