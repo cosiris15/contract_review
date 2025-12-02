@@ -1229,9 +1229,12 @@ async def export_redline(
 
 
 @app.get("/api/tasks/{task_id}/export/redline/preview")
-async def preview_redline(task_id: str):
+async def preview_redline(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
     """
-    预览 Redline 导出信息
+    预览 Redline 导出信息（需要登录）
 
     返回可以导出的修改建议数量、行动建议数量和状态。
     """
@@ -1240,12 +1243,18 @@ async def preview_redline(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 检查原始文档格式
-    doc_path = task_manager.get_document_path(task_id)
+    if USE_SUPABASE:
+        doc_path = task_manager.get_document_path(task_id, user_id)
+    else:
+        doc_path = task_manager.get_document_path(task_id)
     can_export = doc_path and doc_path.suffix.lower() == '.docx'
 
     # 获取审阅结果
-    task_dir = settings.review.tasks_dir / task_id
-    result = storage_manager.load_result(task_dir)
+    if USE_SUPABASE:
+        result = storage_manager.load_result(task_id)
+    else:
+        task_dir = settings.review.tasks_dir / task_id
+        result = storage_manager.load_result(task_dir)
 
     if not result:
         return {
