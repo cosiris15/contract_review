@@ -26,7 +26,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.contract_review.config import get_settings, load_settings
-from src.contract_review.document_loader import load_document
+from src.contract_review.document_loader import load_document, load_document_async
+from src.contract_review.ocr_service import OCRService, init_ocr_service, get_ocr_service
 from src.contract_review.models import (
     MaterialType,
     ModificationSuggestion,
@@ -146,6 +147,16 @@ else:
 
 # LLM 客户端
 llm_client = LLMClient(settings.llm)
+
+# OCR 服务初始化（用于图片和扫描 PDF 识别）
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+QWEN_OCR_MODEL = os.getenv("QWEN_OCR_MODEL", "qwen-vl-ocr-2025-11-20")
+
+if DASHSCOPE_API_KEY:
+    logger.info("OCR 服务已配置（阿里云 DashScope）")
+    init_ocr_service(api_key=DASHSCOPE_API_KEY, model=QWEN_OCR_MODEL)
+else:
+    logger.warning("OCR 服务未配置（DASHSCOPE_API_KEY 未设置），图片和扫描 PDF 将无法处理")
 
 # 默认模板目录
 TEMPLATES_DIR = settings.review.templates_dir
@@ -732,8 +743,15 @@ async def run_review(
         if not std_path:
             raise ValueError("未上传审核标准")
 
-        # 加载文档
-        document = load_document(doc_path)
+        # 加载文档（使用异步版本支持 OCR）
+        ocr_service = get_ocr_service()
+        suffix = doc_path.suffix.lower()
+
+        # 检查是否需要 OCR 但未配置
+        if suffix in {".jpg", ".jpeg", ".png", ".webp"} and not ocr_service:
+            raise ValueError("处理图片文件需要配置 OCR 服务（DASHSCOPE_API_KEY）")
+
+        document = await load_document_async(doc_path, ocr_service=ocr_service)
 
         # 解析审核标准
         standard_set = parse_standard_file(std_path)
