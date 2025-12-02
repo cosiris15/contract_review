@@ -16,14 +16,22 @@
         </div>
       </div>
       <div class="header-actions">
-        <el-button
-          type="success"
-          @click="showRedlineDialog = true"
-          :disabled="!canExportRedline"
+        <el-tooltip
+          :content="redlineDisabledReason"
+          :disabled="canExportRedline"
+          placement="bottom"
         >
-          <el-icon><EditPen /></el-icon>
-          {{ i18n.labels.exportRedline }}
-        </el-button>
+          <span>
+            <el-button
+              type="success"
+              @click="showRedlineDialog = true"
+              :disabled="!canExportRedline"
+            >
+              <el-icon><EditPen /></el-icon>
+              {{ i18n.labels.exportRedline }}
+            </el-button>
+          </span>
+        </el-tooltip>
         <el-dropdown @command="handleExport">
           <el-button type="primary">
             <el-icon><Download /></el-icon>
@@ -598,6 +606,17 @@ const canExportRedline = computed(() => {
   if (redlinePreview.value && !redlinePreview.value.can_export) return false
   if (confirmedCount.value === 0 && !hasCommentableActions.value) return false
   return true
+})
+
+// Redline 按钮禁用原因
+const redlineDisabledReason = computed(() => {
+  if (redlinePreview.value?.reason) {
+    return redlinePreview.value.reason
+  }
+  if (confirmedCount.value === 0 && !hasCommentableActions.value) {
+    return '请先确认至少一条修改建议或行动建议'
+  }
+  return ''
 })
 
 // 获取修改建议的 UI 状态
