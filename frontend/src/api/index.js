@@ -140,7 +140,15 @@ api.interceptors.response.use(
       const status = error.response.status
       const detail = error.response.data?.detail
 
-      if (status === 502 || status === 503 || status === 504) {
+      // 识别配额不足错误 (403 + 特定消息)
+      if (status === 403 && detail && (detail.includes('配额') || detail.includes('quota') || detail.includes('Quota'))) {
+        errorInfo = {
+          type: 'quota_exceeded',
+          message: '免费额度已用完',
+          detail: detail,
+          retryable: false
+        }
+      } else if (status === 502 || status === 503 || status === 504) {
         errorInfo = {
           type: 'backend_unavailable',
           message: '后端服务暂时不可用',

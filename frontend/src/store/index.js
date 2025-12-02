@@ -234,7 +234,19 @@ export const useReviewStore = defineStore('review', {
       } catch (error) {
         this.isReviewing = false
         console.error('启动审阅失败:', error)
-        this._endOperation(error)
+
+        // 检查是否是配额不足错误
+        if (error.errorInfo?.type === 'quota_exceeded') {
+          this._endOperation({
+            errorInfo: {
+              type: 'quota_exceeded',
+              message: '免费额度已用完',
+              detail: '您的免费试用额度已全部使用完毕。如需继续使用，请联系我们获取更多额度。'
+            }
+          })
+        } else {
+          this._endOperation(error)
+        }
         throw error
       }
     },

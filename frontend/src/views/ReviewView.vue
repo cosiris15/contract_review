@@ -8,9 +8,27 @@
       </div>
     </transition>
 
+    <!-- 配额不足提示 -->
+    <div
+      v-if="store.operationError?.type === 'quota_exceeded' && !store.isOperationInProgress"
+      class="quota-exceeded-alert"
+    >
+      <div class="quota-icon">
+        <el-icon :size="32" color="#E6A23C"><Warning /></el-icon>
+      </div>
+      <div class="quota-content">
+        <h4>免费额度已用完</h4>
+        <p>您的免费试用额度已全部使用完毕。如需继续使用，请联系我们获取更多额度。</p>
+        <div class="quota-actions">
+          <el-button type="warning" @click="contactUs">联系我们</el-button>
+          <el-button @click="clearError">我知道了</el-button>
+        </div>
+      </div>
+    </div>
+
     <!-- 错误提示 -->
     <el-alert
-      v-if="store.operationError && !store.isOperationInProgress"
+      v-else-if="store.operationError && !store.isOperationInProgress"
       type="error"
       :title="store.operationError.message"
       :description="store.operationError.detail"
@@ -671,7 +689,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
-import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus } from '@element-plus/icons-vue'
+import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus, Warning } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const route = useRoute()
@@ -1197,6 +1215,10 @@ function clearError() {
   store.operationState.lastError = null
 }
 
+function contactUs() {
+  window.location.href = 'mailto:support@example.com'
+}
+
 // ==================== 辅助函数 ====================
 
 // 风险等级辅助函数
@@ -1353,6 +1375,52 @@ async function applyStandards() {
 
 .operation-status-bar .el-icon {
   font-size: var(--font-size-lg);
+}
+
+/* 配额不足提示样式 */
+.quota-exceeded-alert {
+  display: flex;
+  gap: var(--spacing-4);
+  padding: var(--spacing-5);
+  margin-bottom: var(--spacing-4);
+  background: linear-gradient(135deg, #FDF6EC 0%, #FCF0E0 100%);
+  border: 1px solid #F5DAA0;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 12px rgba(230, 162, 60, 0.15);
+}
+
+.quota-icon {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #FEF0E6;
+  border-radius: 50%;
+}
+
+.quota-content {
+  flex: 1;
+}
+
+.quota-content h4 {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: #B88230;
+}
+
+.quota-content p {
+  margin: 0 0 var(--spacing-3);
+  font-size: var(--font-size-sm);
+  color: #A6711C;
+  line-height: var(--line-height-normal);
+}
+
+.quota-actions {
+  display: flex;
+  gap: var(--spacing-3);
 }
 
 .error-alert {
