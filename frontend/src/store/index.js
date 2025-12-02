@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import api, { connectionState } from '@/api'
 import { useSettingsStore } from './settings'
+import { useQuotaStore } from './quota'
 
 export const useReviewStore = defineStore('review', {
   state: () => ({
@@ -261,6 +262,9 @@ export const useReviewStore = defineStore('review', {
             this.stopPolling()
             // 加载结果
             await this.loadResult(taskId)
+            // 刷新配额（审阅完成后会扣费）
+            const quotaStore = useQuotaStore()
+            quotaStore.refreshQuota()
           } else if (status === 'failed') {
             this.isReviewing = false
             this.stopPolling()

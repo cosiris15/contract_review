@@ -55,6 +55,7 @@ from src.contract_review.prompts import (
     build_collection_usage_instruction_messages,
 )
 from src.contract_review.llm_client import LLMClient
+from src.contract_review.quota_service import get_quota_service, QuotaInfo
 
 # 配置日志
 logging.basicConfig(
@@ -118,8 +119,8 @@ async def general_exception_handler(request, exc):
 
 
 # 初始化管理器
-# 检查是否配置了 Supabase，如果是则使用 Supabase 版本
-USE_SUPABASE = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+# 检查是否配置了 Contract 业务数据库，如果是则使用 Supabase 版本
+USE_SUPABASE = bool(os.getenv("CONTRACT_DB_URL") and os.getenv("CONTRACT_DB_KEY"))
 
 if USE_SUPABASE:
     logger.info("使用 Supabase 存储后端")
@@ -781,6 +782,14 @@ async def run_review(
         task.update_status("completed", "审阅完成")
         task_manager.update_task(task)
 
+        # 审阅成功完成后扣除配额
+        try:
+            quota_service = get_quota_service()
+            await quota_service.deduct_quota(user_id, task_id=task_id)
+            logger.info(f"任务 {task_id} 配额扣除成功")
+        except Exception as quota_error:
+            logger.error(f"任务 {task_id} 配额扣除失败: {quota_error}")
+
         logger.info(f"任务 {task_id} 审阅完成，发现 {len(result.risks)} 个风险点")
 
     except Exception as e:
@@ -805,6 +814,11 @@ async def start_review(
         business_line_id: 业务条线 ID（可选，用于提供业务上下文）
     """
     print(f"User {user_id} is starting review for task {task_id}...")
+
+    # 检查配额（在执行任何操作之前）
+    quota_service = get_quota_service()
+    await quota_service.check_quota(user_id)
+
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -837,6 +851,34 @@ async def start_review(
     task_manager.update_task(task)
 
     return {"message": "审阅任务已启动"}
+
+
+# ==================== 配额管理 API ====================
+
+class QuotaResponse(BaseModel):
+    """配额信息响应"""
+    user_id: str
+    product_id: str
+    plan_tier: str
+    credits_balance: int
+    total_usage: int
+    billing_enabled: bool
+
+
+@app.get("/api/quota", response_model=QuotaResponse)
+async def get_quota(user_id: str = Depends(get_current_user)):
+    """获取当前用户的配额信息"""
+    quota_service = get_quota_service()
+    quota = await quota_service.get_or_create_quota(user_id)
+
+    return QuotaResponse(
+        user_id=quota.user_id,
+        product_id=quota.product_id,
+        plan_tier=quota.plan_tier,
+        credits_balance=quota.credits_balance,
+        total_usage=quota.total_usage,
+        billing_enabled=quota_service.is_enabled(),
+    )
 
 
 # ==================== 语言检测 API ====================

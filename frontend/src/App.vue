@@ -28,6 +28,22 @@
             </nav>
           </div>
           <div class="header-right">
+            <!-- 配额显示 -->
+            <SignedIn>
+              <el-tooltip
+                :content="quotaTooltip"
+                placement="bottom"
+              >
+                <div
+                  class="quota-badge"
+                  :class="quotaBadgeClass"
+                >
+                  <el-icon :size="14"><Coin /></el-icon>
+                  <span v-if="quotaStore.isUnlimited">无限</span>
+                  <span v-else>{{ quotaStore.creditsBalance }}</span>
+                </div>
+              </el-tooltip>
+            </SignedIn>
             <!-- 设置按钮 -->
             <el-tooltip content="设置" placement="bottom">
               <el-button
@@ -61,19 +77,46 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, computed, watch } from 'vue'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
-import { HomeFilled, FolderOpened, Setting, Tools, Briefcase } from '@element-plus/icons-vue'
-import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from '@clerk/vue'
+import { HomeFilled, FolderOpened, Setting, Tools, Briefcase, Coin } from '@element-plus/icons-vue'
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, useUser } from '@clerk/vue'
 import SettingsDrawer from '@/components/common/SettingsDrawer.vue'
 import { useSettingsStore } from '@/store/settings'
+import { useQuotaStore } from '@/store/quota'
 import { setAuthTokenGetter } from '@/api'
 
 const settingsStore = useSettingsStore()
-const { getToken } = useAuth()
+const quotaStore = useQuotaStore()
+const { getToken, isSignedIn } = useAuth()
+const { user } = useUser()
 
 // 设置 API 认证 token getter
 setAuthTokenGetter(() => getToken.value())
+
+// 配额徽章样式
+const quotaBadgeClass = computed(() => {
+  if (quotaStore.isUnlimited) return 'quota-unlimited'
+  if (quotaStore.creditsBalance <= 0) return 'quota-empty'
+  if (quotaStore.creditsBalance <= 1) return 'quota-low'
+  return 'quota-normal'
+})
+
+// 配额提示文本
+const quotaTooltip = computed(() => {
+  if (quotaStore.isUnlimited) return '无限额度'
+  if (quotaStore.creditsBalance <= 0) return '额度已用完，请升级套餐'
+  return `剩余审阅次数: ${quotaStore.creditsBalance}`
+})
+
+// 监听登录状态，登录后获取配额
+watch(isSignedIn, async (signedIn) => {
+  if (signedIn) {
+    await quotaStore.fetchQuota()
+  } else {
+    quotaStore.reset()
+  }
+}, { immediate: true })
 
 // 初始化设置（从 localStorage 加载）
 onMounted(() => {
@@ -304,6 +347,39 @@ html, body {
 }
 
 .settings-btn:hover {
+  background-color: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+/* ========== 配额徽章样式 ========== */
+.quota-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: default;
+  transition: all 0.2s;
+}
+
+.quota-badge.quota-normal {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.quota-badge.quota-low {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.quota-badge.quota-empty {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.quota-badge.quota-unlimited {
   background-color: var(--color-primary-bg);
   color: var(--color-primary);
 }

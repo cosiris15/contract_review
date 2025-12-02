@@ -593,5 +593,12 @@ export default {
   // 获取业务背景分类列表
   getBusinessCategories(language = 'zh-CN') {
     return api.get('/business-categories', { params: { language } })
+  },
+
+  // ==================== 配额管理 ====================
+
+  // 获取当前用户配额信息
+  getQuota() {
+    return api.get('/quota')
   }
 }
