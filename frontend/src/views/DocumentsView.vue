@@ -576,7 +576,7 @@ function formatTime(isoString) {
   align-items: center;
   padding: var(--spacing-4);
   border-bottom: 1px solid var(--color-border-light);
-  transition: all 0.2s;
+  transition: background-color 0.15s ease, transform 0.1s ease;
 }
 
 .document-card:last-child {
@@ -585,6 +585,10 @@ function formatTime(isoString) {
 
 .document-card:hover {
   background: var(--color-bg-hover);
+}
+
+.document-card:active {
+  background: var(--color-primary-bg);
 }
 
 .document-card.selected {

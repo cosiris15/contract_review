@@ -390,4 +390,48 @@ html, body {
   padding: var(--spacing-6);
   overflow-y: auto;
 }
+
+/* ========== 全局按钮点击即时反馈 ========== */
+.el-button {
+  transition: transform 0.08s ease, box-shadow 0.08s ease,
+              background-color 0.15s ease, border-color 0.15s ease !important;
+}
+
+.el-button:active:not(:disabled) {
+  transform: scale(0.97) !important;
+}
+
+/* 主要按钮点击效果增强 */
+.el-button--primary:active:not(:disabled) {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* 危险按钮点击效果 */
+.el-button--danger:active:not(:disabled) {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+}
+
+/* 文本按钮点击效果 */
+.el-button.is-text:active:not(:disabled) {
+  background-color: var(--color-bg-secondary) !important;
+}
+
+/* 导航链接点击反馈 */
+.nav-link {
+  transition: all 0.1s ease !important;
+}
+
+.nav-link:active {
+  transform: scale(0.98);
+}
+
+/* 卡片点击反馈（用于可点击的卡片） */
+.clickable-card {
+  transition: transform 0.1s ease, box-shadow 0.15s ease !important;
+  cursor: pointer;
+}
+
+.clickable-card:active {
+  transform: scale(0.99);
+}
 </style>
