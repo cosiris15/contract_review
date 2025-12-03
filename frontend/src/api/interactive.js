@@ -112,5 +112,14 @@ export default {
     return api.post(`/interactive/${taskId}/items/${itemId}/complete`, {
       final_suggestion: finalSuggestion
     })
+  },
+
+  /**
+   * 获取文档全文内容
+   * @param {string} taskId - 任务 ID
+   * @returns {Promise<{task_id, document_name, text, paragraphs}>}
+   */
+  getDocumentText(taskId) {
+    return api.get(`/tasks/${taskId}/document/text`)
   }
 }

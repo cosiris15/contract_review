@@ -4094,6 +4094,105 @@ async def complete_item(
     }
 
 
+# ==================== 文档内容 API ====================
+
+
+class DocumentParagraph(BaseModel):
+    """文档段落"""
+    index: int
+    text: str
+    start_char: int
+    end_char: int
+
+
+class DocumentTextResponse(BaseModel):
+    """文档全文响应"""
+    task_id: str
+    document_name: str
+    text: str
+    paragraphs: List[DocumentParagraph]
+
+
+@app.get("/api/tasks/{task_id}/document/text", response_model=DocumentTextResponse)
+async def get_document_text(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    获取文档的纯文本内容
+
+    返回文档全文及段落信息，用于交互审阅页面左侧的文档展示。
+    """
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 验证任务归属
+    if USE_SUPABASE:
+        task_user_id = task_manager.get_task_user_id(task_id)
+        if task_user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权访问此任务")
+
+    if not task.document_filename:
+        raise HTTPException(status_code=404, detail="未找到文档")
+
+    try:
+        # 获取文档路径
+        if USE_SUPABASE:
+            doc_path = task_manager.get_document_path(task_id, user_id)
+        else:
+            doc_path = storage_manager.get_document_path(task_id)
+
+        if not doc_path or not doc_path.exists():
+            raise HTTPException(status_code=404, detail="文档文件不存在")
+
+        # 使用已有的文档加载功能解析文档
+        doc_text = await load_document_async(doc_path)
+
+        if not doc_text:
+            raise HTTPException(status_code=500, detail="无法解析文档内容")
+
+        # 将文档拆分为段落
+        paragraphs = []
+        current_pos = 0
+
+        # 按换行符分割，保留非空段落
+        raw_paragraphs = doc_text.split('\n')
+
+        for idx, para_text in enumerate(raw_paragraphs):
+            # 跳过空段落
+            stripped = para_text.strip()
+            if not stripped:
+                current_pos += len(para_text) + 1  # +1 for newline
+                continue
+
+            start_pos = current_pos
+            end_pos = current_pos + len(para_text)
+
+            paragraphs.append(DocumentParagraph(
+                index=len(paragraphs),
+                text=stripped,
+                start_char=start_pos,
+                end_char=end_pos,
+            ))
+
+            current_pos = end_pos + 1  # +1 for newline
+
+        return DocumentTextResponse(
+            task_id=task_id,
+            document_name=task.document_filename,
+            text=doc_text,
+            paragraphs=paragraphs,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取文档内容失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取文档内容失败: {str(e)}")
+
+
 # ==================== 健康检查 ====================
 
 @app.get("/api/health")

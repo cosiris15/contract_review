@@ -46,41 +46,42 @@
 
     <!-- 主内容区 -->
     <div class="review-content" v-loading="loading">
-      <!-- 左侧：条目导航 -->
+      <!-- 左侧：文档全文 -->
       <div class="content-left">
-        <ItemNavigator
-          :items="items"
-          :active-item-id="activeItemId"
-          @select="selectItem"
-          @export="handleExport('word')"
+        <DocumentViewer
+          ref="documentViewerRef"
+          :document-name="task?.document_filename"
+          :paragraphs="documentParagraphs"
+          :highlight-text="activeItem?.original_text"
+          :loading="documentLoading"
         />
       </div>
 
-      <!-- 右侧：聊天工作区 -->
+      <!-- 右侧：聊天面板 -->
       <div class="content-right">
-        <ChatWorkspace
-          v-if="activeItem"
-          :item="activeItem"
+        <ChatPanel
+          :items="items"
+          :active-item="activeItem"
           :messages="activeMessages"
           :current-suggestion="currentSuggestion"
           :loading="chatLoading"
+          @select-item="selectItem"
           @send-message="sendMessage"
           @complete="completeCurrentItem"
+          @locate="scrollToHighlight"
         />
-
-        <el-empty v-else description="请从左侧选择一个条目开始审阅" />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowDown, Download, Document, Files } from '@element-plus/icons-vue'
-import ItemNavigator from '@/components/interactive/ItemNavigator.vue'
-import ChatWorkspace from '@/components/interactive/ChatWorkspace.vue'
+import DocumentViewer from '@/components/interactive/DocumentViewer.vue'
+import ChatPanel from '@/components/interactive/ChatPanel.vue'
 import interactiveApi from '@/api/interactive'
 import api from '@/api'
 
@@ -91,12 +92,15 @@ const taskId = computed(() => route.params.taskId)
 
 // 状态
 const loading = ref(false)
+const documentLoading = ref(false)
 const chatLoading = ref(false)
 const task = ref(null)
 const items = ref([])
 const activeItemId = ref(null)
 const activeMessages = ref([])
 const currentSuggestion = ref('')
+const documentParagraphs = ref([])
+const documentViewerRef = ref(null)
 
 // 计算属性
 const activeItem = computed(() => {
@@ -120,13 +124,17 @@ onMounted(async () => {
 async function loadData() {
   loading.value = true
   try {
-    // 加载任务信息
-    const taskResponse = await api.getTask(taskId.value)
-    task.value = taskResponse.data
+    // 并行加载任务信息、交互条目和文档内容
+    const [taskResponse, itemsResponse] = await Promise.all([
+      api.getTask(taskId.value),
+      interactiveApi.getInteractiveItems(taskId.value),
+    ])
 
-    // 加载交互条目
-    const itemsResponse = await interactiveApi.getInteractiveItems(taskId.value)
+    task.value = taskResponse.data
     items.value = itemsResponse.data || []
+
+    // 异步加载文档内容（不阻塞主流程）
+    loadDocumentText()
 
     // 自动选择第一个未完成的条目
     const firstPending = items.value.find(item => item.status !== 'completed')
@@ -140,6 +148,20 @@ async function loadData() {
     ElMessage.error('加载数据失败: ' + (error.message || '请重试'))
   } finally {
     loading.value = false
+  }
+}
+
+// 加载文档全文
+async function loadDocumentText() {
+  documentLoading.value = true
+  try {
+    const response = await interactiveApi.getDocumentText(taskId.value)
+    documentParagraphs.value = response.data.paragraphs || []
+  } catch (error) {
+    console.error('加载文档内容失败:', error)
+    // 不显示错误消息，因为这不是关键功能
+  } finally {
+    documentLoading.value = false
   }
 }
 
@@ -169,6 +191,13 @@ async function selectItem(item) {
     console.error('加载条目详情失败:', error)
     // 如果加载失败，使用条目列表中的信息
     activeMessages.value = item.messages || []
+  }
+}
+
+// 滚动到高亮文本
+function scrollToHighlight() {
+  if (documentViewerRef.value && activeItem.value?.original_text) {
+    documentViewerRef.value.scrollToText(activeItem.value.original_text)
   }
 }
 
@@ -353,6 +382,7 @@ function goBack() {
   background: var(--color-bg-card);
   border-bottom: 1px solid var(--color-border-light);
   box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
 }
 
 .header-left {
@@ -384,36 +414,47 @@ function goBack() {
   gap: var(--spacing-3);
 }
 
-/* 主内容区 */
+/* 主内容区 - 左右布局 */
 .review-content {
   flex: 1;
   display: flex;
   overflow: hidden;
 }
 
+/* 左侧：文档区域 70% */
 .content-left {
-  width: 320px;
-  flex-shrink: 0;
+  flex: 7;
   overflow: hidden;
 }
 
+/* 右侧：聊天面板 30% */
 .content-right {
-  flex: 1;
+  flex: 3;
+  min-width: 360px;
+  max-width: 480px;
   overflow: hidden;
-}
-
-/* 空状态 */
-.review-content .el-empty {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-left: 1px solid var(--color-border-light);
 }
 
 /* 响应式 */
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
+  .content-right {
+    min-width: 320px;
+    flex: 4;
+  }
+
   .content-left {
-    width: 280px;
+    flex: 6;
+  }
+}
+
+@media (max-width: 1024px) {
+  .header-center {
+    display: none;
+  }
+
+  .content-right {
+    min-width: 300px;
   }
 }
 
@@ -423,16 +464,17 @@ function goBack() {
   }
 
   .content-left {
-    width: 100%;
-    height: 200px;
+    flex: none;
+    height: 40%;
+    min-height: 200px;
   }
 
   .content-right {
     flex: 1;
-  }
-
-  .header-center {
-    display: none;
+    min-width: 100%;
+    max-width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--color-border-light);
   }
 }
 </style>

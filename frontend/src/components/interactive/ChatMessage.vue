@@ -1,10 +1,10 @@
 <template>
-  <div class="chat-message" :class="[message.role, { 'has-suggestion': message.suggestion_snapshot }]">
+  <div class="chat-message" :class="[message.role, { 'has-suggestion': message.suggestion_snapshot, compact: compact }]">
     <div class="message-avatar">
-      <el-icon v-if="message.role === 'assistant'" :size="24" color="#409eff">
+      <el-icon v-if="message.role === 'assistant'" :size="compact ? 18 : 24" color="#409eff">
         <Service />
       </el-icon>
-      <el-icon v-else :size="24" color="#67c23a">
+      <el-icon v-else :size="compact ? 18 : 24" color="#67c23a">
         <User />
       </el-icon>
     </div>
@@ -45,6 +45,10 @@ const props = defineProps({
   message: {
     type: Object,
     required: true
+  },
+  compact: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -113,6 +117,41 @@ function renderMarkdown(content) {
   justify-content: center;
   background: var(--color-bg-secondary);
   border-radius: 50%;
+}
+
+/* 紧凑模式 */
+.chat-message.compact {
+  padding: var(--spacing-2) var(--spacing-3);
+  gap: var(--spacing-2);
+}
+
+.chat-message.compact .message-avatar {
+  width: 28px;
+  height: 28px;
+}
+
+.chat-message.compact .message-body {
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-sm);
+}
+
+.chat-message.compact .message-header {
+  margin-bottom: 0;
+}
+
+.chat-message.compact .message-sender {
+  font-size: var(--font-size-xs);
+}
+
+.chat-message.compact .suggestion-snapshot {
+  margin-top: var(--spacing-2);
+}
+
+.chat-message.compact .snapshot-content {
+  padding: var(--spacing-2);
+  font-size: var(--font-size-xs);
+  max-height: 60px;
+  overflow-y: auto;
 }
 
 .chat-message.assistant .message-avatar {
