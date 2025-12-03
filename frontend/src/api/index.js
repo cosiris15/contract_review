@@ -245,10 +245,14 @@ export default {
   // 审阅
   // llmProvider: 'deepseek' | 'gemini'
   // businessLineId: 业务条线ID（可选）
-  startReview(taskId, llmProvider = 'deepseek', businessLineId = null) {
+  // specialRequirements: 本次特殊要求（可选，直接传递给LLM）
+  startReview(taskId, llmProvider = 'deepseek', businessLineId = null, specialRequirements = null) {
     const params = { llm_provider: llmProvider }
     if (businessLineId) {
       params.business_line_id = businessLineId
+    }
+    if (specialRequirements) {
+      params.special_requirements = specialRequirements
     }
     return api.post(`/tasks/${taskId}/review`, null, { params })
   },

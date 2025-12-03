@@ -223,7 +223,24 @@
                     :autosize="{ minRows: 5, maxRows: 10 }"
                     placeholder="例如：&#10;&#10;• 本项目为政府采购，需特别关注合规要求&#10;&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;&#10;• 涉及数据跨境，需审核数据安全条款"
                   />
-                  <div class="special-footer">
+                  <div v-if="specialRequirements.trim()" class="special-mode-selection">
+                    <span class="mode-label">处理方式：</span>
+                    <el-radio-group v-model="specialReqMode" size="small">
+                      <el-radio value="direct">
+                        <span class="mode-option">
+                          <span class="mode-name">直接传递</span>
+                          <span class="mode-desc">审阅时直接参考，无需等待</span>
+                        </span>
+                      </el-radio>
+                      <el-radio value="merge">
+                        <span class="mode-option">
+                          <span class="mode-name">AI 整合</span>
+                          <span class="mode-desc">预先调整标准，可预览效果</span>
+                        </span>
+                      </el-radio>
+                    </el-radio-group>
+                  </div>
+                  <div v-if="specialRequirements.trim() && specialReqMode === 'merge'" class="special-footer">
                     <el-button
                       type="primary"
                       size="default"
@@ -232,9 +249,13 @@
                       @click="mergeSpecialRequirements"
                     >
                       <el-icon><MagicStick /></el-icon>
-                      整合到本次审核
+                      整合到审核标准
                     </el-button>
-                    <span class="special-tip">AI 将根据特殊要求调整审核标准，不影响标准库</span>
+                    <span class="special-tip">AI 将根据特殊要求调整审核标准（约30-60秒）</span>
+                  </div>
+                  <div v-if="specialRequirements.trim() && specialReqMode === 'direct'" class="special-footer direct-mode">
+                    <el-icon color="#67c23a"><CircleCheck /></el-icon>
+                    <span class="direct-hint">特殊要求将在审阅时直接传递给 AI，无需额外处理</span>
                   </div>
                 </div>
               </el-collapse-transition>
@@ -747,6 +768,7 @@ const showStandardPreview = ref(false)
 // 特殊要求相关状态
 const showSpecialInput = ref(false)
 const specialRequirements = ref('')
+const specialReqMode = ref('direct') // 'direct' = 直接传递, 'merge' = AI整合
 const merging = ref(false)
 const showMergePreview = ref(false)
 const mergeResult = ref(null)
@@ -1160,8 +1182,13 @@ async function startReview() {
   }
 
   try {
-    // 传递业务条线ID（如果选择了的话）
-    await store.startReview(taskId.value, selectedBusinessLineId.value)
+    // 如果使用"直接传递"模式且有特殊要求，传递给后端
+    const directRequirements = (specialReqMode.value === 'direct' && specialRequirements.value.trim())
+      ? specialRequirements.value.trim()
+      : null
+
+    // 传递业务条线ID和特殊要求
+    await store.startReview(taskId.value, selectedBusinessLineId.value, directRequirements)
   } catch (error) {
     ElMessage.error(error.message || '启动审阅失败')
   }
@@ -2150,6 +2177,52 @@ async function applyStandards() {
   line-height: 1.8;
 }
 
+/* 特殊要求处理方式选择 */
+.special-mode-selection {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+  margin-top: var(--spacing-4);
+  padding: var(--spacing-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.mode-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.special-mode-selection :deep(.el-radio-group) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.special-mode-selection :deep(.el-radio) {
+  height: auto;
+  margin-right: 0;
+}
+
+.mode-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mode-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.mode-desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
 .special-footer {
   display: flex;
   align-items: center;
@@ -2157,6 +2230,19 @@ async function applyStandards() {
   margin-top: var(--spacing-3);
   padding-top: var(--spacing-3);
   border-top: 1px solid var(--color-border-lighter);
+}
+
+.special-footer.direct-mode {
+  background: #f0f9eb;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-3);
+  margin-top: var(--spacing-3);
+}
+
+.direct-hint {
+  font-size: var(--font-size-sm);
+  color: #67c23a;
 }
 
 .special-tip {

@@ -242,6 +242,7 @@ def build_risk_identification_messages(
     review_standards: List[ReviewStandard],
     language: Language = "zh-CN",
     business_context: Optional[Dict[str, Any]] = None,
+    special_requirements: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     构建风险识别 Prompt
@@ -255,6 +256,7 @@ def build_risk_identification_messages(
         business_context: 业务上下文（可选）
             - name: 业务条线名称
             - contexts: BusinessContext 列表
+        special_requirements: 本次特殊要求（可选，优先级最高）
 
     Returns:
         消息列表
@@ -326,9 +328,20 @@ def build_risk_identification_messages(
 - 只输出 JSON 数组，不要添加任何额外的解释或说明文字
 - 确保 JSON 格式正确，可以被直接解析"""
 
+        # 构建特殊要求部分
+        special_req_section = ""
+        if special_requirements and special_requirements.strip():
+            special_req_section = f"""
+
+【本次特殊要求 - 优先级最高】
+{special_requirements.strip()}
+
+说明：以上是用户针对本次审阅提出的特殊要求，优先级高于审核标准和业务背景。请在审阅时优先考虑这些要求。
+"""
+
         user = f"""【我方身份】
 {our_party}
-
+{special_req_section}
 【审核标准】
 {standards_text}
 
@@ -385,9 +398,20 @@ Output a pure JSON array without markdown code block markers. Each element shoul
 - Output only the JSON array, do not add any extra explanation
 - Ensure JSON format is correct and can be parsed directly"""
 
+        # Build special requirements section
+        special_req_section = ""
+        if special_requirements and special_requirements.strip():
+            special_req_section = f"""
+
+【Special Requirements for This Review - HIGHEST PRIORITY】
+{special_requirements.strip()}
+
+Note: These are special requirements from the user for this specific review. They take priority over review standards and business context.
+"""
+
         user = f"""【Our Party】
 {our_party}
-
+{special_req_section}
 【Review Standards】
 {standards_text}
 
@@ -412,6 +436,7 @@ def build_modification_suggestion_messages(
     document_context: str = "",
     language: Language = "zh-CN",
     business_context: Optional[Dict[str, Any]] = None,
+    special_requirements: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     构建修改建议 Prompt
@@ -420,6 +445,7 @@ def build_modification_suggestion_messages(
         risk_point: 风险点
         original_text: 需要修改的原文
         our_party: 我方身份
+        special_requirements: 本次特殊要求（可选，优先级最高）
         material_type: 材料类型
         document_context: 上下文片段（可选）
         language: 审阅语言
@@ -501,12 +527,20 @@ def build_modification_suggestion_messages(
 {document_context}
 """
 
+        # 特殊要求部分
+        special_req_section = ""
+        if special_requirements and special_requirements.strip():
+            special_req_section = f"""
+【本次特殊要求 - 优先级最高】
+{special_requirements.strip()}
+"""
+
         user = f"""【风险信息】
 - 风险类型: {risk_point.risk_type}
 - 风险等级: {risk_level_label}
 - 风险描述: {risk_point.description}
 - 判定理由: {risk_point.reason}
-
+{special_req_section}
 【需要修改的原文】
 {original_text}
 {context_section}
@@ -556,12 +590,20 @@ Output only the JSON object, do not add any extra explanation."""
 {document_context}
 """
 
+        # Special requirements section
+        special_req_section = ""
+        if special_requirements and special_requirements.strip():
+            special_req_section = f"""
+【Special Requirements - HIGHEST PRIORITY】
+{special_requirements.strip()}
+"""
+
         user = f"""【Risk Information】
 - Risk Type: {risk_point.risk_type}
 - Risk Level: {risk_level_label}
 - Risk Description: {risk_point.description}
 - Justification: {risk_point.reason}
-
+{special_req_section}
 【Original Text to Modify】
 {original_text}
 {context_section}
@@ -582,6 +624,7 @@ def build_action_recommendation_messages(
     material_type: MaterialType,
     language: Language = "zh-CN",
     business_context: Optional[Dict[str, Any]] = None,
+    special_requirements: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     构建行动建议 Prompt
@@ -593,6 +636,7 @@ def build_action_recommendation_messages(
         material_type: 材料类型
         language: 审阅语言
         business_context: 业务上下文（可选）
+        special_requirements: 本次特殊要求（可选，优先级最高）
 
     Returns:
         消息列表
@@ -655,9 +699,17 @@ def build_action_recommendation_messages(
 - 如果风险较小或已通过文本修改解决，可不提供额外行动建议
 - 只输出 JSON 数组，如无需行动建议则输出空数组 []"""
 
+        # 特殊要求部分
+        special_req_section = ""
+        if special_requirements and special_requirements.strip():
+            special_req_section = f"""
+【本次特殊要求 - 优先级最高】
+{special_requirements.strip()}
+"""
+
         user = f"""【我方身份】
 {our_party}
-
+{special_req_section}
 【{material_type_label}概要】
 {document_summary}
 
@@ -699,9 +751,17 @@ Output a pure JSON array without markdown code block markers. Each element shoul
 - If risks are minor or resolved through text modifications, additional actions may not be needed
 - Output only the JSON array, output empty array [] if no action recommendations"""
 
+        # Special requirements section
+        special_req_section = ""
+        if special_requirements and special_requirements.strip():
+            special_req_section = f"""
+【Special Requirements - HIGHEST PRIORITY】
+{special_requirements.strip()}
+"""
+
         user = f"""【Our Party】
 {our_party}
-
+{special_req_section}
 【{material_type_label} Summary】
 {document_summary}
 

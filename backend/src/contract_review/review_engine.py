@@ -81,6 +81,7 @@ class ReviewEngine:
         language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
         business_context: Optional[Dict[str, Any]] = None,
+        special_requirements: Optional[str] = None,
     ) -> ReviewResult:
         """
         执行完整的文档审阅流程
@@ -94,6 +95,7 @@ class ReviewEngine:
             language: 审阅语言
             progress_callback: 进度回调函数 (stage, percentage, message)
             business_context: 业务上下文（可选），包含业务条线信息和背景要点
+            special_requirements: 本次特殊要求（可选），优先级最高
 
         Returns:
             ReviewResult 审阅结果
@@ -137,6 +139,7 @@ class ReviewEngine:
             applicable_standards,
             language,
             business_context,
+            special_requirements,
         )
         logger.info(f"识别到 {len(risks)} 个风险点")
 
@@ -150,6 +153,7 @@ class ReviewEngine:
             language,
             progress_callback,
             business_context,
+            special_requirements,
         )
         logger.info(f"生成 {len(modifications)} 条修改建议")
         if truncation_notice:
@@ -164,6 +168,7 @@ class ReviewEngine:
             material_type,
             language,
             business_context,
+            special_requirements,
         )
         logger.info(f"生成 {len(actions)} 条行动建议")
 
@@ -221,6 +226,7 @@ class ReviewEngine:
         standards: List[ReviewStandard],
         language: Language = "zh-CN",
         business_context: Optional[Dict[str, Any]] = None,
+        special_requirements: Optional[str] = None,
     ) -> List[RiskPoint]:
         """Stage 1: 风险识别"""
         messages = build_risk_identification_messages(
@@ -230,6 +236,7 @@ class ReviewEngine:
             review_standards=standards,
             language=language,
             business_context=business_context,
+            special_requirements=special_requirements,
         )
 
         response = await self.llm.chat(messages, max_output_tokens=4000)
@@ -285,6 +292,7 @@ class ReviewEngine:
         language: Language = "zh-CN",
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
         business_context: Optional[Dict[str, Any]] = None,
+        special_requirements: Optional[str] = None,
     ) -> Tuple[List[ModificationSuggestion], Optional[str]]:
         """
         Stage 2: 生成修改建议
@@ -349,6 +357,7 @@ class ReviewEngine:
                 material_type=material_type,
                 language=language,
                 business_context=business_context,
+                special_requirements=special_requirements,
             )
 
             try:
@@ -390,6 +399,7 @@ class ReviewEngine:
         material_type: MaterialType,
         language: Language = "zh-CN",
         business_context: Optional[Dict[str, Any]] = None,
+        special_requirements: Optional[str] = None,
     ) -> List[ActionRecommendation]:
         """Stage 3: 生成行动建议"""
         if not risks:
@@ -411,6 +421,7 @@ class ReviewEngine:
             material_type=material_type,
             language=language,
             business_context=business_context,
+            special_requirements=special_requirements,
         )
 
         response = await self.llm.chat(messages, max_output_tokens=3000)

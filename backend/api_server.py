@@ -735,6 +735,7 @@ async def run_review(
     user_id: str,
     llm_provider: str = "deepseek",
     business_line_id: Optional[str] = None,
+    special_requirements: Optional[str] = None,
 ):
     """后台执行审阅任务
 
@@ -743,6 +744,7 @@ async def run_review(
         user_id: 用户 ID（用于 Supabase 存储路径）
         llm_provider: LLM 提供者，可选 "deepseek" 或 "gemini"
         business_line_id: 业务条线 ID（可选，用于获取业务上下文）
+        special_requirements: 本次特殊要求（可选，直接传递给LLM）
     """
     task = task_manager.get_task(task_id)
     if not task:
@@ -812,6 +814,7 @@ async def run_review(
             language=getattr(task, 'language', 'zh-CN'),
             progress_callback=progress_callback,
             business_context=business_context,
+            special_requirements=special_requirements,
         )
 
         # 保存结果
@@ -848,6 +851,7 @@ async def start_review(
     background_tasks: BackgroundTasks,
     llm_provider: str = Query(default="deepseek", regex="^(deepseek|gemini)$"),
     business_line_id: Optional[str] = Query(default=None, description="业务条线ID（可选）"),
+    special_requirements: Optional[str] = Query(default=None, description="本次特殊要求（可选，优先级最高）"),
     user_id: str = Depends(get_current_user),
 ):
     """开始审阅（需要登录）
@@ -856,6 +860,7 @@ async def start_review(
         task_id: 任务 ID
         llm_provider: LLM 提供者，可选 "deepseek"（初级）或 "gemini"（高级）
         business_line_id: 业务条线 ID（可选，用于提供业务上下文）
+        special_requirements: 本次特殊要求（可选，直接传递给LLM，优先级最高）
     """
     print(f"User {user_id} is starting review for task {task_id}...")
 
@@ -887,8 +892,8 @@ async def start_review(
             raise HTTPException(status_code=400, detail="指定的业务条线不存在")
         logger.info(f"任务 {task_id} 将使用业务条线: {business_line.name}")
 
-    # 启动后台任务，传递 user_id、llm_provider 和 business_line_id 参数
-    background_tasks.add_task(run_review, task_id, user_id, llm_provider, business_line_id)
+    # 启动后台任务，传递参数
+    background_tasks.add_task(run_review, task_id, user_id, llm_provider, business_line_id, special_requirements)
 
     task.update_status("reviewing", "审阅任务已启动")
     task.update_progress("analyzing", 0, "正在启动...")

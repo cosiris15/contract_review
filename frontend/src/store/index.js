@@ -215,7 +215,7 @@ export const useReviewStore = defineStore('review', {
       }
     },
 
-    async startReview(taskId, businessLineId = null) {
+    async startReview(taskId, businessLineId = null, specialRequirements = null) {
       this._startOperation('starting_review', '正在启动审阅任务...')
       try {
         this.isReviewing = true
@@ -225,7 +225,7 @@ export const useReviewStore = defineStore('review', {
         const settingsStore = useSettingsStore()
         const llmProvider = settingsStore.llmProvider
 
-        await api.startReview(taskId, llmProvider, businessLineId)
+        await api.startReview(taskId, llmProvider, businessLineId, specialRequirements)
         this._updateOperationMessage('审阅任务已启动，正在处理中...')
         this._endOperation()
 
