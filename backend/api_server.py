@@ -59,6 +59,8 @@ from src.contract_review.prompts import (
 from src.contract_review.llm_client import LLMClient
 from src.contract_review.fallback_llm import FallbackLLMClient, create_fallback_client
 from src.contract_review.quota_service import get_quota_service, QuotaInfo
+from src.contract_review.interactive_engine import InteractiveReviewEngine
+from src.contract_review.supabase_interactive import get_interactive_manager, InteractiveChat, ChatMessage
 
 # 配置日志
 logging.basicConfig(
@@ -3487,6 +3489,484 @@ async def get_business_categories(
         {"id": cat, "name": display_names.get(cat, cat)}
         for cat in categories
     ]
+
+
+# ==================== 深度交互审阅模式 API ====================
+
+class QuickReviewRequest(BaseModel):
+    """快速初审请求"""
+    llm_provider: str = "deepseek"
+
+
+class InteractiveItemResponse(BaseModel):
+    """单个交互条目响应"""
+    id: str
+    item_id: str
+    item_type: str
+    risk_level: str = "medium"
+    original_text: str
+    current_suggestion: str
+    chat_status: str
+    message_count: int
+    last_updated: Optional[str] = None
+
+
+class InteractiveItemsResponse(BaseModel):
+    """任务的所有交互条目响应"""
+    task_id: str
+    items: List[InteractiveItemResponse]
+    summary: dict
+
+
+class ChatRequest(BaseModel):
+    """对话消息请求"""
+    message: str
+    llm_provider: str = "deepseek"
+
+
+class ChatResponse(BaseModel):
+    """对话响应"""
+    item_id: str
+    assistant_reply: str
+    updated_suggestion: str
+    chat_status: str
+    messages: List[dict]
+
+
+class CompleteItemRequest(BaseModel):
+    """完成条目请求"""
+    final_suggestion: Optional[str] = None
+
+
+async def run_quick_review(
+    task_id: str,
+    user_id: str,
+    llm_provider: str = "deepseek",
+):
+    """后台执行快速初审任务"""
+    task = task_manager.get_task(task_id)
+    if not task:
+        logger.error(f"任务不存在: {task_id}")
+        return
+
+    try:
+        # 更新状态
+        task.update_status("reviewing", "正在进行快速初审...")
+        task.review_mode = "interactive"
+        task_manager.update_task(task)
+
+        # 获取文档路径
+        doc_storage_name = task.document_storage_name
+        if not doc_storage_name:
+            raise ValueError("文档未上传")
+
+        # 下载文档
+        doc_content = storage_manager.download_document(task_id, doc_storage_name)
+        if not doc_content:
+            raise ValueError("无法下载文档")
+
+        # 保存临时文件
+        import tempfile
+        suffix = Path(doc_storage_name).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(doc_content)
+            tmp_path = tmp.name
+
+        try:
+            # 加载文档
+            ocr_service = get_ocr_service()
+            document = await load_document_async(tmp_path, ocr_service=ocr_service)
+
+            # 进度回调
+            def progress_callback(stage: str, percentage: int, message: str):
+                task.update_progress(stage, percentage, message)
+                task_manager.update_task(task)
+
+            # 创建交互审阅引擎
+            engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
+
+            # 执行快速初审
+            result = await engine.quick_review(
+                document=document,
+                our_party=task.our_party,
+                material_type=task.material_type,
+                task_id=task_id,
+                language=getattr(task, 'language', 'zh-CN'),
+                progress_callback=progress_callback,
+            )
+
+            # 保存结果
+            storage_manager.save_result(result)
+
+            # 为所有条目创建对话记录
+            interactive_manager = get_interactive_manager()
+            modifications_data = [
+                {
+                    "id": mod.id,
+                    "original_text": mod.original_text,
+                    "suggested_text": mod.suggested_text,
+                    "modification_reason": mod.modification_reason,
+                    "priority": mod.priority,
+                }
+                for mod in result.modifications
+            ]
+            actions_data = [
+                {
+                    "id": action.id,
+                    "action_type": action.action_type,
+                    "description": action.description,
+                    "urgency": action.urgency,
+                }
+                for action in result.actions
+            ]
+            interactive_manager.initialize_chats_for_task(
+                task_id=task_id,
+                modifications=modifications_data,
+                actions=actions_data,
+            )
+
+            # 更新任务
+            task.result = result
+            task.update_status("completed", "快速初审完成")
+            task_manager.update_task(task)
+
+            # 扣除配额
+            quota_service = get_quota_service()
+            await quota_service.deduct_quota(user_id, task_id=task_id)
+
+            logger.info(f"任务 {task_id} 快速初审完成")
+
+        finally:
+            # 清理临时文件
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    except Exception as e:
+        logger.error(f"任务 {task_id} 快速初审失败: {e}")
+        task.update_status("failed", str(e))
+        task_manager.update_task(task)
+
+
+@app.post("/api/tasks/{task_id}/quick-review")
+async def start_quick_review(
+    task_id: str,
+    request: QuickReviewRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    启动快速初审（深度交互模式）
+
+    无需预设审核标准，AI 自主发现问题。
+    """
+    # 检查配额
+    quota_service = get_quota_service()
+    try:
+        await quota_service.check_quota(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if task.status == "reviewing":
+        raise HTTPException(status_code=400, detail="任务正在审阅中")
+
+    if not task.document_filename:
+        raise HTTPException(status_code=400, detail="请先上传待审阅文档")
+
+    # 设置审阅模式
+    task.review_mode = "interactive"
+    task.update_status("reviewing", "正在启动快速初审...")
+    task.update_progress("analyzing", 0, "正在启动...")
+    task_manager.update_task(task)
+
+    # 启动后台任务
+    background_tasks.add_task(
+        run_quick_review,
+        task_id,
+        user_id,
+        request.llm_provider,
+    )
+
+    return {"message": "快速初审已启动", "task_id": task_id}
+
+
+@app.get("/api/interactive/{task_id}/items", response_model=InteractiveItemsResponse)
+async def get_interactive_items(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """获取任务的所有交互条目及对话状态"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取审阅结果
+    result = storage_manager.get_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="审阅结果不存在")
+
+    # 获取对话记录
+    interactive_manager = get_interactive_manager()
+    chats = interactive_manager.get_chats_by_task(task_id)
+    chat_map = {chat.item_id: chat for chat in chats}
+
+    # 构建响应
+    items = []
+
+    # 处理修改建议
+    for mod in result.modifications:
+        chat = chat_map.get(mod.id)
+        # 查找关联的风险点获取风险等级
+        risk_level = "medium"
+        for risk in result.risks:
+            if risk.id == mod.risk_id:
+                risk_level = risk.risk_level
+                break
+
+        items.append(InteractiveItemResponse(
+            id=chat.id if chat else f"temp_{mod.id}",
+            item_id=mod.id,
+            item_type="modification",
+            risk_level=risk_level,
+            original_text=mod.original_text[:200] + ("..." if len(mod.original_text) > 200 else ""),
+            current_suggestion=chat.current_suggestion if chat else mod.suggested_text,
+            chat_status=chat.status if chat else "pending",
+            message_count=len(chat.messages) if chat else 0,
+            last_updated=chat.updated_at.isoformat() if chat else None,
+        ))
+
+    # 获取统计
+    summary = interactive_manager.get_task_chat_summary(task_id)
+
+    return InteractiveItemsResponse(
+        task_id=task_id,
+        items=items,
+        summary=summary,
+    )
+
+
+@app.get("/api/interactive/{task_id}/items/{item_id}")
+async def get_interactive_item_detail(
+    task_id: str,
+    item_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """获取单个条目的详细信息和对话历史"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取审阅结果
+    result = storage_manager.get_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="审阅结果不存在")
+
+    # 查找条目
+    modification = None
+    risk = None
+    for mod in result.modifications:
+        if mod.id == item_id:
+            modification = mod
+            # 查找关联的风险点
+            for r in result.risks:
+                if r.id == mod.risk_id:
+                    risk = r
+                    break
+            break
+
+    if not modification:
+        raise HTTPException(status_code=404, detail="条目不存在")
+
+    # 获取对话记录
+    interactive_manager = get_interactive_manager()
+    chat = interactive_manager.get_chat_by_item(task_id, item_id)
+
+    return {
+        "task_id": task_id,
+        "item_id": item_id,
+        "item_type": "modification",
+        "original_text": modification.original_text,
+        "current_suggestion": chat.current_suggestion if chat else modification.suggested_text,
+        "modification_reason": modification.modification_reason,
+        "priority": modification.priority,
+        "risk": {
+            "id": risk.id if risk else None,
+            "level": risk.risk_level if risk else "medium",
+            "type": risk.risk_type if risk else "",
+            "description": risk.description if risk else "",
+        } if risk else None,
+        "chat": {
+            "id": chat.id,
+            "status": chat.status,
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+                    "suggestion_snapshot": msg.suggestion_snapshot,
+                }
+                for msg in chat.messages
+            ],
+        } if chat else None,
+    }
+
+
+@app.post("/api/interactive/{task_id}/items/{item_id}/chat", response_model=ChatResponse)
+async def chat_with_item(
+    task_id: str,
+    item_id: str,
+    request: ChatRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """与特定条目进行对话，打磨修改建议"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取审阅结果
+    result = storage_manager.get_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="审阅结果不存在")
+
+    # 查找条目
+    modification = None
+    risk = None
+    for mod in result.modifications:
+        if mod.id == item_id:
+            modification = mod
+            for r in result.risks:
+                if r.id == mod.risk_id:
+                    risk = r
+                    break
+            break
+
+    if not modification:
+        raise HTTPException(status_code=404, detail="条目不存在")
+
+    # 获取或创建对话记录
+    interactive_manager = get_interactive_manager()
+    chat = interactive_manager.get_chat_by_item(task_id, item_id)
+
+    if not chat:
+        # 创建新的对话记录
+        chat = interactive_manager.create_chat(
+            task_id=task_id,
+            item_id=item_id,
+            item_type="modification",
+            initial_suggestion=modification.suggested_text,
+        )
+
+    # 准备对话历史
+    chat_history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in chat.messages
+    ]
+
+    # 创建引擎并调用
+    engine = InteractiveReviewEngine(settings, llm_provider=request.llm_provider)
+
+    try:
+        response = await engine.refine_item(
+            original_clause=modification.original_text,
+            current_suggestion=chat.current_suggestion or modification.suggested_text,
+            risk_description=risk.description if risk else modification.modification_reason,
+            user_message=request.message,
+            chat_history=chat_history,
+            document_summary="",  # TODO: 可以添加文档摘要
+            language=getattr(task, 'language', 'zh-CN'),
+        )
+    except Exception as e:
+        logger.error(f"对话失败: {e}")
+        raise HTTPException(status_code=500, detail=f"对话失败: {str(e)}")
+
+    # 添加用户消息
+    interactive_manager.add_message(
+        chat_id=chat.id,
+        role="user",
+        content=request.message,
+    )
+
+    # 添加 AI 回复
+    updated_chat = interactive_manager.add_message(
+        chat_id=chat.id,
+        role="assistant",
+        content=response["assistant_reply"],
+        suggestion_snapshot=response["updated_suggestion"],
+    )
+
+    # 同步更新 review_results 中的建议
+    for mod in result.modifications:
+        if mod.id == item_id:
+            mod.suggested_text = response["updated_suggestion"]
+            break
+    storage_manager.save_result(result)
+
+    # 构建响应
+    return ChatResponse(
+        item_id=item_id,
+        assistant_reply=response["assistant_reply"],
+        updated_suggestion=response["updated_suggestion"],
+        chat_status=updated_chat.status if updated_chat else "in_progress",
+        messages=[
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+            }
+            for msg in (updated_chat.messages if updated_chat else [])
+        ],
+    )
+
+
+@app.post("/api/interactive/{task_id}/items/{item_id}/complete")
+async def complete_item(
+    task_id: str,
+    item_id: str,
+    request: CompleteItemRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """标记条目为已完成"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取对话记录
+    interactive_manager = get_interactive_manager()
+    chat = interactive_manager.get_chat_by_item(task_id, item_id)
+
+    if not chat:
+        raise HTTPException(status_code=404, detail="对话记录不存在")
+
+    # 完成对话
+    final_suggestion = request.final_suggestion or chat.current_suggestion
+    success = interactive_manager.complete_chat(chat.id, final_suggestion)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="完成条目失败")
+
+    # 同步更新 review_results
+    result = storage_manager.get_result(task_id)
+    if result:
+        for mod in result.modifications:
+            if mod.id == item_id:
+                mod.suggested_text = final_suggestion
+                mod.user_confirmed = True
+                break
+        storage_manager.save_result(result)
+
+    return {
+        "item_id": item_id,
+        "status": "completed",
+        "final_suggestion": final_suggestion,
+    }
 
 
 # ==================== 健康检查 ====================

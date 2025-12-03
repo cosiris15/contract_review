@@ -61,7 +61,8 @@
         <el-card class="config-card">
           <template #header>
             <div class="card-header">
-              <span>审阅配置</span>
+              <span>{{ isInteractiveMode ? '深度交互审阅' : '审阅配置' }}</span>
+              <el-tag v-if="isInteractiveMode" type="success" size="small" style="margin-left: 8px;">交互模式</el-tag>
             </div>
           </template>
 
@@ -140,10 +141,10 @@
             </el-upload>
           </div>
 
-          <el-divider />
+          <el-divider v-if="!isInteractiveMode" />
 
-          <!-- 步骤 3: 任务要求配置 -->
-          <div class="task-requirements-section">
+          <!-- 步骤 3: 任务要求配置（仅标准模式显示） -->
+          <div v-if="!isInteractiveMode" class="task-requirements-section">
             <h4>
               <el-icon><List /></el-icon>
               任务要求
@@ -267,6 +268,17 @@
               <span>已应用: {{ currentTask.standard_filename }}</span>
               <el-button text type="primary" size="small" @click="reselect">重新选择</el-button>
             </div>
+          </div>
+
+          <!-- 交互模式提示 -->
+          <div v-if="isInteractiveMode" class="interactive-mode-hint">
+            <el-alert type="success" :closable="false" show-icon>
+              <template #title>深度交互审阅模式</template>
+              <template #default>
+                <p>AI 将自动分析文档，识别所有潜在风险点。</p>
+                <p>审阅完成后，您可以逐条与 AI 对话，打磨每个修改建议。</p>
+              </template>
+            </el-alert>
           </div>
 
           <!-- 标准推荐对话框 -->
@@ -634,14 +646,19 @@
 
           <!-- 开始审阅按钮 -->
           <el-button
-            type="primary"
+            :type="isInteractiveMode ? 'success' : 'primary'"
             size="large"
             class="start-btn"
             :loading="store.isReviewing"
             :disabled="!canStart"
             @click="startReview"
           >
-            {{ store.isReviewing ? '审阅中...' : '开始审阅' }}
+            <template v-if="store.isReviewing">
+              {{ isInteractiveMode ? '快速初审中...' : '审阅中...' }}
+            </template>
+            <template v-else>
+              {{ isInteractiveMode ? '开始快速初审' : '开始审阅' }}
+            </template>
           </el-button>
         </el-card>
       </el-col>
@@ -729,6 +746,7 @@ import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
 import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus, Warning } from '@element-plus/icons-vue'
 import api from '@/api'
+import interactiveApi from '@/api/interactive'
 
 const route = useRoute()
 const router = useRouter()
@@ -737,6 +755,9 @@ const store = useReviewStore()
 const formRef = ref(null)
 const standardUploadRef = ref(null)
 const taskId = ref(route.params.taskId || null)
+
+// 交互模式检测
+const isInteractiveMode = computed(() => route.query.mode === 'interactive')
 
 const form = ref({
   name: '',
@@ -817,6 +838,10 @@ const isFailed = computed(() => currentTask.value?.status === 'failed')
 
 const canStart = computed(() => {
   if (!taskId.value) return false
+  // 交互模式只需要上传文档，不需要审阅标准
+  if (isInteractiveMode.value) {
+    return currentTask.value?.document_filename
+  }
   return store.canStartReview
 })
 
@@ -1182,6 +1207,12 @@ async function startReview() {
   }
 
   try {
+    // 交互模式：调用快速初审 API
+    if (isInteractiveMode.value) {
+      await startQuickReview()
+      return
+    }
+
     // 如果使用"直接传递"模式且有特殊要求，传递给后端
     const directRequirements = (specialReqMode.value === 'direct' && specialRequirements.value.trim())
       ? specialRequirements.value.trim()
@@ -1192,6 +1223,69 @@ async function startReview() {
   } catch (error) {
     ElMessage.error(error.message || '启动审阅失败')
   }
+}
+
+// 交互模式：启动快速初审
+async function startQuickReview() {
+  store.isReviewing = true
+  store.progress = { stage: 'analyzing', percentage: 10, message: '正在进行快速初审...' }
+
+  try {
+    await interactiveApi.startQuickReview(taskId.value, 'deepseek')
+
+    // 开始轮询任务状态
+    pollQuickReviewStatus()
+  } catch (error) {
+    store.isReviewing = false
+    store.progress = { stage: 'idle', percentage: 0, message: '' }
+    ElMessage.error(error.message || '启动快速初审失败')
+  }
+}
+
+// 轮询快速初审状态
+async function pollQuickReviewStatus() {
+  const pollInterval = setInterval(async () => {
+    try {
+      await store.loadTask(taskId.value)
+      const task = currentTask.value
+
+      if (task.status === 'completed') {
+        clearInterval(pollInterval)
+        store.isReviewing = false
+        store.progress = { stage: 'completed', percentage: 100, message: '快速初审完成' }
+
+        // 跳转到交互审阅页面
+        setTimeout(() => {
+          router.push(`/interactive/${taskId.value}`)
+        }, 1000)
+      } else if (task.status === 'failed') {
+        clearInterval(pollInterval)
+        store.isReviewing = false
+        store.progress = { stage: 'idle', percentage: 0, message: '' }
+        ElMessage.error(task.message || '快速初审失败')
+      } else if (task.status === 'reviewing') {
+        // 更新进度
+        const progress = task.progress || 50
+        store.progress = {
+          stage: 'analyzing',
+          percentage: progress,
+          message: task.message || '正在分析文档...'
+        }
+      }
+    } catch (error) {
+      console.error('轮询状态失败:', error)
+    }
+  }, 2000)
+
+  // 5分钟超时
+  setTimeout(() => {
+    clearInterval(pollInterval)
+    if (store.isReviewing) {
+      store.isReviewing = false
+      store.progress = { stage: 'idle', percentage: 0, message: '' }
+      ElMessage.error('审阅超时，请重试')
+    }
+  }, 5 * 60 * 1000)
 }
 
 // 加载业务条线列表
@@ -1615,6 +1709,17 @@ async function applyStandards() {
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   color: var(--color-success);
+}
+
+/* 交互模式提示 */
+.interactive-mode-hint {
+  margin-top: var(--spacing-4);
+}
+
+.interactive-mode-hint p {
+  margin: var(--spacing-1) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .upload-box {

@@ -362,6 +362,9 @@ class ReviewTask(BaseModel):
     # 业务条线（可选）
     business_line_id: Optional[str] = None  # 关联的业务条线ID
 
+    # 审阅模式
+    review_mode: str = "batch"  # "batch" = 标准模式, "interactive" = 深度交互模式
+
     # Redline 导出文件信息
     redline_filename: Optional[str] = None  # 修订版文件原始名（用于显示）
     redline_storage_name: Optional[str] = None  # 修订版文件存储名（UUID+.docx）

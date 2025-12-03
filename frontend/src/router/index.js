@@ -69,6 +69,12 @@ const routes = [
     name: 'Business',
     component: lazyLoadView(() => import('@/views/BusinessView.vue'), 'BusinessView'),
     meta: { title: '业务管理' }
+  },
+  {
+    path: '/interactive/:taskId',
+    name: 'InteractiveReview',
+    component: lazyLoadView(() => import('@/views/InteractiveReviewView.vue'), 'InteractiveReviewView'),
+    meta: { title: '深度交互审阅' }
   }
 ]
 

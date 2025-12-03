@@ -42,6 +42,16 @@
             <el-icon><Plus /></el-icon>
             新建审阅任务
           </el-button>
+          <el-button
+            type="success"
+            size="large"
+            @click="goToInteractiveReview"
+            class="action-btn interactive-action"
+          >
+            <el-icon><ChatDotRound /></el-icon>
+            深度交互审阅
+            <el-tag type="success" size="small" class="new-tag">NEW</el-tag>
+          </el-button>
         </div>
       </div>
 
@@ -102,7 +112,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
-import { Plus, Search, Edit, List, Download, Cpu } from '@element-plus/icons-vue'
+import { Plus, Search, Edit, List, Download, Cpu, ChatDotRound } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
@@ -144,6 +154,12 @@ function goToNewReview() {
   // 立即跳转，不阻塞
   store.resetState()
   router.push('/review')
+}
+
+function goToInteractiveReview() {
+  // 跳转到深度交互审阅入口页面
+  store.resetState()
+  router.push('/review?mode=interactive')
 }
 </script>
 
@@ -232,7 +248,9 @@ function goToNewReview() {
 .hero-actions {
   display: flex;
   justify-content: flex-start;
+  gap: var(--spacing-4);
   margin-top: var(--spacing-3);
+  flex-wrap: wrap;
 }
 
 .action-btn {
@@ -252,6 +270,20 @@ function goToNewReview() {
 
 .primary-action:hover {
   box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+}
+
+.interactive-action {
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+}
+
+.interactive-action:hover {
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
+}
+
+.new-tag {
+  margin-left: 8px;
+  border: none;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* 右侧功能展示 */

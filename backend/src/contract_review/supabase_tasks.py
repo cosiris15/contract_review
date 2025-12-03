@@ -61,6 +61,7 @@ class SupabaseTaskManager:
             redline_generated_at=redline_generated_at,
             redline_applied_count=row.get("redline_applied_count"),
             redline_comments_count=row.get("redline_comments_count"),
+            review_mode=row.get("review_mode", "batch"),  # 审阅模式：batch | interactive
             created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")) if row.get("created_at") else datetime.now(),
             updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")) if row.get("updated_at") else datetime.now(),
         )
@@ -82,6 +83,7 @@ class SupabaseTaskManager:
             "standard_filename": task.standard_filename,
             "standard_storage_name": task.standard_storage_name,
             "standard_template": task.standard_template,
+            "review_mode": task.review_mode,  # 审阅模式
         }
 
     def create_task(
