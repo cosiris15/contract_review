@@ -1214,6 +1214,9 @@ class RedlineExportJob:
     skipped_count: int = 0
     comments_added: int = 0
     comments_skipped: int = 0
+    # 模拟进度相关
+    estimated_total_seconds: int = 180  # 预计总时长（默认3分钟）
+    processing_started_at: Optional[datetime] = None  # 开始处理时间
 
 # 内存缓存存储导出任务（键: task_id）
 _redline_export_jobs: Dict[str, RedlineExportJob] = {}
@@ -1231,6 +1234,94 @@ def _cleanup_old_jobs():
             del _redline_export_jobs[k]
 
 
+async def _update_simulated_progress(job: RedlineExportJob):
+    """
+    模拟进度更新
+    在实际处理期间（30%→89%），根据预估时间线性增加进度
+    """
+    import asyncio
+
+    if not job.processing_started_at:
+        return
+
+    while job.status == "processing" and job.progress < 90:
+        elapsed = (datetime.now() - job.processing_started_at).total_seconds()
+        # 预估时间的80%用于30%→90%的进度（60%进度范围）
+        estimated_processing_time = job.estimated_total_seconds * 0.8
+
+        if elapsed < estimated_processing_time:
+            # 线性进度：30% + (elapsed / estimated_processing_time) * 59%
+            simulated_progress = 30 + int((elapsed / estimated_processing_time) * 59)
+            # 确保不超过89%，留给真正完成时的90%
+            job.progress = min(simulated_progress, 89)
+
+            # 更新消息，显示预计剩余时间
+            remaining = max(0, estimated_processing_time - elapsed)
+            if remaining > 60:
+                job.message = f"正在应用修改... 预计还需 {int(remaining / 60)} 分钟"
+            elif remaining > 10:
+                job.message = f"正在应用修改... 预计还需 {int(remaining)} 秒"
+            else:
+                job.message = "正在应用修改... 即将完成"
+
+        await asyncio.sleep(2)  # 每2秒更新一次
+
+
+async def _persist_redline_to_storage(job: RedlineExportJob):
+    """
+    将生成的 Redline 文件持久化到 Supabase Storage
+    """
+    if not USE_SUPABASE or not job.document_bytes:
+        logger.info("跳过 Redline 持久化：未启用 Supabase 或无文件内容")
+        return
+
+    try:
+        from uuid import uuid4
+        from src.contract_review.supabase_client import get_supabase_client, get_storage_bucket
+
+        # 生成安全的存储文件名
+        safe_filename = f"{uuid4().hex}.docx"
+        storage_path = f"{job.user_id}/{job.task_id}/redlines/{safe_filename}"
+
+        supabase = get_supabase_client()
+        bucket = get_storage_bucket()
+
+        # 删除之前的 redline 文件（如果存在）
+        try:
+            existing = supabase.storage.from_(bucket).list(f"{job.user_id}/{job.task_id}/redlines")
+            if existing:
+                old_paths = [f"{job.user_id}/{job.task_id}/redlines/{f['name']}" for f in existing]
+                if old_paths:
+                    supabase.storage.from_(bucket).remove(old_paths)
+        except Exception as e:
+            logger.warning(f"清理旧 Redline 文件时出错: {e}")
+
+        # 上传新文件
+        supabase.storage.from_(bucket).upload(
+            storage_path,
+            job.document_bytes,
+            file_options={
+                "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "upsert": "true"
+            }
+        )
+
+        # 更新 tasks 表
+        supabase.table("tasks").update({
+            "redline_filename": job.filename,
+            "redline_storage_name": safe_filename,
+            "redline_generated_at": datetime.now().isoformat(),
+            "redline_applied_count": job.applied_count,
+            "redline_comments_count": job.comments_added,
+        }).eq("id", job.task_id).execute()
+
+        logger.info(f"Redline 文件已持久化: {storage_path}")
+
+    except Exception as e:
+        logger.error(f"Redline 持久化失败: {e}", exc_info=True)
+        # 不抛出异常，允许导出继续完成
+
+
 async def _run_redline_export(
     job: RedlineExportJob,
     doc_path: Path,
@@ -1238,6 +1329,9 @@ async def _run_redline_export(
     request: Optional[ExportRedlineRequest],
 ):
     """后台执行 Redline 导出"""
+    import asyncio
+    import concurrent.futures
+
     try:
         job.status = "processing"
         job.progress = 10
@@ -1257,18 +1351,34 @@ async def _run_redline_export(
         include_comments = request.include_comments if request else False
 
         job.progress = 30
-        job.message = "正在应用修改..."
+        job.message = "正在应用修改... 预计需要 2-3 分钟"
+        job.processing_started_at = datetime.now()
 
-        # 生成 Redline 文档
-        redline_result = generate_redline_document(
-            docx_path=doc_path,
-            modifications=modifications,
-            author="十行助理",
-            filter_confirmed=filter_confirmed,
-            actions=result.actions if include_comments else None,
-            risks=result.risks if include_comments else None,
-            include_comments=include_comments,
-        )
+        # 启动模拟进度更新任务
+        progress_task = asyncio.create_task(_update_simulated_progress(job))
+
+        # 在线程池中执行同步阻塞操作
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            redline_result = await loop.run_in_executor(
+                executor,
+                lambda: generate_redline_document(
+                    docx_path=doc_path,
+                    modifications=modifications,
+                    author="十行助理",
+                    filter_confirmed=filter_confirmed,
+                    actions=result.actions if include_comments else None,
+                    risks=result.risks if include_comments else None,
+                    include_comments=include_comments,
+                )
+            )
+
+        # 取消进度更新任务
+        progress_task.cancel()
+        try:
+            await progress_task
+        except asyncio.CancelledError:
+            pass
 
         job.progress = 90
         job.message = "正在完成导出..."
@@ -1291,6 +1401,10 @@ async def _run_redline_export(
         job.skipped_count = redline_result.skipped_count
         job.comments_added = redline_result.comments_added
         job.comments_skipped = redline_result.comments_skipped
+
+        # 持久化到 Supabase Storage
+        await _persist_redline_to_storage(job)
+
         job.status = "completed"
         job.progress = 100
         job.message = "导出完成"
@@ -1472,6 +1586,81 @@ async def download_redline_export(
             "X-Comments-Skipped": str(job.comments_skipped),
         },
     )
+
+
+# ==================== 持久化 Redline 文件 API ====================
+
+@app.get("/api/tasks/{task_id}/redline/info")
+async def get_redline_info(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    获取任务的 Redline 文件信息（如果已生成并持久化）
+    """
+    if not USE_SUPABASE:
+        return {"exists": False, "message": "持久化存储未启用"}
+
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 检查任务是否有持久化的 redline 文件
+    if not task.redline_storage_name:
+        return {"exists": False}
+
+    return {
+        "exists": True,
+        "filename": task.redline_filename,
+        "generated_at": task.redline_generated_at.isoformat() if task.redline_generated_at else None,
+        "applied_count": task.redline_applied_count,
+        "comments_count": task.redline_comments_count,
+    }
+
+
+@app.get("/api/tasks/{task_id}/redline/download-persisted")
+async def download_persisted_redline(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    下载已持久化的 Redline 文件
+    """
+    if not USE_SUPABASE:
+        raise HTTPException(status_code=400, detail="持久化存储未启用")
+
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if not task.redline_storage_name:
+        raise HTTPException(status_code=404, detail="没有找到已生成的 Redline 文件")
+
+    try:
+        from src.contract_review.supabase_client import get_supabase_client, get_storage_bucket
+
+        supabase = get_supabase_client()
+        bucket = get_storage_bucket()
+        storage_path = f"{user_id}/{task_id}/redlines/{task.redline_storage_name}"
+
+        file_bytes = supabase.storage.from_(bucket).download(storage_path)
+
+        from urllib.parse import quote
+        filename_encoded = quote(task.redline_filename or "redline.docx")
+        content_disposition = f"attachment; filename*=UTF-8''{filename_encoded}"
+
+        return Response(
+            content=file_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": content_disposition,
+                "X-Redline-Applied": str(task.redline_applied_count or 0),
+                "X-Comments-Added": str(task.redline_comments_count or 0),
+            },
+        )
+    except Exception as e:
+        logger.error(f"下载 Redline 文件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="下载失败")
 
 
 # ==================== 原同步导出 API（保留兼容性）====================

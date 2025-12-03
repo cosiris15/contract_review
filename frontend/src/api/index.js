@@ -312,6 +312,18 @@ export default {
     })
   },
 
+  // 获取已持久化的 Redline 文件信息
+  getRedlineInfo(taskId) {
+    return api.get(`/tasks/${taskId}/redline/info`)
+  },
+
+  // 下载已持久化的 Redline 文件
+  downloadPersistedRedline(taskId) {
+    return api.get(`/tasks/${taskId}/redline/download-persisted`, {
+      responseType: 'blob'
+    })
+  },
+
   // Redline 导出（同步模式，保留兼容性）
   exportRedline(taskId, modificationIds = null, includeComments = false) {
     return api.post(`/tasks/${taskId}/export/redline`, {

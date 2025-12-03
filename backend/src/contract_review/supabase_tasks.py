@@ -34,6 +34,14 @@ class SupabaseTaskManager:
         if isinstance(progress_data, str):
             progress_data = json.loads(progress_data)
 
+        # 解析 redline_generated_at
+        redline_generated_at = None
+        if row.get("redline_generated_at"):
+            try:
+                redline_generated_at = datetime.fromisoformat(row["redline_generated_at"].replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                pass
+
         return ReviewTask(
             id=row["id"],
             name=row["name"],
@@ -48,6 +56,11 @@ class SupabaseTaskManager:
             standard_filename=row.get("standard_filename"),
             standard_storage_name=row.get("standard_storage_name"),
             standard_template=row.get("standard_template"),
+            redline_filename=row.get("redline_filename"),
+            redline_storage_name=row.get("redline_storage_name"),
+            redline_generated_at=redline_generated_at,
+            redline_applied_count=row.get("redline_applied_count"),
+            redline_comments_count=row.get("redline_comments_count"),
             created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")) if row.get("created_at") else datetime.now(),
             updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")) if row.get("updated_at") else datetime.now(),
         )

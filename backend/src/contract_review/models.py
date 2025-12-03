@@ -362,6 +362,13 @@ class ReviewTask(BaseModel):
     # 业务条线（可选）
     business_line_id: Optional[str] = None  # 关联的业务条线ID
 
+    # Redline 导出文件信息
+    redline_filename: Optional[str] = None  # 修订版文件原始名（用于显示）
+    redline_storage_name: Optional[str] = None  # 修订版文件存储名（UUID+.docx）
+    redline_generated_at: Optional[datetime] = None  # 修订版生成时间
+    redline_applied_count: Optional[int] = None  # 应用的修改数量
+    redline_comments_count: Optional[int] = None  # 添加的批注数量
+
     # 结果
     result: Optional[ReviewResult] = None
 

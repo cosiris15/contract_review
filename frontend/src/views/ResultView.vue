@@ -67,11 +67,38 @@
       title="导出修订版 Word"
       width="500px"
     >
-      <div class="redline-dialog-content">
+      <!-- 如果已有持久化的 Redline 文件，直接显示下载选项 -->
+      <div v-if="persistedRedlineInfo" class="redline-dialog-content">
+        <el-result
+          icon="success"
+          title="修订版文档已生成"
+          :sub-title="`生成时间：${formatTime(persistedRedlineInfo.generated_at)}`"
+        >
+          <template #extra>
+            <div class="persisted-info">
+              <p>应用 <strong>{{ persistedRedlineInfo.applied_count || 0 }}</strong> 条修改</p>
+              <p v-if="persistedRedlineInfo.comments_count">添加 <strong>{{ persistedRedlineInfo.comments_count }}</strong> 条批注</p>
+            </div>
+          </template>
+        </el-result>
+      </div>
+
+      <!-- 如果没有持久化文件，显示生成选项 -->
+      <div v-else class="redline-dialog-content">
         <el-alert
           v-if="!redlinePreview?.can_export && redlinePreview?.reason"
           :title="redlinePreview.reason"
           type="warning"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 16px;"
+        />
+
+        <!-- 时间提示 -->
+        <el-alert
+          v-if="!redlineExportStatus"
+          title="提示：生成修订版文档预计需要 2-3 分钟，请耐心等待"
+          type="info"
           show-icon
           :closable="false"
           style="margin-bottom: 16px;"
@@ -122,51 +149,65 @@
             style="margin-top: 8px;"
           />
         </div>
-      </div>
 
-      <!-- 导出进度显示 -->
-      <div v-if="redlineExportStatus" class="export-progress">
-        <el-divider />
-        <div class="progress-header">
-          <span>{{ redlineExportStatus.message }}</span>
-          <el-tag v-if="redlineExportStatus.status === 'completed'" type="success" size="small">完成</el-tag>
-          <el-tag v-else-if="redlineExportStatus.status === 'failed'" type="danger" size="small">失败</el-tag>
-          <el-tag v-else type="info" size="small">{{ redlineExportStatus.progress }}%</el-tag>
-        </div>
-        <el-progress
-          :percentage="redlineExportStatus.progress"
-          :status="redlineExportStatus.status === 'completed' ? 'success' : redlineExportStatus.status === 'failed' ? 'exception' : ''"
-          :stroke-width="10"
-          style="margin-top: 8px;"
-        />
-        <div v-if="redlineExportStatus.status === 'completed'" class="export-result">
-          <p>应用 {{ redlineExportStatus.applied_count }} 条修改，跳过 {{ redlineExportStatus.skipped_count }} 条</p>
-          <p v-if="includeComments">添加 {{ redlineExportStatus.comments_added }} 条批注</p>
-        </div>
-        <div v-if="redlineExportStatus.status === 'failed'" class="export-error">
-          <el-alert :title="redlineExportStatus.error || '导出失败'" type="error" show-icon :closable="false" />
+        <!-- 导出进度显示 -->
+        <div v-if="redlineExportStatus" class="export-progress">
+          <el-divider />
+          <div class="progress-header">
+            <span>{{ redlineExportStatus.message }}</span>
+            <el-tag v-if="redlineExportStatus.status === 'completed'" type="success" size="small">完成</el-tag>
+            <el-tag v-else-if="redlineExportStatus.status === 'failed'" type="danger" size="small">失败</el-tag>
+            <el-tag v-else type="info" size="small">{{ redlineExportStatus.progress }}%</el-tag>
+          </div>
+          <el-progress
+            :percentage="redlineExportStatus.progress"
+            :status="redlineExportStatus.status === 'completed' ? 'success' : redlineExportStatus.status === 'failed' ? 'exception' : ''"
+            :stroke-width="10"
+            style="margin-top: 8px;"
+          />
+          <div v-if="redlineExportStatus.status === 'completed'" class="export-result">
+            <p>应用 {{ redlineExportStatus.applied_count }} 条修改，跳过 {{ redlineExportStatus.skipped_count }} 条</p>
+            <p v-if="includeComments">添加 {{ redlineExportStatus.comments_added }} 条批注</p>
+          </div>
+          <div v-if="redlineExportStatus.status === 'failed'" class="export-error">
+            <el-alert :title="redlineExportStatus.error || '导出失败'" type="error" show-icon :closable="false" />
+          </div>
         </div>
       </div>
 
       <template #footer>
-        <el-button @click="closeRedlineDialog">{{ redlineExportStatus?.status === 'completed' ? '关闭' : '取消' }}</el-button>
-        <el-button
-          v-if="redlineExportStatus?.status === 'completed'"
-          type="success"
-          @click="handleDownloadRedline"
-          :loading="redlineDownloading"
-        >
-          下载文件
-        </el-button>
-        <el-button
-          v-else
-          type="primary"
-          @click="handleExportRedline"
-          :loading="redlineExporting"
-          :disabled="confirmedCount === 0 && (!includeComments || !hasCommentableActions)"
-        >
-          {{ redlineExporting ? '正在导出...' : '开始导出' }}
-        </el-button>
+        <!-- 如果有持久化文件 -->
+        <template v-if="persistedRedlineInfo">
+          <el-button @click="closeRedlineDialog">关闭</el-button>
+          <el-button
+            type="primary"
+            @click="downloadPersistedRedline"
+            :loading="redlineDownloading"
+          >
+            下载文件
+          </el-button>
+        </template>
+        <!-- 如果没有持久化文件 -->
+        <template v-else>
+          <el-button @click="closeRedlineDialog">{{ redlineExportStatus?.status === 'completed' ? '关闭' : '取消' }}</el-button>
+          <el-button
+            v-if="redlineExportStatus?.status === 'completed'"
+            type="success"
+            @click="handleDownloadRedline"
+            :loading="redlineDownloading"
+          >
+            下载文件
+          </el-button>
+          <el-button
+            v-else
+            type="primary"
+            @click="handleExportRedline"
+            :loading="redlineExporting"
+            :disabled="confirmedCount === 0 && (!includeComments || !hasCommentableActions)"
+          >
+            {{ redlineExporting ? '正在导出...' : '开始导出' }}
+          </el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -456,6 +497,7 @@ const includeComments = ref(false)
 const redlineExportStatus = ref(null)  // 导出任务状态
 const redlineDownloading = ref(false)  // 下载中状态
 let redlineStatusPoller = null  // 状态轮询定时器
+const persistedRedlineInfo = ref(null)  // 已持久化的 Redline 文件信息
 
 // 独立存储 UI 状态，不受 store 重载影响
 const modificationUIStates = ref({}) // { modId: { showDiff: true, isEditing: false, editText: '' } }
@@ -665,8 +707,11 @@ onMounted(async () => {
       await store.loadResult(taskId.value)
       // 初始化 UI 状态（独立于 store 数据）
       initModUIStates()
-      // 获取 Redline 预览信息
-      await loadRedlinePreview()
+      // 获取 Redline 预览信息和已持久化的文件信息
+      await Promise.all([
+        loadRedlinePreview(),
+        loadPersistedRedlineInfo()
+      ])
     } catch (error) {
       ElMessage.error('加载结果失败')
     } finally {
@@ -681,6 +726,61 @@ async function loadRedlinePreview() {
     redlinePreview.value = res.data
   } catch (error) {
     console.error('获取 Redline 预览失败:', error)
+  }
+}
+
+async function loadPersistedRedlineInfo() {
+  try {
+    const res = await api.getRedlineInfo(taskId.value)
+    if (res.data.exists) {
+      persistedRedlineInfo.value = res.data
+    } else {
+      persistedRedlineInfo.value = null
+    }
+  } catch (error) {
+    console.error('获取 Redline 信息失败:', error)
+    persistedRedlineInfo.value = null
+  }
+}
+
+async function downloadPersistedRedline() {
+  redlineDownloading.value = true
+  try {
+    const res = await api.downloadPersistedRedline(taskId.value)
+
+    // 从响应头获取文件名
+    const contentDisposition = res.headers['content-disposition']
+    let filename = persistedRedlineInfo.value?.filename || 'document_redline.docx'
+    if (contentDisposition) {
+      const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;\s]+)/)
+      if (utf8Match) {
+        filename = decodeURIComponent(utf8Match[1])
+      } else {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/)
+        if (match) filename = match[1]
+      }
+    }
+
+    // 创建下载链接
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    ElMessage.success('文件下载成功')
+    closeRedlineDialog()
+  } catch (error) {
+    console.error('下载失败:', error)
+    ElMessage.error(error.message || '下载失败，请重试')
+  } finally {
+    redlineDownloading.value = false
   }
 }
 
@@ -1041,6 +1141,8 @@ async function handleDownloadRedline() {
     window.URL.revokeObjectURL(url)
 
     ElMessage.success('文件下载成功')
+    // 下载成功后刷新持久化信息
+    await loadPersistedRedlineInfo()
     closeRedlineDialog()
   } catch (error) {
     console.error('下载失败:', error)
@@ -1287,5 +1389,20 @@ async function handleDownloadRedline() {
 
 .export-error {
   margin-top: var(--spacing-3);
+}
+
+/* 持久化文件信息样式 */
+.persisted-info {
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.persisted-info p {
+  margin: var(--spacing-1) 0;
+}
+
+.persisted-info strong {
+  color: var(--color-primary);
 }
 </style>

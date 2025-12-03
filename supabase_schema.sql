@@ -18,9 +18,22 @@ CREATE TABLE tasks (
     standard_filename TEXT,  -- 原始文件名（用于显示）
     standard_storage_name TEXT,  -- 安全存储名（UUID+扩展名，用于 Storage）
     standard_template TEXT,
+    -- Redline 导出文件信息
+    redline_filename TEXT,           -- 修订版文件原始名（用于显示）
+    redline_storage_name TEXT,       -- 修订版文件存储名（UUID+.docx）
+    redline_generated_at TIMESTAMPTZ, -- 修订版生成时间
+    redline_applied_count INTEGER,    -- 应用的修改数量
+    redline_comments_count INTEGER,   -- 添加的批注数量
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 注意：如需在已有数据库上添加这些字段，请执行以下迁移SQL：
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS redline_filename TEXT;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS redline_storage_name TEXT;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS redline_generated_at TIMESTAMPTZ;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS redline_applied_count INTEGER;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS redline_comments_count INTEGER;
 
 -- 2. 审阅结果表
 CREATE TABLE review_results (
