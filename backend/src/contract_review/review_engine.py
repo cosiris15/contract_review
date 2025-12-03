@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import Settings
+from .fallback_llm import FallbackLLMClient
 from .gemini_client import GeminiClient
 from .llm_client import LLMClient
 from .models import (
@@ -56,20 +57,39 @@ class ReviewEngine:
         self.settings = settings
         self.llm_provider = llm_provider
 
-        if llm_provider == "gemini":
-            # 使用 Gemini 进行审阅
-            if not settings.gemini.api_key:
-                raise ValueError("Gemini API Key 未配置")
-            self.llm = GeminiClient(
+        # 创建主 LLM 客户端
+        deepseek_client = LLMClient(settings.llm)
+
+        # 创建备用 LLM 客户端（Gemini，如果配置了）
+        gemini_client = None
+        if settings.gemini.api_key:
+            gemini_client = GeminiClient(
                 api_key=settings.gemini.api_key,
                 model=settings.gemini.model,
                 timeout=settings.gemini.timeout,
             )
-            logger.info(f"审阅引擎使用 Gemini 模型: {settings.gemini.model}")
+
+        # 根据用户选择设置主/备用 LLM，支持自动 fallback
+        if llm_provider == "gemini":
+            if not gemini_client:
+                raise ValueError("Gemini API Key 未配置")
+            # Gemini 为主，DeepSeek 为备用
+            self.llm = FallbackLLMClient(
+                primary=gemini_client,
+                fallback=deepseek_client,
+                primary_name="Gemini",
+                fallback_name="DeepSeek",
+            )
+            logger.info(f"审阅引擎使用 Gemini 模型（备用: DeepSeek）")
         else:
-            # 默认使用 DeepSeek
-            self.llm = LLMClient(settings.llm)
-            logger.info(f"审阅引擎使用 DeepSeek 模型: {settings.llm.model}")
+            # DeepSeek 为主，Gemini 为备用
+            self.llm = FallbackLLMClient(
+                primary=deepseek_client,
+                fallback=gemini_client,
+                primary_name="DeepSeek",
+                fallback_name="Gemini" if gemini_client else None,
+            )
+            logger.info(f"审阅引擎使用 DeepSeek 模型" + (f"（备用: Gemini）" if gemini_client else ""))
 
     async def review_document(
         self,

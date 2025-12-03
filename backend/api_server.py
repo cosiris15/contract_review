@@ -57,6 +57,7 @@ from src.contract_review.prompts import (
     build_collection_usage_instruction_messages,
 )
 from src.contract_review.llm_client import LLMClient
+from src.contract_review.fallback_llm import FallbackLLMClient, create_fallback_client
 from src.contract_review.quota_service import get_quota_service, QuotaInfo
 
 # 配置日志
@@ -149,8 +150,9 @@ else:
     business_library_manager = BusinessLibraryManager(BUSINESS_LIBRARY_DIR)
     logger.info("标准库使用本地文件存储后端")
 
-# LLM 客户端
-llm_client = LLMClient(settings.llm)
+# LLM 客户端（带 fallback 机制）
+# 默认使用 DeepSeek，失败时自动切换到 Gemini
+llm_client = create_fallback_client(settings, primary_provider="deepseek")
 
 # OCR 服务初始化（用于图片和扫描 PDF 识别）
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
