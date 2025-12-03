@@ -931,7 +931,9 @@ async function handleDocumentChange(file) {
         language: form.value.language
       })
       taskId.value = task.id
-      router.replace(`/review/${task.id}`)
+      // 保留交互模式参数
+      const modeQuery = isInteractiveMode.value ? '?mode=interactive' : ''
+      router.replace(`/review/${task.id}${modeQuery}`)
     } catch (error) {
       ElMessage.error('创建任务失败')
       return
