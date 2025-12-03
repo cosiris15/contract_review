@@ -61,6 +61,7 @@ from src.contract_review.fallback_llm import FallbackLLMClient, create_fallback_
 from src.contract_review.quota_service import get_quota_service, QuotaInfo
 from src.contract_review.interactive_engine import InteractiveReviewEngine
 from src.contract_review.supabase_interactive import get_interactive_manager, InteractiveChat, ChatMessage
+from src.contract_review.document_preprocessor import DocumentPreprocessor
 
 # 配置日志
 logging.basicConfig(
@@ -596,6 +597,57 @@ async def delete_task(
     return {"message": "删除成功"}
 
 
+class TaskUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    our_party: Optional[str] = None
+    material_type: Optional[str] = None
+    language: Optional[str] = None
+
+
+@app.patch("/api/tasks/{task_id}")
+async def update_task(
+    task_id: str,
+    request: TaskUpdateRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """更新任务基本信息（需要登录）"""
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 验证用户权限
+    if USE_SUPABASE and task.user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权访问此任务")
+
+    # 构建更新数据
+    update_data = {}
+    if request.name is not None:
+        update_data["name"] = request.name
+    if request.our_party is not None:
+        update_data["our_party"] = request.our_party
+    if request.material_type is not None:
+        update_data["material_type"] = request.material_type
+    if request.language is not None:
+        update_data["language"] = request.language
+
+    if not update_data:
+        return TaskResponse.from_task(task)
+
+    # 更新任务
+    if USE_SUPABASE:
+        updated_task = task_manager.update_task(task_id, update_data)
+    else:
+        # 本地模式：直接更新内存中的任务
+        for key, value in update_data.items():
+            setattr(task, key, value)
+        updated_task = task
+
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="更新失败")
+
+    return TaskResponse.from_task(updated_task)
+
+
 @app.get("/api/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
     """获取任务状态和进度"""
@@ -974,6 +1026,79 @@ async def detect_language(request: LanguageDetectionRequest):
             detected_language="en",
             confidence=min((1 - chinese_ratio), 0.95)
         )
+
+
+# ==================== 文档预处理 API ====================
+
+class PartyInfo(BaseModel):
+    role: str  # 甲方、乙方、出租人等
+    name: str  # 具体名称
+    description: str = ""  # 角色描述
+
+
+class PreprocessRequest(BaseModel):
+    task_id: str
+
+
+class PreprocessResponse(BaseModel):
+    parties: List[PartyInfo]
+    suggested_name: str
+    language: str
+    document_type: str = ""
+
+
+@app.post("/api/tasks/{task_id}/preprocess", response_model=PreprocessResponse)
+async def preprocess_document(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    预处理文档，识别合同各方和文档类型
+
+    用于简化用户操作：上传文档后自动识别各方，让用户选择而非手动输入
+    """
+    task_manager = SupabaseTaskManager()
+    storage_manager = SupabaseStorageManager()
+
+    # 获取任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 验证用户权限
+    if task.user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权访问此任务")
+
+    # 检查是否有文档
+    if not task.document_storage_name:
+        raise HTTPException(status_code=400, detail="请先上传文档")
+
+    # 读取文档内容
+    try:
+        document_bytes = storage_manager.download_file(task.document_storage_name)
+        document = await load_document_async(
+            document_bytes,
+            task.document_filename,
+            get_ocr_service()
+        )
+    except Exception as e:
+        logger.error(f"读取文档失败: {e}")
+        raise HTTPException(status_code=500, detail=f"读取文档失败: {str(e)}")
+
+    # 执行预处理
+    try:
+        preprocessor = DocumentPreprocessor(settings)
+        result = await preprocessor.preprocess(document.text)
+
+        return PreprocessResponse(
+            parties=[PartyInfo(**p) for p in result.get("parties", [])],
+            suggested_name=result.get("suggested_name", "未命名文档"),
+            language=result.get("language", "zh-CN"),
+            document_type=result.get("document_type", ""),
+        )
+    except Exception as e:
+        logger.error(f"文档预处理失败: {e}")
+        raise HTTPException(status_code=500, detail=f"文档预处理失败: {str(e)}")
 
 
 # ==================== 结果管理 API ====================

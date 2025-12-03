@@ -210,6 +210,10 @@ export default {
     return api.delete(`/tasks/${taskId}`)
   },
 
+  updateTask(taskId, data) {
+    return api.patch(`/tasks/${taskId}`, data)
+  },
+
   getTaskStatus(taskId) {
     return api.get(`/tasks/${taskId}/status`)
   },
@@ -217,6 +221,11 @@ export default {
   // 语言检测
   detectLanguage(text) {
     return api.post('/detect-language', { text })
+  },
+
+  // 文档预处理（识别合同各方、生成任务名称）
+  preprocessDocument(taskId) {
+    return api.post(`/tasks/${taskId}/preprocess`)
   },
 
   // 文件上传

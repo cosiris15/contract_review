@@ -179,6 +179,26 @@ class SupabaseTaskManager:
 
         self.client.table("tasks").update(update_data).eq("id", task.id).execute()
 
+    def update_task(self, task_id: str, update_data: dict) -> Optional[ReviewTask]:
+        """
+        更新任务基本信息
+
+        Args:
+            task_id: 任务 ID
+            update_data: 要更新的字段字典
+
+        Returns:
+            更新后的任务，或 None（如果失败）
+        """
+        try:
+            result = self.client.table("tasks").update(update_data).eq("id", task_id).execute()
+            if result.data:
+                return self._row_to_task(result.data[0])
+            return None
+        except Exception as e:
+            print(f"更新任务失败: {e}")
+            return None
+
     def delete_task(self, task_id: str, user_id: str) -> bool:
         """
         删除任务

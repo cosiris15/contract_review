@@ -66,52 +66,7 @@
             </div>
           </template>
 
-          <!-- 步骤 1: 基本信息 -->
-          <el-form
-            ref="formRef"
-            :model="form"
-            :rules="rules"
-            label-position="top"
-          >
-            <el-form-item label="任务名称" prop="name">
-              <el-input
-                v-model="form.name"
-                placeholder="例如：XX合同审阅"
-                :disabled="!!taskId"
-              />
-            </el-form-item>
-
-            <el-form-item label="我方身份" prop="our_party">
-              <el-input
-                v-model="form.our_party"
-                placeholder="例如：XX科技有限公司"
-                :disabled="!!taskId"
-              />
-            </el-form-item>
-
-            <el-form-item label="材料类型" prop="material_type">
-              <el-radio-group v-model="form.material_type" :disabled="!!taskId">
-                <el-radio value="contract">合同</el-radio>
-                <el-radio value="marketing">营销材料</el-radio>
-              </el-radio-group>
-            </el-form-item>
-
-            <el-form-item label="审阅语言" prop="language">
-              <el-radio-group v-model="form.language" :disabled="!!taskId">
-                <el-radio value="zh-CN">中文</el-radio>
-                <el-radio value="en">English</el-radio>
-              </el-radio-group>
-              <div v-if="detectedLanguage" class="language-detection-hint">
-                <el-icon><InfoFilled /></el-icon>
-                自动检测：{{ detectedLanguage === 'zh-CN' ? '中文' : 'English' }}
-                (置信度 {{ Math.round(detectedConfidence * 100) }}%)
-              </div>
-            </el-form-item>
-          </el-form>
-
-          <el-divider />
-
-          <!-- 步骤 2: 上传文档 -->
+          <!-- 步骤 1: 上传文档（简化流程，先上传再识别） -->
           <div class="upload-section">
             <h4>
               <el-icon><Document /></el-icon>
@@ -123,9 +78,17 @@
               :auto-upload="false"
               :show-file-list="false"
               :on-change="handleDocumentChange"
+              :disabled="preprocessing"
               accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.md,.txt"
             >
-              <div v-if="currentTask?.document_filename" class="uploaded-file">
+              <!-- 预处理中 -->
+              <div v-if="preprocessing" class="preprocessing-status">
+                <el-icon :size="40" class="is-loading"><Loading /></el-icon>
+                <p>正在分析文档...</p>
+                <span>识别合同各方和文档类型</span>
+              </div>
+              <!-- 已上传 -->
+              <div v-else-if="currentTask?.document_filename" class="uploaded-file">
                 <el-icon :size="40" color="#67c23a"><DocumentChecked /></el-icon>
                 <span>{{ currentTask.document_filename }}</span>
                 <div class="uploaded-file-actions">
@@ -133,12 +96,31 @@
                   <el-button type="danger" text size="small" @click.stop="handleClearDocument">取消</el-button>
                 </div>
               </div>
+              <!-- 未上传 -->
               <div v-else class="upload-placeholder">
                 <el-icon :size="40"><UploadFilled /></el-icon>
                 <p>拖拽文件到此处或点击上传</p>
                 <span>支持 PDF、图片、Word、Excel、Markdown 格式</span>
               </div>
             </el-upload>
+
+            <!-- 已识别的信息展示 -->
+            <div v-if="currentTask?.our_party && !preprocessing" class="recognized-info">
+              <el-descriptions :column="2" size="small" border>
+                <el-descriptions-item label="任务名称">
+                  {{ currentTask.name || '未命名' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="我方身份">
+                  {{ currentTask.our_party }}
+                </el-descriptions-item>
+                <el-descriptions-item label="材料类型">
+                  {{ currentTask.material_type === 'contract' ? '合同' : '营销材料' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="审阅语言">
+                  {{ currentTask.language === 'zh-CN' ? '中文' : 'English' }}
+                </el-descriptions-item>
+              </el-descriptions>
+            </div>
           </div>
 
           <el-divider v-if="!isInteractiveMode" />
@@ -736,6 +718,14 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 身份选择弹窗 -->
+    <PartySelectDialog
+      v-model="showPartySelectDialog"
+      :parties="recognizedParties"
+      @confirm="handlePartySelected"
+      @cancel="handlePartySelectCancel"
+    />
   </div>
 </template>
 
@@ -747,6 +737,7 @@ import { ElMessage } from 'element-plus'
 import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus, Warning } from '@element-plus/icons-vue'
 import api from '@/api'
 import interactiveApi from '@/api/interactive'
+import PartySelectDialog from '@/components/common/PartySelectDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -769,6 +760,13 @@ const form = ref({
 // 语言检测相关状态
 const detectedLanguage = ref(null)
 const detectedConfidence = ref(0)
+
+// 文档预处理相关状态
+const preprocessing = ref(false)
+const showPartySelectDialog = ref(false)
+const recognizedParties = ref([])
+const preprocessResult = ref(null)
+const pendingFile = ref(null) // 暂存待上传的文件
 
 const rules = {
   name: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
@@ -915,20 +913,18 @@ watch(() => route.params.taskId, async (newId) => {
 })
 
 async function handleDocumentChange(file) {
-  // 如果还没有任务，先创建
-  if (!taskId.value) {
-    const valid = await formRef.value.validate().catch(() => false)
-    if (!valid) {
-      ElMessage.warning('请先填写基本信息')
-      return
-    }
+  // 保存待处理的文件
+  pendingFile.value = file.raw
 
+  // 如果还没有任务，先创建一个临时任务
+  if (!taskId.value) {
     try {
+      // 使用临时默认值创建任务
       const task = await store.createTask({
-        name: form.value.name,
-        our_party: form.value.our_party,
-        material_type: form.value.material_type,
-        language: form.value.language
+        name: '正在分析...',
+        our_party: '待确认',
+        material_type: form.value.material_type || 'contract',
+        language: 'zh-CN' // 默认中文，后续会自动更新
       })
       taskId.value = task.id
       // 保留交互模式参数
@@ -936,6 +932,7 @@ async function handleDocumentChange(file) {
       router.replace(`/review/${task.id}${modeQuery}`)
     } catch (error) {
       ElMessage.error('创建任务失败')
+      pendingFile.value = null
       return
     }
   }
@@ -943,13 +940,92 @@ async function handleDocumentChange(file) {
   // 上传文档
   try {
     await store.uploadDocument(taskId.value, file.raw)
-    ElMessage.success('文档上传成功')
-
-    // 文档上传成功后，尝试检测语言
-    await detectDocumentLanguage(file.raw)
   } catch (error) {
     ElMessage.error(error.message || '上传失败')
+    pendingFile.value = null
+    return
   }
+
+  // 开始预处理
+  await preprocessDocument()
+}
+
+// 文档预处理
+async function preprocessDocument() {
+  if (!taskId.value) return
+
+  preprocessing.value = true
+  try {
+    const response = await api.preprocessDocument(taskId.value)
+    preprocessResult.value = response.data
+
+    // 保存识别到的各方
+    recognizedParties.value = response.data.parties || []
+
+    // 如果识别到了各方，弹出选择对话框
+    if (recognizedParties.value.length > 0) {
+      showPartySelectDialog.value = true
+    } else {
+      // 没有识别到各方，使用默认值并提示用户手动输入
+      ElMessage.warning('未能识别合同各方，请手动选择您的身份')
+      showPartySelectDialog.value = true
+    }
+  } catch (error) {
+    console.error('预处理失败:', error)
+    ElMessage.warning('文档分析失败，请手动输入信息')
+    // 即使预处理失败，也允许用户继续
+    showPartySelectDialog.value = true
+  } finally {
+    preprocessing.value = false
+  }
+}
+
+// 用户选择身份后
+async function handlePartySelected(selectedParty) {
+  if (!taskId.value) return
+
+  // 更新任务信息
+  const taskName = preprocessResult.value?.suggested_name || '未命名文档'
+  const language = preprocessResult.value?.language || 'zh-CN'
+
+  try {
+    // 调用 API 更新任务
+    await api.updateTask(taskId.value, {
+      name: taskName,
+      our_party: selectedParty,
+      language: language
+    })
+
+    // 更新本地状态
+    if (currentTask.value) {
+      currentTask.value.name = taskName
+      currentTask.value.our_party = selectedParty
+      currentTask.value.language = language
+    }
+
+    // 更新表单（如果需要）
+    form.value.name = taskName
+    form.value.our_party = selectedParty
+    form.value.language = language
+
+    ElMessage.success('已确认您的身份')
+
+    // 清理临时状态
+    pendingFile.value = null
+  } catch (error) {
+    console.error('更新任务失败:', error)
+    ElMessage.error('保存失败，请重试')
+  }
+}
+
+// 用户取消选择身份
+function handlePartySelectCancel() {
+  // 如果用户取消，可以考虑清除任务或保留让用户重新选择
+  ElMessage.info('请选择您在合同中的身份以继续')
+  // 重新显示对话框
+  setTimeout(() => {
+    showPartySelectDialog.value = true
+  }, 500)
 }
 
 // 取消已上传的文档（清除显示状态，允许重新拖入）
@@ -1744,6 +1820,35 @@ async function applyStandards() {
 
 .upload-placeholder span {
   font-size: var(--font-size-xs);
+}
+
+/* 预处理中状态 */
+.preprocessing-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--color-primary);
+  text-align: center;
+}
+
+.preprocessing-status p {
+  margin: var(--spacing-2) 0 var(--spacing-1);
+  font-weight: var(--font-weight-medium);
+}
+
+.preprocessing-status span {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* 已识别信息展示 */
+.recognized-info {
+  margin-top: var(--spacing-4);
+}
+
+.recognized-info :deep(.el-descriptions__label) {
+  width: 80px;
 }
 
 .uploaded-file {
