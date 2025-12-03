@@ -1,5 +1,22 @@
 <template>
   <div class="review-view">
+    <!-- AI 整合特殊要求时的全屏加载遮罩 -->
+    <transition name="fade">
+      <div v-if="merging" class="ai-processing-overlay">
+        <div class="ai-processing-card">
+          <div class="ai-icon-wrapper">
+            <el-icon class="ai-icon-spin" :size="48"><MagicStick /></el-icon>
+          </div>
+          <h3 class="ai-title">AI 正在整合特殊要求</h3>
+          <p class="ai-desc">正在分析您的特殊要求，智能调整审核标准...</p>
+          <div class="ai-progress">
+            <div class="ai-progress-bar"></div>
+          </div>
+          <p class="ai-hint">预计需要 30-60 秒，请耐心等待</p>
+        </div>
+      </div>
+    </transition>
+
     <!-- 全局操作状态提示 -->
     <transition name="fade">
       <div v-if="store.isOperationInProgress" class="operation-status-bar">
@@ -1375,6 +1392,106 @@ async function applyStandards() {
 
 .operation-status-bar .el-icon {
   font-size: var(--font-size-lg);
+}
+
+/* AI 处理全屏遮罩样式 */
+.ai-processing-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.ai-processing-card {
+  background: white;
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-8) var(--spacing-10);
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 400px;
+  width: 90%;
+}
+
+.ai-icon-wrapper {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto var(--spacing-5);
+  background: linear-gradient(135deg, var(--color-primary) 0%, #8B5CF6 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-icon-wrapper .el-icon {
+  color: white;
+}
+
+.ai-icon-spin {
+  animation: ai-spin 2s linear infinite;
+}
+
+@keyframes ai-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.ai-title {
+  margin: 0 0 var(--spacing-3);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ai-desc {
+  margin: 0 0 var(--spacing-5);
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+.ai-progress {
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: var(--spacing-4);
+}
+
+.ai-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary) 0%, #8B5CF6 50%, var(--color-primary) 100%);
+  background-size: 200% 100%;
+  animation: ai-progress 1.5s ease-in-out infinite;
+  border-radius: 3px;
+}
+
+@keyframes ai-progress {
+  0% {
+    width: 0%;
+    background-position: 0% 0%;
+  }
+  50% {
+    width: 70%;
+    background-position: 100% 0%;
+  }
+  100% {
+    width: 100%;
+    background-position: 0% 0%;
+  }
+}
+
+.ai-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 
 /* 配额不足提示样式 */
