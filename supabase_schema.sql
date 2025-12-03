@@ -50,6 +50,7 @@ CREATE TABLE standard_collections (
     material_type TEXT DEFAULT 'both',
     is_preset BOOLEAN DEFAULT FALSE,
     language TEXT DEFAULT 'zh-CN',
+    usage_instruction TEXT,  -- 适用说明（AI 生成）
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

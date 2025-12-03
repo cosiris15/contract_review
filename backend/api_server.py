@@ -47,6 +47,7 @@ from src.contract_review.tasks import TaskManager
 from src.contract_review.supabase_tasks import SupabaseTaskManager
 from src.contract_review.supabase_storage import SupabaseStorageManager
 from src.contract_review.supabase_business import SupabaseBusinessManager
+from src.contract_review.supabase_standards import SupabaseStandardLibraryManager
 from src.contract_review.prompts import (
     build_usage_instruction_messages,
     build_standard_recommendation_messages,
@@ -134,16 +135,19 @@ else:
 
 formatter = ResultFormatter()
 
-# 标准库目录
+# 标准库目录（本地文件存储备选方案）
 STANDARD_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "standard_library"
-standard_library_manager = StandardLibraryManager(STANDARD_LIBRARY_DIR)
 
-# 业务条线管理器（根据存储后端选择）
+# 标准库管理器和业务条线管理器（根据存储后端选择）
 if USE_SUPABASE:
+    standard_library_manager = SupabaseStandardLibraryManager()
     business_library_manager = SupabaseBusinessManager()
+    logger.info("标准库使用 Supabase 存储后端")
 else:
+    standard_library_manager = StandardLibraryManager(STANDARD_LIBRARY_DIR)
     BUSINESS_LIBRARY_DIR = Path(settings.review.tasks_dir).parent / "data" / "business_library"
     business_library_manager = BusinessLibraryManager(BUSINESS_LIBRARY_DIR)
+    logger.info("标准库使用本地文件存储后端")
 
 # LLM 客户端
 llm_client = LLMClient(settings.llm)

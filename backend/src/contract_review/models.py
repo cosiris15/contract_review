@@ -93,6 +93,7 @@ class ReviewStandardSet(BaseModel):
 class StandardCollection(BaseModel):
     """标准集（一套完整的审阅标准）"""
     id: str = Field(default_factory=generate_id)
+    user_id: Optional[str] = None  # 用户ID，NULL 表示系统预设
     name: str  # 集合名称，如"电商平台合作协议审核标准"
     description: str = ""  # 适用场景说明
     usage_instruction: Optional[str] = None  # 适用说明（用于智能推荐）

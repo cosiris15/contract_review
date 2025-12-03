@@ -34,6 +34,10 @@ class SupabaseStorageManager:
             "our_party": result.our_party,
             "review_standards_used": result.review_standards_used,
             "language": result.language,
+            # 业务条线信息
+            "business_line_id": result.business_line_id,
+            "business_line_name": result.business_line_name,
+            # 审阅产出
             "risks": [r.model_dump() for r in result.risks],
             "modifications": [m.model_dump() for m in result.modifications],
             "actions": [a.model_dump() for a in result.actions],
@@ -75,6 +79,10 @@ class SupabaseStorageManager:
             our_party=row.get("our_party", ""),
             review_standards_used=row.get("review_standards_used", ""),
             language=row.get("language", "zh-CN"),
+            # 业务条线信息
+            business_line_id=row.get("business_line_id"),
+            business_line_name=row.get("business_line_name"),
+            # 审阅产出
             risks=risks,
             modifications=modifications,
             actions=actions,
