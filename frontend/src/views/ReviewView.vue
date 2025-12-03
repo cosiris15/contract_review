@@ -228,14 +228,14 @@
                     <el-radio-group v-model="specialReqMode" size="small">
                       <el-radio value="direct">
                         <span class="mode-option">
-                          <span class="mode-name">直接传递</span>
-                          <span class="mode-desc">审阅时直接参考，无需等待</span>
+                          <span class="mode-name">直接应用</span>
+                          <span class="mode-desc">审阅时自动参考，无需等待</span>
                         </span>
                       </el-radio>
                       <el-radio value="merge">
                         <span class="mode-option">
-                          <span class="mode-name">AI 整合</span>
-                          <span class="mode-desc">预先调整标准，可预览效果</span>
+                          <span class="mode-name">修改标准</span>
+                          <span class="mode-desc">先调整审核标准，可预览效果</span>
                         </span>
                       </el-radio>
                     </el-radio-group>
@@ -249,13 +249,13 @@
                       @click="mergeSpecialRequirements"
                     >
                       <el-icon><MagicStick /></el-icon>
-                      整合到审核标准
+                      开始修改标准
                     </el-button>
                     <span class="special-tip">AI 将根据特殊要求调整审核标准（约30-60秒）</span>
                   </div>
                   <div v-if="specialRequirements.trim() && specialReqMode === 'direct'" class="special-footer direct-mode">
                     <el-icon color="#67c23a"><CircleCheck /></el-icon>
-                    <span class="direct-hint">特殊要求将在审阅时直接传递给 AI，无需额外处理</span>
+                    <span class="direct-hint">开始审阅后，特殊要求将自动生效</span>
                   </div>
                 </div>
               </el-collapse-transition>
