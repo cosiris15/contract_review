@@ -61,7 +61,33 @@ api.interceptors.response.use(
 
 export default {
   /**
-   * 启动快速初审（无标准审阅）
+   * 启动统一审阅（支持可选标准）
+   * @param {string} taskId - 任务 ID
+   * @param {Object} options - 审阅选项
+   * @param {string} options.llmProvider - LLM 提供者（'deepseek' | 'gemini'）
+   * @param {boolean} options.useStandards - 是否使用审核标准（默认 false）
+   * @param {string} options.businessLineId - 业务条线 ID（可选）
+   * @param {string} options.specialRequirements - 本次特殊要求（可选）
+   */
+  startUnifiedReview(taskId, options = {}) {
+    const {
+      llmProvider = 'deepseek',
+      useStandards = false,
+      businessLineId = null,
+      specialRequirements = null
+    } = options
+
+    return api.post(`/tasks/${taskId}/unified-review`, {
+      llm_provider: llmProvider,
+      use_standards: useStandards,
+      business_line_id: businessLineId,
+      special_requirements: specialRequirements
+    })
+  },
+
+  /**
+   * 启动快速初审（无标准审阅）- 保留向后兼容
+   * @deprecated 请使用 startUnifiedReview 方法
    * @param {string} taskId - 任务 ID
    * @param {string} llmProvider - LLM 提供者（'deepseek' | 'gemini'）
    */

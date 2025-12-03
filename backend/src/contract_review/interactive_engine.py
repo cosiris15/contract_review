@@ -1,9 +1,10 @@
 """
-深度交互审阅引擎
+深度交互审阅引擎（统一审阅引擎）
 
 处理：
-1. 快速初审（无预设标准）
-2. 单条目多轮对话
+1. 统一审阅（支持可选标准）
+2. 快速初审（无预设标准，保留向后兼容）
+3. 单条目多轮对话
 """
 
 from __future__ import annotations
@@ -25,12 +26,14 @@ from .models import (
     MaterialType,
     ModificationSuggestion,
     ReviewResult,
+    ReviewStandard,
     RiskPoint,
     TextLocation,
     generate_id,
 )
 from .prompts_interactive import (
     INTERACTIVE_PROMPT_VERSION,
+    build_unified_review_messages,
     build_quick_review_messages,
     build_item_chat_messages,
     build_document_summary_messages,
@@ -86,6 +89,111 @@ class InteractiveReviewEngine:
             )
             logger.info("交互审阅引擎使用 DeepSeek 模型" + ("（备用: Gemini）" if gemini_client else ""))
 
+    async def unified_review(
+        self,
+        document: LoadedDocument,
+        our_party: str,
+        material_type: MaterialType,
+        task_id: str,
+        language: Language = "zh-CN",
+        review_standards: Optional[List[ReviewStandard]] = None,
+        business_context: Optional[Dict[str, Any]] = None,
+        special_requirements: Optional[str] = None,
+        progress_callback: Optional[Callable[[str, int, str], None]] = None,
+    ) -> ReviewResult:
+        """
+        执行统一审阅（支持可选标准）
+
+        这是新的统一审阅入口，支持两种模式：
+        1. 有标准模式：review_standards 有值时，基于标准进行审阅
+        2. 无标准模式：review_standards 为 None 时，AI 自主审阅
+
+        Args:
+            document: 待审阅文档
+            our_party: 我方身份
+            material_type: 材料类型
+            task_id: 任务 ID
+            language: 语言
+            review_standards: 审核标准列表（可选，为 None 时 AI 自主审阅）
+            business_context: 业务上下文（可选）
+                - name: 业务条线名称
+                - contexts: BusinessContext 列表
+            special_requirements: 特殊要求（可选）
+            progress_callback: 进度回调函数
+
+        Returns:
+            审阅结果
+        """
+        def update_progress(stage: str, percentage: int, message: str = ""):
+            if progress_callback:
+                progress_callback(stage, percentage, message)
+
+        # 根据是否有标准显示不同的提示信息
+        if review_standards:
+            update_progress("analyzing", 10, "正在基于审核标准进行审阅...")
+        else:
+            update_progress("analyzing", 10, "正在进行 AI 自主审阅...")
+
+        # 构建统一的 Prompt
+        messages = build_unified_review_messages(
+            document_text=document.text,
+            our_party=our_party,
+            material_type=material_type,
+            language=language,
+            review_standards=review_standards,
+            business_context=business_context,
+            special_requirements=special_requirements,
+        )
+
+        update_progress("analyzing", 20, "AI 正在分析文档...")
+
+        # 调用 LLM
+        try:
+            response = await self.llm.chat(messages, max_output_tokens=8000)
+            logger.info(f"统一审阅 LLM 响应长度: {len(response)}")
+        except Exception as e:
+            logger.error(f"统一审阅 LLM 调用失败: {e}")
+            raise
+
+        update_progress("generating", 50, "正在解析审阅结果...")
+
+        # 解析响应（使用相同的解析逻辑）
+        risks, modifications, actions, summary = self._parse_quick_review_response(
+            response, language
+        )
+
+        update_progress("generating", 80, "正在生成报告...")
+
+        # 构建审核标准描述
+        if review_standards:
+            standards_desc = f"基于 {len(review_standards)} 条审核标准"
+        else:
+            standards_desc = "AI 自主审阅（无预设标准）"
+
+        # 构建结果
+        result = ReviewResult(
+            task_id=task_id,
+            document_name=document.path.name if document.path else "uploaded_document",
+            document_path=str(document.path) if document.path else None,
+            material_type=material_type,
+            our_party=our_party,
+            review_standards_used=standards_desc,
+            language=language,
+            risks=risks,
+            modifications=modifications,
+            actions=actions,
+            reviewed_at=datetime.now(),
+            llm_model=self.llm_provider,
+            prompt_version=INTERACTIVE_PROMPT_VERSION,
+        )
+
+        # 计算统计摘要
+        result.calculate_summary()
+
+        update_progress("completed", 100, "审阅完成")
+
+        return result
+
     async def quick_review(
         self,
         document: LoadedDocument,
@@ -96,7 +204,10 @@ class InteractiveReviewEngine:
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
     ) -> ReviewResult:
         """
-        执行快速初审（无预设标准）
+        执行快速初审（无预设标准）- 保留向后兼容
+
+        此方法现在是 unified_review 的简化包装，仅用于向后兼容。
+        新代码建议使用 unified_review 方法。
 
         AI 自主发现文档中的所有潜在风险，生成修改建议和行动建议。
 
@@ -111,62 +222,18 @@ class InteractiveReviewEngine:
         Returns:
             审阅结果
         """
-        def update_progress(stage: str, percentage: int, message: str = ""):
-            if progress_callback:
-                progress_callback(stage, percentage, message)
-
-        update_progress("analyzing", 10, "正在进行快速初审...")
-
-        # 构建 Prompt
-        messages = build_quick_review_messages(
-            document_text=document.text,
+        # 委托给统一审阅方法（无标准模式）
+        return await self.unified_review(
+            document=document,
             our_party=our_party,
             material_type=material_type,
-            language=language,
-        )
-
-        update_progress("analyzing", 20, "AI 正在分析文档...")
-
-        # 调用 LLM
-        try:
-            response = await self.llm.chat(messages, max_output_tokens=8000)
-            logger.info(f"快速初审 LLM 响应长度: {len(response)}")
-        except Exception as e:
-            logger.error(f"快速初审 LLM 调用失败: {e}")
-            raise
-
-        update_progress("generating", 50, "正在解析审阅结果...")
-
-        # 解析响应
-        risks, modifications, actions, summary = self._parse_quick_review_response(
-            response, language
-        )
-
-        update_progress("generating", 80, "正在生成报告...")
-
-        # 构建结果
-        result = ReviewResult(
             task_id=task_id,
-            document_name=document.path.name if document.path else "uploaded_document",
-            document_path=str(document.path) if document.path else None,
-            material_type=material_type,
-            our_party=our_party,
-            review_standards_used="AI 自主审阅（无预设标准）",
             language=language,
-            risks=risks,
-            modifications=modifications,
-            actions=actions,
-            reviewed_at=datetime.now(),
-            llm_model=self.llm_provider,
-            prompt_version=INTERACTIVE_PROMPT_VERSION,
+            review_standards=None,  # 无标准
+            business_context=None,
+            special_requirements=None,
+            progress_callback=progress_callback,
         )
-
-        # 计算统计摘要
-        result.calculate_summary()
-
-        update_progress("completed", 100, "快速初审完成")
-
-        return result
 
     def _parse_quick_review_response(
         self,

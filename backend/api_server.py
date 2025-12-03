@@ -3623,6 +3623,19 @@ class QuickReviewRequest(BaseModel):
     llm_provider: str = "deepseek"
 
 
+class UnifiedReviewRequest(BaseModel):
+    """统一审阅请求
+
+    支持两种模式：
+    1. use_standards=False: AI 自主审阅（无预设标准）
+    2. use_standards=True: 基于已上传的审核标准审阅
+    """
+    llm_provider: str = "deepseek"
+    use_standards: bool = False  # 是否使用审核标准
+    business_line_id: Optional[str] = None  # 业务条线 ID（可选）
+    special_requirements: Optional[str] = None  # 本次特殊要求（可选）
+
+
 class InteractiveItemResponse(BaseModel):
     """单个交互条目响应"""
     id: str
@@ -3661,6 +3674,236 @@ class ChatResponse(BaseModel):
 class CompleteItemRequest(BaseModel):
     """完成条目请求"""
     final_suggestion: Optional[str] = None
+
+
+async def run_unified_review(
+    task_id: str,
+    user_id: str,
+    llm_provider: str = "deepseek",
+    use_standards: bool = False,
+    business_line_id: Optional[str] = None,
+    special_requirements: Optional[str] = None,
+):
+    """后台执行统一审阅任务
+
+    支持两种模式：
+    1. use_standards=False: AI 自主审阅
+    2. use_standards=True: 基于审核标准审阅
+    """
+    task = task_manager.get_task(task_id)
+    if not task:
+        logger.error(f"任务不存在: {task_id}")
+        return
+
+    try:
+        # 更新状态
+        if use_standards:
+            task.update_status("reviewing", "正在基于审核标准进行审阅...")
+        else:
+            task.update_status("reviewing", "正在进行 AI 自主审阅...")
+        task.review_mode = "interactive"  # 统一使用交互模式
+        task_manager.update_task(task)
+
+        # 获取文档路径
+        doc_storage_name = task.document_storage_name
+        if not doc_storage_name:
+            raise ValueError("文档未上传")
+
+        # 下载文档
+        doc_content = storage_manager.download_document(task_id, doc_storage_name)
+        if not doc_content:
+            raise ValueError("无法下载文档")
+
+        # 保存临时文件
+        import tempfile
+        suffix = Path(doc_storage_name).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(doc_content)
+            tmp_path = tmp.name
+
+        try:
+            # 加载文档
+            ocr_service = get_ocr_service()
+            document = await load_document_async(tmp_path, ocr_service=ocr_service)
+
+            # 加载审核标准（如果需要）
+            review_standards = None
+            if use_standards:
+                std_storage_name = task.standard_storage_name
+                if not std_storage_name:
+                    raise ValueError("使用标准模式但未上传审核标准")
+
+                std_content = storage_manager.download_standard(task_id, std_storage_name)
+                if not std_content:
+                    raise ValueError("无法下载审核标准文件")
+
+                # 保存临时标准文件
+                std_suffix = Path(std_storage_name).suffix
+                with tempfile.NamedTemporaryFile(delete=False, suffix=std_suffix) as std_tmp:
+                    std_tmp.write(std_content)
+                    std_tmp_path = std_tmp.name
+
+                try:
+                    from src.contract_review.standard_parser import parse_standard_file
+                    standard_set = parse_standard_file(std_tmp_path)
+                    review_standards = standard_set.standards
+                    logger.info(f"已加载 {len(review_standards)} 条审核标准")
+                finally:
+                    if os.path.exists(std_tmp_path):
+                        os.remove(std_tmp_path)
+
+            # 获取业务上下文（如果指定了业务条线）
+            business_context = None
+            if business_line_id:
+                business_line = business_library_manager.get_business_line(business_line_id)
+                if business_line:
+                    business_context = {
+                        "business_line_id": business_line.id,
+                        "business_line_name": business_line.name,
+                        "name": business_line.name,
+                        "industry": business_line.industry,
+                        "contexts": business_line.contexts,
+                    }
+                    logger.info(f"使用业务条线: {business_line.name}")
+
+            # 进度回调
+            def progress_callback(stage: str, percentage: int, message: str):
+                task.update_progress(stage, percentage, message)
+                task_manager.update_task(task)
+
+            # 创建交互审阅引擎并执行统一审阅
+            engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
+            result = await engine.unified_review(
+                document=document,
+                our_party=task.our_party,
+                material_type=task.material_type,
+                task_id=task_id,
+                language=getattr(task, 'language', 'zh-CN'),
+                review_standards=review_standards,
+                business_context=business_context,
+                special_requirements=special_requirements,
+                progress_callback=progress_callback,
+            )
+
+            # 保存结果
+            storage_manager.save_result(result)
+
+            # 为所有条目创建对话记录（支持后续对话打磨）
+            interactive_manager = get_interactive_manager()
+            modifications_data = [
+                {
+                    "id": mod.id,
+                    "original_text": mod.original_text,
+                    "suggested_text": mod.suggested_text,
+                    "modification_reason": mod.modification_reason,
+                    "priority": mod.priority,
+                }
+                for mod in result.modifications
+            ]
+            actions_data = [
+                {
+                    "id": action.id,
+                    "action_type": action.action_type,
+                    "description": action.description,
+                    "urgency": action.urgency,
+                }
+                for action in result.actions
+            ]
+            interactive_manager.initialize_chats_for_task(
+                task_id=task_id,
+                modifications=modifications_data,
+                actions=actions_data,
+            )
+
+            # 更新任务
+            task.result = result
+            task.update_status("completed", "审阅完成")
+            task_manager.update_task(task)
+
+            # 扣除配额
+            quota_service = get_quota_service()
+            await quota_service.deduct_quota(user_id, task_id=task_id)
+
+            logger.info(f"任务 {task_id} 统一审阅完成，发现 {len(result.risks)} 个风险点")
+
+        finally:
+            # 清理临时文件
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    except Exception as e:
+        logger.error(f"任务 {task_id} 统一审阅失败: {e}")
+        task.update_status("failed", str(e))
+        task_manager.update_task(task)
+
+
+@app.post("/api/tasks/{task_id}/unified-review")
+async def start_unified_review(
+    task_id: str,
+    request: UnifiedReviewRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    启动统一审阅（支持可选标准）
+
+    这是新的统一审阅入口，支持两种模式：
+    - use_standards=False（默认）: AI 自主审阅，无需上传审核标准
+    - use_standards=True: 基于已上传的审核标准进行审阅
+
+    无论哪种模式，审阅完成后都会进入交互式结果页面，支持逐条对话打磨。
+    """
+    # 检查配额
+    quota_service = get_quota_service()
+    try:
+        await quota_service.check_quota(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if task.status == "reviewing":
+        raise HTTPException(status_code=400, detail="任务正在审阅中")
+
+    if not task.document_filename:
+        raise HTTPException(status_code=400, detail="请先上传待审阅文档")
+
+    # 如果使用标准模式，检查是否已上传标准
+    if request.use_standards and not task.standard_filename:
+        raise HTTPException(status_code=400, detail="使用标准模式需要先上传审核标准")
+
+    # 验证业务条线（如果提供了）
+    if request.business_line_id:
+        business_line = business_library_manager.get_business_line(request.business_line_id)
+        if not business_line:
+            raise HTTPException(status_code=400, detail="指定的业务条线不存在")
+        logger.info(f"任务 {task_id} 将使用业务条线: {business_line.name}")
+
+    # 设置审阅模式
+    task.review_mode = "interactive"
+    task.update_status("reviewing", "正在启动审阅...")
+    task.update_progress("analyzing", 0, "正在启动...")
+    task_manager.update_task(task)
+
+    # 启动后台任务
+    background_tasks.add_task(
+        run_unified_review,
+        task_id,
+        user_id,
+        request.llm_provider,
+        request.use_standards,
+        request.business_line_id,
+        request.special_requirements,
+    )
+
+    return {
+        "message": "审阅已启动",
+        "task_id": task_id,
+        "mode": "with_standards" if request.use_standards else "ai_autonomous"
+    }
 
 
 async def run_quick_review(

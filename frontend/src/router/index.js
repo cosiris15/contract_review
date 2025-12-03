@@ -75,6 +75,12 @@ const routes = [
     name: 'InteractiveReview',
     component: lazyLoadView(() => import('@/views/InteractiveReviewView.vue'), 'InteractiveReviewView'),
     meta: { title: '深度交互审阅' }
+  },
+  {
+    path: '/review-result/:taskId',
+    name: 'UnifiedResult',
+    component: lazyLoadView(() => import('@/views/UnifiedResultView.vue'), 'UnifiedResultView'),
+    meta: { title: '审阅结果' }
   }
 ]
 
