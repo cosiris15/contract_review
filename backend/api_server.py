@@ -4525,7 +4525,7 @@ async def get_document_text(
         return DocumentTextResponse(
             task_id=task_id,
             document_name=task.document_filename,
-            text=doc_text,
+            text=document.text,
             paragraphs=paragraphs,
         )
 
