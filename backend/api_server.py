@@ -4437,6 +4437,257 @@ async def complete_item(
     }
 
 
+# ==================== 批量生成修改建议 API ====================
+
+
+class GenerateModificationsRequest(BaseModel):
+    """批量生成修改建议请求"""
+    risk_ids: List[str]  # 需要生成修改建议的风险点 ID 列表
+    user_notes: Optional[dict] = None  # 用户备注，key 为 risk_id，value 为备注内容
+
+
+class GenerateModificationsResponse(BaseModel):
+    """批量生成修改建议响应"""
+    task_id: str
+    modifications_count: int
+    modifications: List[dict]
+
+
+@app.post("/api/tasks/{task_id}/generate-modifications", response_model=GenerateModificationsResponse)
+async def generate_modifications_for_risks(
+    task_id: str,
+    request: GenerateModificationsRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    为指定的风险点批量生成修改建议
+
+    这个 API 用于"先分析讨论、后统一改动"的工作流程：
+    1. 用户先查看风险分析，与 AI 讨论
+    2. 用户选择需要修改的风险点
+    3. 调用此 API 为选中的风险点生成修改建议
+
+    Args:
+        task_id: 任务 ID
+        request: 包含 risk_ids（需要生成修改建议的风险点 ID 列表）和可选的 user_notes
+
+    Returns:
+        生成的修改建议列表
+    """
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 验证任务归属
+    if USE_SUPABASE:
+        task_user_id = task_manager.get_task_user_id(task_id)
+        if task_user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权访问此任务")
+
+    # 获取审阅结果
+    result = storage_manager.load_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="审阅结果不存在")
+
+    # 获取文档文本
+    try:
+        if USE_SUPABASE:
+            doc_path = task_manager.get_document_path(task_id, user_id)
+        else:
+            doc_path = storage_manager.get_document_path(task_id)
+
+        if not doc_path or not doc_path.exists():
+            raise HTTPException(status_code=404, detail="文档文件不存在")
+
+        document = await load_document_async(doc_path)
+        document_text = document.text if document else ""
+    except Exception as e:
+        logger.error(f"加载文档失败: {e}")
+        document_text = ""
+
+    # 构建需要生成修改建议的风险点列表
+    risk_map = {r.id: r for r in result.risks}
+    confirmed_risks = []
+
+    for risk_id in request.risk_ids:
+        if risk_id not in risk_map:
+            logger.warning(f"风险点 {risk_id} 不存在，跳过")
+            continue
+
+        risk = risk_map[risk_id]
+
+        # 获取原文
+        original_text = ""
+        if risk.location and risk.location.original_text:
+            original_text = risk.location.original_text
+
+        # 获取用户备注
+        user_note = ""
+        if request.user_notes and risk_id in request.user_notes:
+            user_note = request.user_notes[risk_id]
+
+        confirmed_risks.append({
+            "risk": risk,
+            "original_text": original_text,
+            "user_notes": user_note,
+        })
+
+    if not confirmed_risks:
+        return GenerateModificationsResponse(
+            task_id=task_id,
+            modifications_count=0,
+            modifications=[],
+        )
+
+    # 创建交互引擎并生成修改建议
+    try:
+        engine = InteractiveReviewEngine(settings, llm_provider="deepseek")
+        modifications = await engine.generate_modifications_batch(
+            confirmed_risks=confirmed_risks,
+            document_text=document_text,
+            our_party=result.our_party,
+            material_type=result.material_type,
+            language=result.language,
+        )
+    except Exception as e:
+        logger.error(f"批量生成修改建议失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成修改建议失败: {str(e)}")
+
+    # 将生成的修改建议添加到结果中
+    for mod in modifications:
+        # 检查是否已存在该风险点的修改建议
+        existing = next((m for m in result.modifications if m.risk_id == mod.risk_id), None)
+        if existing:
+            # 更新已存在的修改建议
+            existing.suggested_text = mod.suggested_text
+            existing.modification_reason = mod.modification_reason
+            existing.priority = mod.priority
+        else:
+            # 添加新的修改建议
+            result.modifications.append(mod)
+
+    # 重新计算摘要
+    result.calculate_summary()
+
+    # 保存结果
+    storage_manager.save_result(result)
+
+    # 返回生成的修改建议
+    return GenerateModificationsResponse(
+        task_id=task_id,
+        modifications_count=len(modifications),
+        modifications=[
+            {
+                "id": m.id,
+                "risk_id": m.risk_id,
+                "original_text": m.original_text,
+                "suggested_text": m.suggested_text,
+                "modification_reason": m.modification_reason,
+                "priority": m.priority,
+            }
+            for m in modifications
+        ],
+    )
+
+
+class GenerateSingleModificationRequest(BaseModel):
+    """单条修改建议生成请求"""
+    discussion_summary: str  # 与用户的讨论摘要
+    user_decision: str  # 用户的最终决定
+
+
+@app.post("/api/tasks/{task_id}/risks/{risk_id}/generate-modification")
+async def generate_single_modification(
+    task_id: str,
+    risk_id: str,
+    request: GenerateSingleModificationRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    为单个风险点生成修改建议（基于讨论结果）
+
+    用于用户与 AI 讨论完某个风险点后，基于讨论结果生成精准的修改建议。
+
+    Args:
+        task_id: 任务 ID
+        risk_id: 风险点 ID
+        request: 包含讨论摘要和用户决定
+
+    Returns:
+        生成的修改建议
+    """
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 验证任务归属
+    if USE_SUPABASE:
+        task_user_id = task_manager.get_task_user_id(task_id)
+        if task_user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权访问此任务")
+
+    # 获取审阅结果
+    result = storage_manager.load_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="审阅结果不存在")
+
+    # 查找风险点
+    risk = next((r for r in result.risks if r.id == risk_id), None)
+    if not risk:
+        raise HTTPException(status_code=404, detail="风险点不存在")
+
+    # 获取原文
+    original_text = ""
+    if risk.location and risk.location.original_text:
+        original_text = risk.location.original_text
+
+    if not original_text:
+        raise HTTPException(status_code=400, detail="风险点没有可修改的原文")
+
+    # 生成修改建议
+    try:
+        engine = InteractiveReviewEngine(settings, llm_provider="deepseek")
+        modification = await engine.generate_single_modification(
+            risk_point=risk,
+            original_text=original_text,
+            our_party=result.our_party,
+            material_type=result.material_type,
+            discussion_summary=request.discussion_summary,
+            user_decision=request.user_decision,
+            language=result.language,
+        )
+    except Exception as e:
+        logger.error(f"生成单条修改建议失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成修改建议失败: {str(e)}")
+
+    if not modification:
+        raise HTTPException(status_code=500, detail="生成修改建议失败")
+
+    # 将修改建议添加到结果中
+    existing = next((m for m in result.modifications if m.risk_id == risk_id), None)
+    if existing:
+        existing.suggested_text = modification.suggested_text
+        existing.modification_reason = modification.modification_reason
+        existing.priority = modification.priority
+    else:
+        result.modifications.append(modification)
+
+    # 重新计算摘要并保存
+    result.calculate_summary()
+    storage_manager.save_result(result)
+
+    return {
+        "id": modification.id,
+        "risk_id": modification.risk_id,
+        "original_text": modification.original_text,
+        "suggested_text": modification.suggested_text,
+        "modification_reason": modification.modification_reason,
+        "priority": modification.priority,
+    }
+
+
 # ==================== 文档内容 API ====================
 
 

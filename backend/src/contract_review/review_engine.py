@@ -102,6 +102,7 @@ class ReviewEngine:
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
         business_context: Optional[Dict[str, Any]] = None,
         special_requirements: Optional[str] = None,
+        skip_modifications: bool = False,
     ) -> ReviewResult:
         """
         执行完整的文档审阅流程
@@ -116,6 +117,9 @@ class ReviewEngine:
             progress_callback: 进度回调函数 (stage, percentage, message)
             business_context: 业务上下文（可选），包含业务条线信息和背景要点
             special_requirements: 本次特殊要求（可选），优先级最高
+            skip_modifications: 是否跳过修改建议生成（默认 False）
+                               设为 True 时，只进行风险分析，不生成修改建议
+                               适用于"先分析讨论、后统一改动"的工作流程
 
         Returns:
             ReviewResult 审阅结果
@@ -163,21 +167,30 @@ class ReviewEngine:
         )
         logger.info(f"识别到 {len(risks)} 个风险点")
 
-        # Stage 2: 生成修改建议
-        update_progress("generating", 40, mod_msg_tpl.format(len(risks)))
-        modifications, truncation_notice = await self._generate_modifications(
-            risks,
-            document.text,
-            our_party,
-            material_type,
-            language,
-            progress_callback,
-            business_context,
-            special_requirements,
-        )
-        logger.info(f"生成 {len(modifications)} 条修改建议")
-        if truncation_notice:
-            logger.info(f"风险点截取提示: {truncation_notice}")
+        # Stage 2: 生成修改建议（可跳过）
+        modifications = []
+        truncation_notice = None
+
+        if skip_modifications:
+            # 跳过修改建议生成，直接进入行动建议阶段
+            skip_msg = "跳过修改建议生成，进入行动建议阶段..." if language == "zh-CN" else "Skipping modification suggestions, proceeding to action recommendations..."
+            update_progress("generating", 60, skip_msg)
+            logger.info("跳过修改建议生成（skip_modifications=True）")
+        else:
+            update_progress("generating", 40, mod_msg_tpl.format(len(risks)))
+            modifications, truncation_notice = await self._generate_modifications(
+                risks,
+                document.text,
+                our_party,
+                material_type,
+                language,
+                progress_callback,
+                business_context,
+                special_requirements,
+            )
+            logger.info(f"生成 {len(modifications)} 条修改建议")
+            if truncation_notice:
+                logger.info(f"风险点截取提示: {truncation_notice}")
 
         # Stage 3: 生成行动建议
         update_progress("generating", 80, action_msg)
@@ -277,13 +290,21 @@ class ReviewEngine:
             risks = []
             for item in data:
                 try:
+                    # 优先使用 analysis 字段，如果没有则尝试 reason（兼容旧版本）
+                    analysis = item.get("analysis", "")
+                    reason = item.get("reason", "")
+                    # 如果 reason 为空但 analysis 有值，用 analysis 的前 200 字作为 reason
+                    if not reason and analysis:
+                        reason = analysis[:200] + ("..." if len(analysis) > 200 else "")
+
                     risk = RiskPoint(
                         id=generate_id(),
                         standard_id=item.get("standard_id"),
                         risk_level=item.get("risk_level", "medium"),
                         risk_type=item.get("risk_type", "未分类"),
                         description=item.get("description", ""),
-                        reason=item.get("reason", ""),
+                        reason=reason,
+                        analysis=analysis,  # 新字段：深度分析
                         location=TextLocation(
                             original_text=item.get("original_text", "")
                         ) if item.get("original_text") else None,

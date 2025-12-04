@@ -318,13 +318,22 @@ def build_risk_identification_messages(
 - standard_id: 关联的审核标准ID（如果没有直接对应的标准，填 null）
 - risk_level: "high" | "medium" | "low"
 - risk_type: 风险类型/分类
-- description: 风险描述（不超过100字，清晰说明风险是什么）
-- reason: 判定理由（不超过150字，说明为什么认定为风险）
-- original_text: 相关原文摘录（不超过200字，如找不到具体条款则填写"整体文档"）
+- description: 风险描述，详细说明风险是什么、可能导致的后果
+- analysis: 深度分析，包括：为什么这是风险、对我方的具体影响、相关法律依据或行业惯例、可能的应对思路
+- original_text: 相关原文摘录（完整引用相关条款，如找不到具体条款则填写"整体文档"）
+
+【分析要求】
+你是一位资深法务顾问，请充分发挥专业能力进行深度分析：
+1. 不要简单罗列风险，要深入分析每个风险的本质和影响
+2. 结合具体业务场景，说明该风险在实际执行中可能带来的问题
+3. 如果涉及法律条文或行业惯例，请具体引用说明
+4. 分析中可以提及可能的应对方向，但不需要给出具体修改文本
+5. 对于高风险项，分析应更加详尽
 
 【注意事项】
 - 如果某条审核标准在文档中未发现对应风险，不需要输出
 - 如果文档中存在审核标准未覆盖的风险，也应识别并输出（standard_id 填 null）
+- 鼓励发现审核标准之外的潜在风险，展现专业洞察力
 - 只输出 JSON 数组，不要添加任何额外的解释或说明文字
 - 确保 JSON 格式正确，可以被直接解析"""
 
@@ -388,13 +397,22 @@ Output a pure JSON array without markdown code block markers. Each element shoul
 - standard_id: Associated review standard ID (null if no direct match)
 - risk_level: "high" | "medium" | "low"
 - risk_type: Risk type/category
-- description: Risk description (max 100 words, clearly explain what the risk is)
-- reason: Justification (max 150 words, explain why this is identified as a risk)
-- original_text: Relevant original text excerpt (max 200 words, use "Entire Document" if no specific clause)
+- description: Risk description, explain what the risk is and potential consequences in detail
+- analysis: In-depth analysis including: why this is a risk, specific impact on our party, relevant legal basis or industry practices, possible approaches to address it
+- original_text: Relevant original text excerpt (quote the complete relevant clause, use "Entire Document" if no specific clause)
+
+【Analysis Requirements】
+You are a senior legal consultant, please fully utilize your professional expertise for in-depth analysis:
+1. Don't simply list risks, deeply analyze the nature and impact of each risk
+2. Explain the potential issues during actual execution considering the specific business context
+3. If relevant legal provisions or industry practices apply, please cite them specifically
+4. You may mention possible approaches in the analysis, but don't need to provide specific modified text
+5. For high-risk items, the analysis should be more detailed
 
 【Important Notes】
 - If a review standard has no corresponding risk in the document, do not output it
 - If there are risks not covered by the standards, identify and output them (standard_id = null)
+- Encouraged to identify potential risks beyond review standards, demonstrating professional insight
 - Output only the JSON array, do not add any extra explanation
 - Ensure JSON format is correct and can be parsed directly"""
 
@@ -1555,3 +1573,272 @@ Please generate a complete business context configuration based on the above inf
 def get_business_line_creation_prompts(language: Language = "zh-CN") -> dict:
     """获取指定语言的业务条线创建提示词"""
     return BUSINESS_LINE_CREATION_PROMPTS.get(language, BUSINESS_LINE_CREATION_PROMPTS["zh-CN"])
+
+
+# ==================== 基于讨论结果生成修改建议 Prompt ====================
+
+def build_post_discussion_modification_messages(
+    risk_point: RiskPoint,
+    original_text: str,
+    our_party: str,
+    material_type: MaterialType,
+    discussion_summary: str,
+    user_decision: str,
+    language: Language = "zh-CN",
+) -> List[Dict[str, Any]]:
+    """
+    构建基于讨论结果的修改建议 Prompt
+
+    与原有的 build_modification_suggestion_messages 不同，这个函数：
+    1. 接收用户与 AI 的讨论摘要
+    2. 接收用户的最终决定（要改/不改/怎么改）
+    3. 基于这些信息生成更精准的修改建议
+
+    Args:
+        risk_point: 风险点
+        original_text: 需要修改的原文
+        our_party: 我方身份
+        material_type: 材料类型
+        discussion_summary: 与用户的讨论摘要（包含用户的疑问、AI的解释等）
+        user_decision: 用户的最终决定（如"需要修改，重点关注付款期限"）
+        language: 审阅语言
+
+    Returns:
+        消息列表
+    """
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
+    risk_level_label = texts["risk_level"].get(risk_point.risk_level, texts["risk_level"]["medium"])
+
+    if language == "zh-CN":
+        system = f"""你是一位资深法务文本修改专家。
+你需要根据与用户的讨论结果，生成精准的文本修改建议。
+
+【重要背景】
+用户已经与你进行了充分的讨论，明确了修改方向。请严格按照用户的意图生成修改文本。
+
+【核心原则：最小改动（奥卡姆剃刀原则）】
+法务实务中，修改文本应遵循"最小改动原则"：
+- 只修改必须修改的词语或短语，不要替换整句或整段
+- 能改一个词就不改两个词，能加一句就不重写整段
+- 保留原文的句式结构、表述习惯和用词风格
+- 修改应该是"手术刀式"的精准修改，而非"大刀阔斧"的重写
+
+【修改原则】
+1. 严格遵循用户在讨论中表达的修改意图
+2. 严格站在"{our_party}"的立场，修改后的文本应充分保护我方利益
+3. 修改后的文本应消除或显著降低已识别的风险
+4. 保持法律文本的专业性和严谨性
+5. 修改幅度必须最小化
+
+【输出格式】
+输出纯 JSON 对象，不要添加 markdown 代码块标记，包含以下字段：
+- suggested_text: 建议修改后的完整文本
+- modification_reason: 修改理由（说明具体改动了什么、为什么这样改）
+- priority: "must"（必须修改）| "should"（应该修改）| "may"（可以修改）
+- alignment_note: 与用户意图的对齐说明（说明如何体现用户在讨论中的要求）
+
+只输出 JSON 对象，不要添加任何额外的解释或说明文字。"""
+
+        user = f"""【风险信息】
+- 风险类型: {risk_point.risk_type}
+- 风险等级: {risk_level_label}
+- 风险描述: {risk_point.description}
+
+【需要修改的原文】
+{original_text}
+
+【与用户的讨论摘要】
+{discussion_summary}
+
+【用户的最终决定】
+{user_decision}
+
+请根据讨论结果和用户决定，生成精准的修改建议。以纯 JSON 对象格式输出。"""
+
+    else:  # English
+        system = f"""You are a senior legal text modification expert.
+You need to generate precise text modification suggestions based on the discussion results with the user.
+
+【Important Background】
+The user has had a thorough discussion with you and clarified the modification direction. Please generate modified text strictly according to the user's intent.
+
+【Core Principle: Minimal Changes (Occam's Razor)】
+In legal practice, text modifications should follow the "minimal change principle":
+- Only modify words or phrases that must be changed, do not replace entire sentences or paragraphs
+- If one word suffices, do not change two; if adding one sentence works, do not rewrite the paragraph
+- Preserve the original sentence structure, phrasing habits, and word choices
+- Modifications should be "surgical precision" rather than "wholesale rewriting"
+
+【Modification Principles】
+1. Strictly follow the modification intent expressed by the user in the discussion
+2. Strictly protect the interests of "{our_party}" in the modified text
+3. The modified text should eliminate or significantly reduce the identified risk
+4. Maintain professionalism and rigor of legal text
+5. Minimize modification scope
+
+【Output Format】
+Output a pure JSON object without markdown code block markers, containing:
+- suggested_text: Complete text after modification
+- modification_reason: Reason for modification (explain what was changed and why)
+- priority: "must" | "should" | "may"
+- alignment_note: Alignment with user intent (explain how it reflects user's requirements from discussion)
+
+Output only the JSON object, do not add any extra explanation."""
+
+        user = f"""【Risk Information】
+- Risk Type: {risk_point.risk_type}
+- Risk Level: {risk_level_label}
+- Risk Description: {risk_point.description}
+
+【Original Text to Modify】
+{original_text}
+
+【Discussion Summary with User】
+{discussion_summary}
+
+【User's Final Decision】
+{user_decision}
+
+Please generate precise modification suggestions based on the discussion and user decision. Output in pure JSON object format."""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def build_batch_modification_messages(
+    confirmed_risks: List[Dict[str, Any]],
+    document_text: str,
+    our_party: str,
+    material_type: MaterialType,
+    language: Language = "zh-CN",
+) -> List[Dict[str, Any]]:
+    """
+    构建批量生成修改建议的 Prompt
+
+    用于用户完成所有风险点讨论后，一次性为所有确认需要修改的风险点生成修改建议。
+
+    Args:
+        confirmed_risks: 已确认需要修改的风险点列表，每个元素包含：
+            - risk: RiskPoint 对象
+            - original_text: 原文
+            - user_notes: 用户备注（可选）
+        document_text: 完整文档文本（用于上下文理解）
+        our_party: 我方身份
+        material_type: 材料类型
+        language: 审阅语言
+
+    Returns:
+        消息列表
+    """
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
+
+    # 格式化风险点列表
+    risks_text_parts = []
+    for i, item in enumerate(confirmed_risks, 1):
+        risk = item["risk"]
+        original_text = item["original_text"]
+        user_notes = item.get("user_notes", "")
+
+        risk_level_label = texts["risk_level"].get(risk.risk_level, texts["risk_level"]["medium"])
+
+        if language == "zh-CN":
+            part = f"""【风险点 {i}】
+- ID: {risk.id}
+- 风险类型: {risk.risk_type}
+- 风险等级: {risk_level_label}
+- 风险描述: {risk.description}
+- 需修改原文: {original_text}"""
+            if user_notes:
+                part += f"\n- 用户备注: {user_notes}"
+        else:
+            part = f"""【Risk {i}】
+- ID: {risk.id}
+- Risk Type: {risk.risk_type}
+- Risk Level: {risk_level_label}
+- Risk Description: {risk.description}
+- Original Text to Modify: {original_text}"""
+            if user_notes:
+                part += f"\n- User Notes: {user_notes}"
+
+        risks_text_parts.append(part)
+
+    risks_text = "\n\n".join(risks_text_parts)
+
+    if language == "zh-CN":
+        system = f"""你是一位资深法务文本修改专家。
+你需要为多个已确认的风险点批量生成修改建议。
+
+【核心原则：最小改动（奥卡姆剃刀原则）】
+法务实务中，修改文本应遵循"最小改动原则"：
+- 只修改必须修改的词语或短语，不要替换整句或整段
+- 能改一个词就不改两个词，能加一句就不重写整段
+- 保留原文的句式结构、表述习惯和用词风格
+- 修改应该是"手术刀式"的精准修改，而非"大刀阔斧"的重写
+
+【修改原则】
+1. 严格站在"{our_party}"的立场，修改后的文本应充分保护我方利益
+2. 修改后的文本应消除或显著降低已识别的风险
+3. 如果用户有备注，优先考虑用户的意图
+4. 保持法律文本的专业性和严谨性
+5. 不同风险点的修改应保持一致的风格和原则
+
+【输出格式】
+输出纯 JSON 数组，不要添加 markdown 代码块标记。每个元素对应一个风险点，包含：
+- risk_id: 风险点 ID（与输入对应）
+- suggested_text: 建议修改后的完整文本
+- modification_reason: 修改理由
+- priority: "must" | "should" | "may"
+
+只输出 JSON 数组，不要添加任何额外的解释或说明文字。"""
+
+        user = f"""【我方身份】
+{our_party}
+
+【待修改的风险点列表】
+{risks_text}
+
+请为以上 {len(confirmed_risks)} 个风险点生成修改建议。以纯 JSON 数组格式输出。"""
+
+    else:  # English
+        system = f"""You are a senior legal text modification expert.
+You need to generate modification suggestions for multiple confirmed risk points in batch.
+
+【Core Principle: Minimal Changes (Occam's Razor)】
+In legal practice, text modifications should follow the "minimal change principle":
+- Only modify words or phrases that must be changed, do not replace entire sentences or paragraphs
+- If one word suffices, do not change two; if adding one sentence works, do not rewrite the paragraph
+- Preserve the original sentence structure, phrasing habits, and word choices
+- Modifications should be "surgical precision" rather than "wholesale rewriting"
+
+【Modification Principles】
+1. Strictly protect the interests of "{our_party}" in the modified text
+2. The modified text should eliminate or significantly reduce the identified risk
+3. If user has notes, prioritize user's intent
+4. Maintain professionalism and rigor of legal text
+5. Modifications for different risks should maintain consistent style and principles
+
+【Output Format】
+Output a pure JSON array without markdown code block markers. Each element corresponds to a risk point:
+- risk_id: Risk point ID (matching input)
+- suggested_text: Complete text after modification
+- modification_reason: Reason for modification
+- priority: "must" | "should" | "may"
+
+Output only the JSON array, do not add any extra explanation."""
+
+        user = f"""【Our Party】
+{our_party}
+
+【Risk Points to Modify】
+{risks_text}
+
+Please generate modification suggestions for the above {len(confirmed_risks)} risk points. Output in pure JSON array format."""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]

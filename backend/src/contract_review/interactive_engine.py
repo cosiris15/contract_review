@@ -39,6 +39,10 @@ from .prompts_interactive import (
     build_document_summary_messages,
     extract_suggestion_from_response,
 )
+from .prompts import (
+    build_batch_modification_messages,
+    build_post_discussion_modification_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -503,3 +507,208 @@ class InteractiveReviewEngine:
         except Exception as e:
             logger.error(f"生成文档摘要失败: {e}")
             return ""
+
+    async def generate_modifications_batch(
+        self,
+        confirmed_risks: List[Dict[str, Any]],
+        document_text: str,
+        our_party: str,
+        material_type: MaterialType,
+        language: Language = "zh-CN",
+    ) -> List[ModificationSuggestion]:
+        """
+        批量为已确认的风险点生成修改建议
+
+        用于用户完成讨论/审阅后，一次性为所有需要修改的风险点生成修改文本。
+        这个方法实现了"先分析讨论、后统一改动"的工作流程。
+
+        Args:
+            confirmed_risks: 已确认需要修改的风险点列表，每个元素包含：
+                - risk: RiskPoint 对象
+                - original_text: 原文
+                - user_notes: 用户备注（可选，如讨论中的修改方向）
+            document_text: 完整文档文本（用于上下文理解）
+            our_party: 我方身份
+            material_type: 材料类型
+            language: 审阅语言
+
+        Returns:
+            修改建议列表
+        """
+        if not confirmed_risks:
+            return []
+
+        logger.info(f"开始批量生成 {len(confirmed_risks)} 条修改建议")
+
+        # 构建批量生成的 Prompt
+        messages = build_batch_modification_messages(
+            confirmed_risks=confirmed_risks,
+            document_text=document_text,
+            our_party=our_party,
+            material_type=material_type,
+            language=language,
+        )
+
+        try:
+            response = await self.llm.chat(messages, max_output_tokens=6000)
+            logger.info(f"批量修改建议 LLM 响应长度: {len(response)}")
+        except Exception as e:
+            logger.error(f"批量生成修改建议失败: {e}")
+            raise
+
+        # 解析响应
+        modifications = self._parse_batch_modification_response(
+            response, confirmed_risks
+        )
+
+        logger.info(f"批量生成完成，共 {len(modifications)} 条修改建议")
+        return modifications
+
+    def _parse_batch_modification_response(
+        self,
+        response: str,
+        confirmed_risks: List[Dict[str, Any]],
+    ) -> List[ModificationSuggestion]:
+        """解析批量修改建议的响应"""
+        modifications = []
+
+        # 清理响应
+        json_str = response
+        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # 尝试提取 JSON 数组
+            start = json_str.find('[')
+            end = json_str.rfind(']')
+            if start != -1 and end != -1:
+                json_str = json_str[start:end+1]
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"批量修改建议 JSON 解析失败: {e}")
+            return modifications
+
+        if not isinstance(data, list):
+            logger.error("批量修改建议响应格式错误，期望数组")
+            return modifications
+
+        # 创建 risk_id 到 risk 数据的映射
+        risk_map = {}
+        for item in confirmed_risks:
+            risk = item["risk"]
+            risk_map[risk.id] = item
+
+        # 解析每条修改建议
+        for mod_data in data:
+            try:
+                risk_id = mod_data.get("risk_id")
+                if not risk_id or risk_id not in risk_map:
+                    logger.warning(f"修改建议的 risk_id 无效: {risk_id}")
+                    continue
+
+                risk_item = risk_map[risk_id]
+                original_text = risk_item.get("original_text", "")
+
+                mod = ModificationSuggestion(
+                    id=f"mod_{generate_id()}",
+                    risk_id=risk_id,
+                    original_text=original_text,
+                    suggested_text=mod_data.get("suggested_text", ""),
+                    modification_reason=mod_data.get("modification_reason", ""),
+                    priority=mod_data.get("priority", "should"),
+                )
+                modifications.append(mod)
+            except Exception as e:
+                logger.warning(f"解析修改建议失败: {e}")
+
+        return modifications
+
+    async def generate_single_modification(
+        self,
+        risk_point: RiskPoint,
+        original_text: str,
+        our_party: str,
+        material_type: MaterialType,
+        discussion_summary: str,
+        user_decision: str,
+        language: Language = "zh-CN",
+    ) -> Optional[ModificationSuggestion]:
+        """
+        为单个风险点生成修改建议（基于讨论结果）
+
+        用于用户与 AI 讨论完某个风险点后，基于讨论结果生成精准的修改建议。
+
+        Args:
+            risk_point: 风险点
+            original_text: 需要修改的原文
+            our_party: 我方身份
+            material_type: 材料类型
+            discussion_summary: 与用户的讨论摘要
+            user_decision: 用户的最终决定
+            language: 审阅语言
+
+        Returns:
+            修改建议，如果生成失败返回 None
+        """
+        logger.info(f"为风险点 {risk_point.id} 生成修改建议（基于讨论）")
+
+        messages = build_post_discussion_modification_messages(
+            risk_point=risk_point,
+            original_text=original_text,
+            our_party=our_party,
+            material_type=material_type,
+            discussion_summary=discussion_summary,
+            user_decision=user_decision,
+            language=language,
+        )
+
+        try:
+            response = await self.llm.chat(messages, max_output_tokens=2000)
+            logger.info(f"单条修改建议 LLM 响应长度: {len(response)}")
+        except Exception as e:
+            logger.error(f"生成单条修改建议失败: {e}")
+            return None
+
+        # 解析响应
+        return self._parse_single_modification_response(
+            response, risk_point.id, original_text
+        )
+
+    def _parse_single_modification_response(
+        self,
+        response: str,
+        risk_id: str,
+        original_text: str,
+    ) -> Optional[ModificationSuggestion]:
+        """解析单条修改建议的响应"""
+        # 清理响应
+        json_str = response
+        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            start = json_str.find('{')
+            end = json_str.rfind('}')
+            if start != -1 and end != -1:
+                json_str = json_str[start:end+1]
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"单条修改建议 JSON 解析失败: {e}")
+            return None
+
+        try:
+            return ModificationSuggestion(
+                id=f"mod_{generate_id()}",
+                risk_id=risk_id,
+                original_text=original_text,
+                suggested_text=data.get("suggested_text", ""),
+                modification_reason=data.get("modification_reason", ""),
+                priority=data.get("priority", "should"),
+            )
+        except Exception as e:
+            logger.error(f"创建 ModificationSuggestion 失败: {e}")
+            return None

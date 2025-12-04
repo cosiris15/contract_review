@@ -233,7 +233,8 @@ class RiskPoint(BaseModel):
     risk_level: RiskLevel
     risk_type: str  # 风险类型（对应审核分类）
     description: str  # 风险描述
-    reason: str  # 判定理由
+    reason: str  # 判定理由（兼容旧版本）
+    analysis: Optional[str] = None  # 深度分析（新字段：详细的风险分析、法律依据、应对思路等）
     location: Optional[TextLocation] = None  # 原文位置
     raw_llm_response: Optional[str] = None  # LLM 原始响应（调试用）
 

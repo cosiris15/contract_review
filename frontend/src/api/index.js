@@ -633,5 +633,42 @@ export default {
   // 获取当前用户配额信息
   getQuota() {
     return api.get('/quota')
+  },
+
+  // ==================== 修改建议生成 ====================
+
+  /**
+   * 批量为指定风险点生成修改建议
+   *
+   * 用于"先分析讨论、后统一改动"的工作流程
+   *
+   * @param {string} taskId - 任务 ID
+   * @param {string[]} riskIds - 需要生成修改建议的风险点 ID 列表
+   * @param {Object} userNotes - 用户备注，key 为 risk_id，value 为备注内容（可选）
+   * @returns {Promise} 包含生成的修改建议列表
+   */
+  generateModifications(taskId, riskIds, userNotes = null) {
+    return api.post(`/tasks/${taskId}/generate-modifications`, {
+      risk_ids: riskIds,
+      user_notes: userNotes
+    })
+  },
+
+  /**
+   * 为单个风险点生成修改建议（基于讨论结果）
+   *
+   * 用于用户与 AI 讨论完某个风险点后生成精准的修改建议
+   *
+   * @param {string} taskId - 任务 ID
+   * @param {string} riskId - 风险点 ID
+   * @param {string} discussionSummary - 与用户的讨论摘要
+   * @param {string} userDecision - 用户的最终决定
+   * @returns {Promise} 生成的修改建议
+   */
+  generateSingleModification(taskId, riskId, discussionSummary, userDecision) {
+    return api.post(`/tasks/${taskId}/risks/${riskId}/generate-modification`, {
+      discussion_summary: discussionSummary,
+      user_decision: userDecision
+    })
   }
 }
