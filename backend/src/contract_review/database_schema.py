@@ -1,7 +1,7 @@
 """
 数据库表结构定义（自动生成）
 
-生成时间: 2025-12-03 10:36:23
+生成时间: 2025-12-04 09:33:15
 数据来源: Supabase 远程数据库
 
 ⚠️ 此文件由 sync_db_schema.py 自动生成，请勿手动编辑
@@ -32,6 +32,12 @@ DATABASE_SCHEMA: Dict[str, Dict[str, Any]] = {
             "business_line_id": "unknown (nullable)",
             "document_storage_name": "unknown (nullable)",
             "standard_storage_name": "unknown (nullable)",
+            "redline_filename": "unknown (nullable)",
+            "redline_storage_name": "unknown (nullable)",
+            "redline_generated_at": "unknown (nullable)",
+            "redline_applied_count": "unknown (nullable)",
+            "redline_comments_count": "unknown (nullable)",
+            "review_mode": "text",
         },
     },
     "review_results": {

@@ -1349,30 +1349,34 @@ async function startUnifiedReview() {
 async function pollReviewStatus() {
   const pollInterval = setInterval(async () => {
     try {
-      await store.loadTask(taskId.value)
-      const task = currentTask.value
+      // 使用 getTaskStatus API 获取包含 progress 的完整状态
+      const response = await api.getTaskStatus(taskId.value)
+      const taskStatus = response.data
 
-      if (task.status === 'completed') {
+      if (taskStatus.status === 'completed') {
         clearInterval(pollInterval)
         store.isReviewing = false
         store.progress = { stage: 'completed', percentage: 100, message: '审阅完成' }
+
+        // 刷新任务详情
+        await store.loadTask(taskId.value)
 
         // 统一跳转到结果页面（交互视图）
         setTimeout(() => {
           router.push(`/review-result/${taskId.value}`)
         }, 1000)
-      } else if (task.status === 'failed') {
+      } else if (taskStatus.status === 'failed') {
         clearInterval(pollInterval)
         store.isReviewing = false
         store.progress = { stage: 'idle', percentage: 0, message: '' }
-        ElMessage.error(task.message || '审阅失败')
-      } else if (task.status === 'reviewing') {
-        // 更新进度
-        const progress = task.progress || 50
+        ElMessage.error(taskStatus.message || '审阅失败')
+      } else if (taskStatus.status === 'reviewing') {
+        // 更新进度 - progress 是包含 stage, percentage, message 的对象
+        const progress = taskStatus.progress || {}
         store.progress = {
-          stage: 'analyzing',
-          percentage: progress,
-          message: task.message || '正在分析文档...'
+          stage: progress.stage || 'analyzing',
+          percentage: progress.percentage || 0,
+          message: progress.message || taskStatus.message || '正在分析文档...'
         }
       }
     } catch (error) {

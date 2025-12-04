@@ -4041,7 +4041,7 @@ async def get_interactive_items(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 获取审阅结果
-    result = storage_manager.get_result(task_id)
+    result = storage_manager.load_result(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
@@ -4098,7 +4098,7 @@ async def get_interactive_item_detail(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 获取审阅结果
-    result = storage_manager.get_result(task_id)
+    result = storage_manager.load_result(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
@@ -4166,7 +4166,7 @@ async def chat_with_item(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 获取审阅结果
-    result = storage_manager.get_result(task_id)
+    result = storage_manager.load_result(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
@@ -4284,7 +4284,7 @@ async def chat_with_item_stream(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 获取审阅结果
-    result = storage_manager.get_result(task_id)
+    result = storage_manager.load_result(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
@@ -4421,7 +4421,7 @@ async def complete_item(
         raise HTTPException(status_code=500, detail="完成条目失败")
 
     # 同步更新 review_results
-    result = storage_manager.get_result(task_id)
+    result = storage_manager.load_result(task_id)
     if result:
         for mod in result.modifications:
             if mod.id == item_id:
