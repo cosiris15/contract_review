@@ -1,38 +1,55 @@
 <template>
   <div class="interactive-review-view">
-    <!-- 顶栏 -->
+    <!-- 简化顶栏 -->
     <div class="review-header">
       <div class="header-left">
-        <el-button text @click="goBack">
+        <button class="back-btn" @click="goBack">
           <el-icon><ArrowLeft /></el-icon>
           返回
-        </el-button>
-        <el-divider direction="vertical" />
-        <span class="document-name">{{ task?.document_filename || '深度交互审阅' }}</span>
-        <el-tag type="success" size="small">交互模式</el-tag>
+        </button>
+        <span class="document-name">{{ task?.document_filename || '合同审阅' }}</span>
       </div>
 
-      <div class="header-center">
-        <el-progress
-          :percentage="completionPercentage"
-          :stroke-width="8"
-          style="width: 200px"
-        />
-        <span class="progress-text">{{ completedCount }}/{{ items.length }} 已完成</span>
+      <!-- 条目切换器 -->
+      <div class="item-switcher">
+        <button
+          class="switch-btn"
+          :disabled="!canGoPrev"
+          @click="goPrevItem"
+        >
+          <el-icon><ArrowLeft /></el-icon>
+        </button>
+        <div class="item-indicator">
+          <span class="current-index">{{ currentItemIndex + 1 }}</span>
+          <span class="separator">/</span>
+          <span class="total-count">{{ items.length }}</span>
+        </div>
+        <button
+          class="switch-btn"
+          :disabled="!canGoNext"
+          @click="goNextItem"
+        >
+          <el-icon><ArrowRight /></el-icon>
+        </button>
       </div>
 
       <div class="header-right">
+        <div class="progress-info">
+          <span class="progress-text">{{ completedCount }} 已完成</span>
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: completionPercentage + '%' }"></div>
+          </div>
+        </div>
         <el-dropdown trigger="click" @command="handleExport">
-          <el-button type="primary" :disabled="completedCount === 0">
+          <button class="export-btn" :disabled="completedCount === 0">
             <el-icon><Download /></el-icon>
             导出
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
+          </button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="word">
                 <el-icon><Document /></el-icon>
-                导出 Word（修订版）
+                导出 Word
               </el-dropdown-item>
               <el-dropdown-item command="json">
                 <el-icon><Files /></el-icon>
@@ -80,7 +97,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowDown, Download, Document, Files } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, ArrowDown, Download, Document, Files } from '@element-plus/icons-vue'
 import DocumentViewer from '@/components/interactive/DocumentViewer.vue'
 import ChatPanel from '@/components/interactive/ChatPanel.vue'
 import interactiveApi from '@/api/interactive'
@@ -117,6 +134,30 @@ const completionPercentage = computed(() => {
   if (items.value.length === 0) return 0
   return Math.round((completedCount.value / items.value.length) * 100)
 })
+
+// 当前条目索引
+const currentItemIndex = computed(() => {
+  if (!activeItemId.value) return -1
+  return items.value.findIndex(item => item.id === activeItemId.value)
+})
+
+// 是否可以切换到上一个/下一个
+const canGoPrev = computed(() => currentItemIndex.value > 0)
+const canGoNext = computed(() => currentItemIndex.value < items.value.length - 1)
+
+// 切换到上一个条目
+function goPrevItem() {
+  if (!canGoPrev.value) return
+  const prevItem = items.value[currentItemIndex.value - 1]
+  if (prevItem) selectItem(prevItem)
+}
+
+// 切换到下一个条目
+function goNextItem() {
+  if (!canGoNext.value) return
+  const nextItem = items.value[currentItemIndex.value + 1]
+  if (nextItem) selectItem(nextItem)
+}
 
 // 判断当前是否有流式输出进行中
 const isStreaming = computed(() => {
@@ -401,51 +442,168 @@ function goBack() {
 
 <style scoped>
 .interactive-review-view {
-  height: calc(100vh - var(--header-height));
+  height: calc(100vh - var(--header-height, 0px));
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-secondary);
+  background: #f5f5f5;
 }
 
-/* 顶栏 */
+/* 简化顶栏 */
 .review-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-3) var(--spacing-5);
-  background: var(--color-bg-card);
-  border-bottom: 1px solid var(--color-border-light);
-  box-shadow: var(--shadow-sm);
+  padding: 12px 20px;
+  background: #fff;
+  border-bottom: 1px solid #e5e5e5;
   flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: var(--spacing-3);
+  gap: 16px;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.back-btn:hover {
+  background: #f5f5f5;
+  color: #333;
 }
 
 .document-name {
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.header-center {
+/* 条目切换器 */
+.item-switcher {
   display: flex;
   align-items: center;
-  gap: var(--spacing-3);
+  gap: 8px;
+  padding: 4px;
+  background: #f5f5f5;
+  border-radius: 8px;
 }
 
-.progress-text {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  white-space: nowrap;
+.switch-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.switch-btn:hover:not(:disabled) {
+  background: #fff;
+  color: #1890ff;
+}
+
+.switch-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.item-indicator {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.current-index {
+  color: #1890ff;
+}
+
+.separator {
+  color: #999;
+}
+
+.total-count {
+  color: #666;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: var(--spacing-3);
+  gap: 16px;
+}
+
+.progress-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-text {
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.progress-bar {
+  width: 60px;
+  height: 4px;
+  background: #e5e5e5;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #52c41a;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.export-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.export-btn:hover:not(:disabled) {
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+.export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 主内容区 - 左右布局 */
@@ -455,52 +613,65 @@ function goBack() {
   overflow: hidden;
 }
 
-/* 左侧：文档区域 70% */
+/* 左侧：文档区域 60% */
 .content-left {
-  flex: 7;
+  flex: 6;
   overflow: hidden;
+  background: #fff;
 }
 
-/* 右侧：聊天面板 30% */
+/* 右侧：聊天面板 40% */
 .content-right {
-  flex: 3;
-  min-width: 360px;
-  max-width: 480px;
+  flex: 4;
+  min-width: 400px;
+  max-width: 560px;
   overflow: hidden;
-  border-left: 1px solid var(--color-border-light);
+  border-left: 1px solid #e5e5e5;
 }
 
 /* 响应式 */
 @media (max-width: 1200px) {
   .content-right {
-    min-width: 320px;
-    flex: 4;
+    min-width: 360px;
+    flex: 5;
   }
 
   .content-left {
-    flex: 6;
+    flex: 5;
+  }
+
+  .document-name {
+    max-width: 150px;
   }
 }
 
 @media (max-width: 1024px) {
-  .header-center {
+  .progress-info {
     display: none;
   }
 
   .content-right {
-    min-width: 300px;
+    min-width: 320px;
   }
 }
 
 @media (max-width: 768px) {
+  .review-header {
+    padding: 10px 16px;
+  }
+
+  .document-name {
+    display: none;
+  }
+
   .review-content {
     flex-direction: column;
   }
 
   .content-left {
     flex: none;
-    height: 40%;
-    min-height: 200px;
+    height: 35%;
+    min-height: 180px;
   }
 
   .content-right {
@@ -508,7 +679,7 @@ function goBack() {
     min-width: 100%;
     max-width: 100%;
     border-left: none;
-    border-top: 1px solid var(--color-border-light);
+    border-top: 1px solid #e5e5e5;
   }
 }
 </style>

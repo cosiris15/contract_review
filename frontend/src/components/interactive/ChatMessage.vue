@@ -1,70 +1,55 @@
 <template>
-  <div class="chat-message" :class="[message.role, { 'has-suggestion': message.suggestion_snapshot, compact: compact, streaming: message.isStreaming, error: message.isError }]">
+  <div class="chat-message" :class="[message.role, { streaming: message.isStreaming, error: message.isError }]">
     <div class="message-avatar">
-      <el-icon v-if="message.role === 'assistant'" :size="compact ? 18 : 24" color="#409eff">
-        <Service />
-      </el-icon>
-      <el-icon v-else :size="compact ? 18 : 24" color="#67c23a">
-        <User />
-      </el-icon>
+      <div v-if="message.role === 'assistant'" class="avatar ai">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+        </svg>
+      </div>
+      <div v-else class="avatar user">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+        </svg>
+      </div>
     </div>
     <div class="message-content">
       <div class="message-header">
-        <span class="message-sender">{{ message.role === 'assistant' ? 'AI 助手' : '您' }}</span>
-        <span class="message-time">{{ formatTime(message.timestamp) }}</span>
+        <span class="sender-name">{{ message.role === 'assistant' ? 'AI 助手' : '您' }}</span>
       </div>
-      <div class="message-body" v-html="renderMarkdown(message.content)"></div>
+      <div class="message-text" v-html="renderContent(message.content)"></div>
 
-      <!-- AI 消息中的建议快照 -->
-      <div v-if="message.role === 'assistant' && message.suggestion_snapshot" class="suggestion-snapshot">
-        <div class="snapshot-header">
-          <el-icon><Edit /></el-icon>
-          <span>当前修改建议</span>
-          <el-button
-            type="primary"
-            text
-            size="small"
-            @click="$emit('copy-suggestion', message.suggestion_snapshot)"
-          >
-            <el-icon><CopyDocument /></el-icon>
-            复制
-          </el-button>
+      <!-- AI 消息中的建议更新 -->
+      <div v-if="message.role === 'assistant' && message.suggestion_snapshot" class="suggestion-update">
+        <div class="update-header">
+          <span class="update-icon">✨</span>
+          <span>建议已更新</span>
         </div>
-        <div class="snapshot-content">
-          {{ message.suggestion_snapshot }}
-        </div>
+        <div class="update-content">{{ message.suggestion_snapshot }}</div>
+        <button class="copy-btn" @click="$emit('copy-suggestion', message.suggestion_snapshot)">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+          </svg>
+          复制
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { Service, User, Edit, CopyDocument } from '@element-plus/icons-vue'
-
 const props = defineProps({
   message: {
     type: Object,
     required: true
-  },
-  compact: {
-    type: Boolean,
-    default: false
   }
 })
 
 defineEmits(['copy-suggestion'])
 
-function formatTime(timestamp) {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
-// 简单的文本处理（不依赖外部 Markdown 库）
-function renderMarkdown(content) {
+// 渲染消息内容（简单 Markdown 处理）
+function renderContent(content) {
   if (!content) return ''
 
-  // 基本的文本处理
   let html = content
     // 转义 HTML
     .replace(/&/g, '&amp;')
@@ -86,221 +71,148 @@ function renderMarkdown(content) {
 <style scoped>
 .chat-message {
   display: flex;
-  gap: var(--spacing-3);
-  padding: var(--spacing-4);
-  border-radius: var(--radius-lg);
-  transition: background 0.2s;
+  gap: 12px;
+  padding: 16px 0;
 }
 
-.chat-message:hover {
-  background: var(--color-bg-hover);
+.chat-message + .chat-message {
+  border-top: 1px solid #f0f0f0;
 }
 
-.chat-message.user {
-  flex-direction: row-reverse;
-}
-
-.chat-message.user .message-content {
-  align-items: flex-end;
-}
-
-.chat-message.user .message-header {
-  flex-direction: row-reverse;
-}
-
+/* 头像 */
 .message-avatar {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg-secondary);
-  border-radius: 50%;
+  border-radius: 6px;
 }
 
-/* 紧凑模式 */
-.chat-message.compact {
-  padding: var(--spacing-2) var(--spacing-3);
-  gap: var(--spacing-2);
+.avatar.ai {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
 }
 
-.chat-message.compact .message-avatar {
-  width: 28px;
-  height: 28px;
+.avatar.user {
+  background: #10a37f;
+  color: #fff;
 }
 
-.chat-message.compact .message-body {
-  padding: var(--spacing-2) var(--spacing-3);
-  font-size: var(--font-size-sm);
-}
-
-.chat-message.compact .message-header {
-  margin-bottom: 0;
-}
-
-.chat-message.compact .message-sender {
-  font-size: var(--font-size-xs);
-}
-
-.chat-message.compact .suggestion-snapshot {
-  margin-top: var(--spacing-2);
-}
-
-.chat-message.compact .snapshot-content {
-  padding: var(--spacing-2);
-  font-size: var(--font-size-xs);
-  max-height: 60px;
-  overflow-y: auto;
-}
-
-.chat-message.assistant .message-avatar {
-  background: var(--color-primary-bg);
-}
-
-.chat-message.user .message-avatar {
-  background: var(--color-success-bg);
-}
-
+/* 内容区 */
 .message-content {
   flex: 1;
-  display: flex;
-  flex-direction: column;
   min-width: 0;
-  max-width: 85%;
 }
 
 .message-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-1);
+  margin-bottom: 6px;
 }
 
-.message-sender {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
+.sender-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
 }
 
-.message-time {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+.message-text {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #374151;
+  word-break: break-word;
 }
 
-.message-body {
-  padding: var(--spacing-3) var(--spacing-4);
-  background: var(--color-bg-card);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  line-height: var(--line-height-relaxed);
-  color: var(--color-text-primary);
+.message-text :deep(strong) {
+  font-weight: 600;
+  color: #111;
 }
 
-.chat-message.assistant .message-body {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-light);
-}
-
-.chat-message.user .message-body {
-  background: var(--color-primary);
-  color: white;
-  border: none;
-}
-
-/* Markdown 内容样式 */
-.message-body :deep(p) {
-  margin: 0 0 var(--spacing-2);
-}
-
-.message-body :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.message-body :deep(code) {
+.message-text :deep(code) {
   padding: 2px 6px;
-  background: var(--color-bg-hover);
-  border-radius: var(--radius-sm);
-  font-family: monospace;
-  font-size: 0.9em;
+  background: #f3f4f6;
+  border-radius: 4px;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: #111;
 }
 
-.chat-message.user .message-body :deep(code) {
-  background: rgba(255, 255, 255, 0.2);
+/* 建议更新卡片 */
+.suggestion-update {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
 }
 
-.message-body :deep(pre) {
-  padding: var(--spacing-3);
-  background: var(--color-bg-hover);
-  border-radius: var(--radius-md);
-  overflow-x: auto;
-  margin: var(--spacing-2) 0;
-}
-
-.message-body :deep(ul),
-.message-body :deep(ol) {
-  padding-left: var(--spacing-5);
-  margin: var(--spacing-2) 0;
-}
-
-.message-body :deep(li) {
-  margin: var(--spacing-1) 0;
-}
-
-/* 建议快照样式 */
-.suggestion-snapshot {
-  margin-top: var(--spacing-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.snapshot-header {
+.update-header {
   display: flex;
   align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-bg-hover);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-border-light);
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #166534;
 }
 
-.snapshot-header span {
-  flex: 1;
-  font-weight: var(--font-weight-medium);
+.update-icon {
+  font-size: 14px;
 }
 
-.snapshot-content {
-  padding: var(--spacing-3);
-  background: var(--color-bg-card);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-relaxed);
-  color: var(--color-text-primary);
+.update-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #166534;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
-/* 流式输出中的消息 - 添加打字光标 */
-.chat-message.streaming .message-body::after {
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  background: #fff;
+  color: #166534;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.copy-btn:hover {
+  background: #dcfce7;
+}
+
+/* 流式输出 - 打字光标 */
+.chat-message.streaming .message-text::after {
   content: '';
   display: inline-block;
-  width: 6px;
-  height: 14px;
+  width: 2px;
+  height: 16px;
   margin-left: 2px;
-  background: var(--color-primary);
-  animation: blink 1s steps(2, start) infinite;
-  border-radius: 1px;
+  background: #667eea;
+  animation: cursor-blink 1s step-end infinite;
   vertical-align: text-bottom;
 }
 
-@keyframes blink {
-  to { visibility: hidden; }
+@keyframes cursor-blink {
+  50% { opacity: 0; }
 }
 
-/* 错误消息样式 */
-.chat-message.error .message-body {
-  background: var(--color-error-bg, #fef0f0);
-  border-color: var(--color-error-light, #f56c6c);
-  color: var(--color-error, #f56c6c);
+/* 错误状态 */
+.chat-message.error .message-text {
+  color: #dc2626;
+}
+
+.chat-message.error .avatar.ai {
+  background: #fee2e2;
+  color: #dc2626;
 }
 </style>
