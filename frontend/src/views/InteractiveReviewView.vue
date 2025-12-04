@@ -1,5 +1,20 @@
 <template>
   <div class="interactive-review-view">
+    <!-- 导出中的全屏加载遮罩 -->
+    <transition name="fade">
+      <div v-if="exporting" class="export-overlay">
+        <div class="export-card">
+          <el-icon class="export-icon-spin" :size="48"><Loading /></el-icon>
+          <h3 class="export-title">正在生成修订版文档</h3>
+          <p class="export-desc">AI 正在处理您的修改建议，生成 Word 文档...</p>
+          <div class="export-progress">
+            <div class="export-progress-bar"></div>
+          </div>
+          <p class="export-hint">预计需要 10-30 秒，请耐心等待</p>
+        </div>
+      </div>
+    </transition>
+
     <!-- 简化顶栏 -->
     <div class="review-header">
       <div class="header-left">
@@ -120,6 +135,7 @@ const loading = ref(false)
 const documentLoading = ref(false)
 const chatLoading = ref(false)
 const confirmingRisk = ref(false)
+const exporting = ref(false)
 const task = ref(null)
 const items = ref([])
 const activeItemId = ref(null)  // 用于 UI 选中状态 (item.id)
@@ -428,6 +444,30 @@ async function completeCurrentItem(finalSuggestion) {
   }
 }
 
+// 带重试的请求包装器（用于网络不稳定时的关键操作）
+async function withRetry(fn, maxRetries = 3, retryDelay = 1500) {
+  let lastError
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      const isNetworkError = error.message?.includes('网络') ||
+        error.message?.includes('Network') ||
+        error.code === 'ERR_NETWORK' ||
+        error.originalError?.code === 'ERR_NETWORK'
+
+      if (isNetworkError && attempt < maxRetries) {
+        console.log(`网络错误，${retryDelay/1000}秒后重试 (${attempt}/${maxRetries})...`)
+        await new Promise(resolve => setTimeout(resolve, retryDelay))
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastError
+}
+
 // 确认风险并生成修改建议
 async function confirmRisk() {
   if (!activeItemApiId.value || confirmingRisk.value) return
@@ -439,12 +479,14 @@ async function confirmRisk() {
     const discussionSummary = buildDiscussionSummary(activeMessages.value)
     const userDecision = '用户确认此风险需要处理'
 
-    // 调用单条修改建议生成 API
-    const response = await interactiveApi.generateSingleModification(
-      taskId.value,
-      activeItemApiId.value,
-      discussionSummary,
-      userDecision
+    // 调用单条修改建议生成 API（带重试）
+    const response = await withRetry(() =>
+      interactiveApi.generateSingleModification(
+        taskId.value,
+        activeItemApiId.value,
+        discussionSummary,
+        userDecision
+      )
     )
 
     // 更新本地状态
@@ -539,10 +581,14 @@ async function handleExport(format) {
       return
     }
 
-    // 调用现有的导出 Word 功能
+    // 调用现有的导出 Word 功能（带重试）
+    exporting.value = true
     try {
-      ElMessage.info('正在生成修订版 Word 文档...')
-      const response = await api.exportRedline(taskId.value)
+      const response = await withRetry(
+        () => api.exportRedline(taskId.value),
+        3,
+        2000  // 导出操作重试间隔稍长
+      )
       // 下载文件
       const blob = new Blob([response.data], {
         type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -553,7 +599,7 @@ async function handleExport(format) {
       link.download = `${task.value?.document_filename || 'result'}_修订版.docx`
       link.click()
       window.URL.revokeObjectURL(url)
-      ElMessage.success('导出成功')
+      ElMessage.success('导出成功！文档已下载')
     } catch (error) {
       console.error('导出失败:', error)
       // 更友好的错误提示
@@ -562,6 +608,8 @@ async function handleExport(format) {
       } else {
         ElMessage.error('导出失败: ' + (error.message || '请重试'))
       }
+    } finally {
+      exporting.value = false
     }
   } else if (format === 'json') {
     // 导出 JSON
@@ -619,6 +667,92 @@ function goBack() {
   display: flex;
   flex-direction: column;
   background: #f5f5f5;
+}
+
+/* 导出加载遮罩 */
+.export-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(4px);
+}
+
+.export-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 48px 64px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 420px;
+}
+
+.export-icon-spin {
+  color: #409eff;
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.export-title {
+  margin: 24px 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.export-desc {
+  margin: 0 0 24px;
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.6;
+}
+
+.export-progress {
+  height: 4px;
+  background: #e4e7ed;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.export-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #409eff, #67c23a);
+  border-radius: 2px;
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% { width: 0%; margin-left: 0; }
+  50% { width: 60%; margin-left: 20%; }
+  100% { width: 0%; margin-left: 100%; }
+}
+
+.export-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+}
+
+/* 过渡动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 /* 简化顶栏 */

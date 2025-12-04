@@ -63,23 +63,23 @@
             </button>
           </div>
           <div class="input-footer">
-            <span class="phase-hint">讨论阶段 - 点击生成修改建议</span>
+            <span class="phase-hint">讨论完成后，点击右侧按钮生成修改方案</span>
             <div class="action-buttons">
               <button
                 class="skip-btn"
                 @click="$emit('skip')"
-                :disabled="loading"
+                :disabled="loading || confirmingRisk"
               >
                 跳过
               </button>
               <button
                 class="confirm-btn"
                 @click="$emit('confirm-risk')"
-                :disabled="loading"
+                :disabled="loading || confirmingRisk"
               >
                 <el-icon v-if="confirmingRisk" class="is-loading"><Loading /></el-icon>
                 <el-icon v-else><EditPen /></el-icon>
-                修改建议
+                {{ confirmingRisk ? '生成中...' : '修改' }}
               </button>
             </div>
           </div>

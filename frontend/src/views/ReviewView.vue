@@ -122,6 +122,26 @@
             </div>
           </div>
 
+          <!-- 审阅重点输入（上传文档后显示，可选填写） -->
+          <div v-if="currentTask?.document_filename && !preprocessing" class="business-context-section">
+            <div class="context-header">
+              <el-icon><Edit /></el-icon>
+              <span class="context-title">您的审阅重点</span>
+              <span class="context-optional">（可选）</span>
+            </div>
+            <el-input
+              v-model="specialRequirements"
+              type="textarea"
+              :rows="3"
+              :autosize="{ minRows: 2, maxRows: 6 }"
+              placeholder="告诉 AI 您最关心什么，帮助审阅更精准。例如：&#10;• 重点关注付款条款和违约责任&#10;• 本项目为政府采购，需特别注意合规要求"
+            />
+            <div v-if="specialRequirements.trim()" class="context-hint">
+              <el-icon color="#67c23a"><CircleCheck /></el-icon>
+              <span>审阅时将重点关注您指定的内容</span>
+            </div>
+          </div>
+
           <el-divider />
 
           <!-- 高级选项（默认折叠） -->
@@ -134,7 +154,7 @@
               <div class="header-left">
                 <el-icon><Setting /></el-icon>
                 <span class="header-title">高级选项</span>
-                <span class="header-subtitle">审阅标准、业务条线、特殊要求</span>
+                <span class="header-subtitle">审阅标准、业务条线</span>
               </div>
               <div class="header-right">
                 <template v-if="hasAdvancedSelection">
@@ -143,9 +163,6 @@
                   </el-tag>
                   <el-tag v-if="selectedBusinessLineId" size="small" type="info">
                     业务条线
-                  </el-tag>
-                  <el-tag v-if="specialRequirements.trim()" size="small" type="warning">
-                    特殊要求
                   </el-tag>
                 </template>
                 <el-icon class="expand-icon" :class="{ expanded: showAdvancedOptions }">
@@ -206,66 +223,6 @@
                       +{{ selectedStandards.length - 6 }} 条
                     </span>
                   </div>
-                </div>
-
-                <!-- 特殊要求输入 -->
-                <div class="special-requirements" :class="{ 'has-content': specialRequirements.trim() }">
-                  <div class="special-header" @click="showSpecialInput = !showSpecialInput">
-                    <el-icon><Edit /></el-icon>
-                    <span class="special-title">本次特殊要求</span>
-                    <span class="special-priority-hint">优先级最高</span>
-                    <el-icon class="expand-icon" :class="{ expanded: showSpecialInput }">
-                      <ArrowDown />
-                    </el-icon>
-                  </div>
-                  <el-collapse-transition>
-                    <div v-show="showSpecialInput" class="special-content">
-                      <p class="special-desc">
-                        输入本次项目的特殊审核要求。当与审阅标准或业务背景冲突时，以此处要求为准。
-                      </p>
-                      <el-input
-                        v-model="specialRequirements"
-                        type="textarea"
-                        :rows="5"
-                        :autosize="{ minRows: 5, maxRows: 10 }"
-                        placeholder="例如：&#10;&#10;• 本项目为政府采购，需特别关注合规要求&#10;&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;&#10;• 涉及数据跨境，需审核数据安全条款"
-                      />
-                      <div v-if="specialRequirements.trim()" class="special-mode-selection">
-                        <span class="mode-label">处理方式：</span>
-                        <el-radio-group v-model="specialReqMode" size="small">
-                          <el-radio value="direct">
-                            <span class="mode-option">
-                              <span class="mode-name">直接应用</span>
-                              <span class="mode-desc">审阅时自动参考，无需等待</span>
-                            </span>
-                          </el-radio>
-                          <el-radio value="merge">
-                            <span class="mode-option">
-                              <span class="mode-name">修改标准</span>
-                              <span class="mode-desc">先调整审核标准，可预览效果</span>
-                            </span>
-                          </el-radio>
-                        </el-radio-group>
-                      </div>
-                      <div v-if="specialRequirements.trim() && specialReqMode === 'merge'" class="special-footer">
-                        <el-button
-                          type="primary"
-                          size="default"
-                          :loading="merging"
-                          :disabled="!specialRequirements.trim() || !selectedStandards.length"
-                          @click="mergeSpecialRequirements"
-                        >
-                          <el-icon><MagicStick /></el-icon>
-                          开始修改标准
-                        </el-button>
-                        <span class="special-tip">AI 将根据特殊要求调整审核标准（约30-60秒）</span>
-                      </div>
-                      <div v-if="specialRequirements.trim() && specialReqMode === 'direct'" class="special-footer direct-mode">
-                        <el-icon color="#67c23a"><CircleCheck /></el-icon>
-                        <span class="direct-hint">开始审阅后，特殊要求将自动生效</span>
-                      </div>
-                    </div>
-                  </el-collapse-transition>
                 </div>
 
                 <!-- 当前应用的标准状态 -->
@@ -808,17 +765,13 @@ const showStandardPreview = ref(false)
 // 高级选项（默认折叠）
 const showAdvancedOptions = ref(false)
 const hasAdvancedSelection = computed(() => {
-  return selectedStandards.value.length > 0 ||
-    selectedBusinessLineId.value ||
-    specialRequirements.value.trim()
+  return selectedStandards.value.length > 0 || selectedBusinessLineId.value
 })
 
-// 特殊要求相关状态
-const showSpecialInput = ref(false)
+// 业务背景/特殊要求（已移到上传区域后面，简化了相关状态）
 const specialRequirements = ref('')
-const specialReqMode = ref('direct') // 'direct' = 直接传递, 'merge' = AI整合
+const specialReqMode = ref('direct') // 保持 'direct' 模式，简化用户体验
 const merging = ref(false)
-const showMergePreview = ref(false)
 const mergeResult = ref(null)
 
 // 推荐相关
@@ -1993,6 +1946,52 @@ async function applyStandards() {
 
 .recognized-info :deep(.el-descriptions__label) {
   width: 80px;
+}
+
+/* 业务背景输入区域 */
+.business-context-section {
+  margin-top: var(--spacing-4);
+  padding: var(--spacing-4);
+  background: var(--color-bg-soft, #fafafa);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-border-light, #ebeef5);
+}
+
+.context-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+}
+
+.context-header .el-icon {
+  color: var(--color-primary);
+}
+
+.context-title {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.context-optional {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.business-context-section :deep(.el-textarea__inner) {
+  background: #fff;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.context-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
 }
 
 .uploaded-file {
