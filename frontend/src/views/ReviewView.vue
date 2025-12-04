@@ -1474,7 +1474,8 @@ function retryReview() {
 }
 
 function goToResult() {
-  router.push(`/result/${taskId.value}`)
+  // 跳转到交互审阅界面（三阶段：分析-讨论-修改）
+  router.push(`/interactive/${taskId.value}`)
 }
 
 function clearError() {

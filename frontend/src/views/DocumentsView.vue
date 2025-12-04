@@ -487,14 +487,16 @@ function goToNewReview() {
 
 function goToTask(task) {
   if (task.status === 'completed') {
-    router.push(`/result/${task.id}`)
+    // 跳转到交互审阅界面（三阶段：分析-讨论-修改）
+    router.push(`/interactive/${task.id}`)
   } else {
     router.push(`/review/${task.id}`)
   }
 }
 
 function goToResult(task) {
-  router.push(`/result/${task.id}`)
+  // 跳转到交互审阅界面（三阶段：分析-讨论-修改）
+  router.push(`/interactive/${task.id}`)
 }
 
 // 格式化函数
