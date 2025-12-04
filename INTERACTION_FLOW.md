@@ -274,9 +274,10 @@ GET    /api/tasks/{taskId}/document/text 获取段落化文本
 
 ### 6.3 审阅
 ```
-POST   /api/tasks/{taskId}/review          标准模式审阅
-POST   /api/tasks/{taskId}/unified-review  交互模式审阅
-GET    /api/tasks/{taskId}/result          获取结果
+POST   /api/tasks/{taskId}/review                标准模式审阅
+POST   /api/tasks/{taskId}/unified-review        交互模式审阅（轮询）
+POST   /api/tasks/{taskId}/unified-review-stream 交互模式审阅（SSE流式）
+GET    /api/tasks/{taskId}/result                获取结果
 ```
 
 ### 6.4 交互对话
@@ -396,14 +397,34 @@ ReviewTask (任务)
      - `done`: 完成信号
      - `error`: 错误信息
 
-6. **分析与修改分离（重要）**
+6. **流式审阅（边审边看）**
+   - 审阅过程支持 SSE 流式推送风险点
+   - 后端 API: `POST /api/tasks/{task_id}/unified-review-stream`
+   - 核心组件：
+     - `IncrementalRiskParser`: 增量 JSON 解析器，使用状态机解析流式输出
+     - `unified_review_stream()`: 异步生成器，边解析边 yield 风险点
+   - 事件类型：
+     - `start`: 审阅开始 `{task_id}`
+     - `progress`: 进度更新 `{percentage, message}`
+     - `risk`: 新风险点 `{data, index}` - 每个风险单独推送
+     - `complete`: 审阅完成 `{summary, actions, total_risks}`
+     - `error`: 错误 `{message}`
+   - 用户体验优化：
+     - 第一条风险点到达即更新状态为 `partial_ready`，用户可立即跳转
+     - 后续风险在后台继续接收，自动追加到列表
+     - 等待时间从 60-120 秒缩短到约 30 秒（第一条风险生成时间）
+   - 降级策略：
+     - 流式审阅失败自动回退到传统轮询模式
+     - 如已收到部分风险，继续使用已有结果
+
+7. **分析与修改分离（重要）**
    - 风险识别阶段：移除输出限制，充分发挥AI分析能力
    - RiskPoint 新增 `analysis` 字段存储深度分析
    - 初步审阅可通过 `skip_modifications=true` 跳过修改建议生成
    - 修改建议可延迟到用户确认风险后再生成
    - 修改生成阶段：严格遵循最小改动原则（奥卡姆剃刀）
 
-7. **修改建议生成时机**
+8. **修改建议生成时机**
    - 批量生成：用户确认多个风险点后，调用 `/generate-modifications`
    - 单条生成：讨论后针对单个风险，调用 `/risks/{riskId}/generate-modification`
    - 两种方式都应用最小改动原则
