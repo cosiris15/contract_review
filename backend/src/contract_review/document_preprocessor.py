@@ -5,6 +5,11 @@
 1. 识别合同各方（甲方、乙方等）
 2. 自动生成任务名称
 3. 检测文档语言
+
+性能优化策略：
+- 只处理文档前2000字符（合同各方信息通常在开头）
+- 基础规则检测优先，置信度足够高时跳过 LLM 调用
+- 减少 LLM 输出 token 限制
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import Settings
@@ -20,6 +26,11 @@ from .llm_client import LLMClient
 from .gemini_client import GeminiClient
 
 logger = logging.getLogger(__name__)
+
+# 预处理配置常量
+PREPROCESS_TEXT_LIMIT = 2000  # 只处理前2000字符，足够识别各方信息
+PREPROCESS_MAX_TOKENS = 500   # LLM 输出 token 限制
+BASIC_DETECTION_CONFIDENCE_THRESHOLD = 0.8  # 基础检测置信度阈值，超过此值跳过 LLM
 
 
 # ==================== Prompt 模板 ====================
@@ -67,8 +78,9 @@ PREPROCESS_SYSTEM_PROMPT = """你是一个专业的文档分析助手。请分�
 def build_preprocess_messages(document_text: str) -> List[Dict[str, Any]]:
     """构建预处理的消息列表"""
     # 截取文档前部分用于分析（通常合同各方在开头定义）
-    text_preview = document_text[:4000]
-    if len(document_text) > 4000:
+    # 优化：2000字符足够识别各方信息，减少 token 消耗和延迟
+    text_preview = document_text[:PREPROCESS_TEXT_LIMIT]
+    if len(document_text) > PREPROCESS_TEXT_LIMIT:
         text_preview += "\n\n[...文档内容省略...]"
 
     return [
@@ -111,6 +123,12 @@ class DocumentPreprocessor:
         """
         预处理文档，提取关键信息
 
+        性能优化策略：
+        1. 先用规则做基础检测（毫秒级）
+        2. 评估检测结果的置信度
+        3. 置信度足够高时直接返回，跳过 LLM 调用（节省2-4秒）
+        4. 置信度不足时才调用 LLM 做深度分析
+
         Args:
             document_text: 文档文本内容
 
@@ -119,16 +137,30 @@ class DocumentPreprocessor:
                 "parties": [...],
                 "suggested_name": "...",
                 "language": "zh-CN" | "en",
-                "document_type": "..."
+                "document_type": "...",
+                "source": "basic" | "llm"  # 标记数据来源
             }
         """
-        # 先用简单规则做基础检测
-        basic_info = self._basic_detection(document_text)
+        start_time = time.time()
 
-        # 使用 LLM 做深度分析
+        # 先用简单规则做基础检测（毫秒级）
+        basic_info, confidence = self._basic_detection_with_confidence(document_text)
+        basic_time = time.time() - start_time
+
+        logger.info(f"基础检测完成: {basic_time*1000:.1f}ms, 置信度: {confidence:.2f}, "
+                   f"识别到 {len(basic_info.get('parties', []))} 个当事方")
+
+        # 优化：置信度足够高时，直接返回基础检测结果，跳过 LLM
+        if confidence >= BASIC_DETECTION_CONFIDENCE_THRESHOLD:
+            basic_info["source"] = "basic"
+            logger.info(f"置信度 {confidence:.2f} >= {BASIC_DETECTION_CONFIDENCE_THRESHOLD}，跳过 LLM 调用")
+            return basic_info
+
+        # 置信度不足，使用 LLM 做深度分析
+        logger.info(f"置信度 {confidence:.2f} < {BASIC_DETECTION_CONFIDENCE_THRESHOLD}，调用 LLM 深度分析")
         try:
             messages = build_preprocess_messages(document_text)
-            response = await self.llm.chat(messages, max_output_tokens=1000)
+            response = await self.llm.chat(messages, max_output_tokens=PREPROCESS_MAX_TOKENS)
 
             # 解析 JSON 响应
             result = self._parse_response(response)
@@ -141,70 +173,187 @@ class DocumentPreprocessor:
             if not result.get("language"):
                 result["language"] = basic_info.get("language", "zh-CN")
 
-            logger.info(f"文档预处理完成: {len(result.get('parties', []))} 个当事方")
+            result["source"] = "llm"
+            total_time = time.time() - start_time
+            logger.info(f"LLM 预处理完成: {total_time:.2f}s, {len(result.get('parties', []))} 个当事方")
             return result
 
         except Exception as e:
             logger.error(f"LLM 预处理失败: {e}")
             # 返回基础检测结果
+            basic_info["source"] = "basic_fallback"
             return basic_info
 
-    def _basic_detection(self, text: str) -> Dict[str, Any]:
-        """基础规则检测（不依赖 LLM）"""
+    def _basic_detection_with_confidence(self, text: str) -> Tuple[Dict[str, Any], float]:
+        """
+        带置信度评估的基础规则检测（不依赖 LLM）
+
+        置信度评估标准：
+        - 识别到2个或以上当事方：+0.4
+        - 识别到具体公司/人名（非"未指明"）：+0.2
+        - 识别到合同类型名称：+0.2
+        - 语言检测明确（中文比例>30%或<5%）：+0.2
+
+        Returns:
+            (检测结果字典, 置信度0-1)
+        """
+        confidence = 0.0
         parties = []
 
-        # 检测甲方、乙方等
+        # 只处理前2000字符，提高效率
+        text_preview = text[:PREPROCESS_TEXT_LIMIT]
+
+        # 检测甲方、乙方等 - 扩展更多模式，支持更多合同类型
         patterns = [
-            (r'甲\s*方[：:]\s*([^\n,，。；;]+)', '甲方'),
-            (r'乙\s*方[：:]\s*([^\n,，。；;]+)', '乙方'),
-            (r'丙\s*方[：:]\s*([^\n,，。；;]+)', '丙方'),
-            (r'出租人[：:]\s*([^\n,，。；;]+)', '出租人'),
-            (r'承租人[：:]\s*([^\n,，。；;]+)', '承租人'),
-            (r'委托人[：:]\s*([^\n,，。；;]+)', '委托人'),
-            (r'受托人[：:]\s*([^\n,，。；;]+)', '受托人'),
-            (r'买方[：:]\s*([^\n,，。；;]+)', '买方'),
-            (r'卖方[：:]\s*([^\n,，。；;]+)', '卖方'),
-            (r'Party\s*A[：:]\s*([^\n,;]+)', 'Party A'),
-            (r'Party\s*B[：:]\s*([^\n,;]+)', 'Party B'),
+            # 中文标准格式（支持括号内的补充说明）
+            (r'甲\s*方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '甲方'),
+            (r'乙\s*方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '乙方'),
+            (r'丙\s*方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '丙方'),
+            (r'丁\s*方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '丁方'),
+            # 租赁合同
+            (r'出租人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '出租人'),
+            (r'承租人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '承租人'),
+            (r'出租方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '出租方'),
+            (r'承租方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '承租方'),
+            # 委托合同
+            (r'委托人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '委托人'),
+            (r'受托人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '受托人'),
+            (r'委托方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '委托方'),
+            (r'受托方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '受托方'),
+            # 买卖合同
+            (r'买方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '买方'),
+            (r'卖方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '卖方'),
+            (r'买受人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '买受人'),
+            (r'出卖人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '出卖人'),
+            (r'购买方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '购买方'),
+            (r'销售方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '销售方'),
+            # 服务合同
+            (r'服务方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '服务方'),
+            (r'需求方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '需求方'),
+            (r'服务提供方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '服务提供方'),
+            (r'服务接受方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '服务接受方'),
+            # 劳动合同
+            (r'用人单位[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '用人单位'),
+            (r'劳动者[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '劳动者'),
+            (r'雇主[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '雇主'),
+            (r'雇员[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '雇员'),
+            # 借款/贷款合同
+            (r'贷款人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '贷款人'),
+            (r'借款人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '借款人'),
+            (r'出借人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '出借人'),
+            # 担保合同
+            (r'担保人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '担保人'),
+            (r'被担保人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '被担保人'),
+            (r'保证人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '保证人'),
+            # 合作合同
+            (r'合作方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '合作方'),
+            (r'发包方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '发包方'),
+            (r'承包方[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '承包方'),
+            (r'发包人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '发包人'),
+            (r'承包人[（\(]?[^）\)：:]*[）\)]?[：:]\s*([^\n,，。；;（\(]+)', '承包人'),
+            # 英文合同
+            (r'Party\s*A[：:\s]+([^\n,;]+)', 'Party A'),
+            (r'Party\s*B[：:\s]+([^\n,;]+)', 'Party B'),
+            (r'Party\s*C[：:\s]+([^\n,;]+)', 'Party C'),
+            (r'(?:The\s+)?Lessor[：:\s]+([^\n,;]+)', 'Lessor'),
+            (r'(?:The\s+)?Lessee[：:\s]+([^\n,;]+)', 'Lessee'),
+            (r'(?:The\s+)?Buyer[：:\s]+([^\n,;]+)', 'Buyer'),
+            (r'(?:The\s+)?Seller[：:\s]+([^\n,;]+)', 'Seller'),
+            (r'(?:The\s+)?Employer[：:\s]+([^\n,;]+)', 'Employer'),
+            (r'(?:The\s+)?Employee[：:\s]+([^\n,;]+)', 'Employee'),
+            (r'(?:The\s+)?Licensor[：:\s]+([^\n,;]+)', 'Licensor'),
+            (r'(?:The\s+)?Licensee[：:\s]+([^\n,;]+)', 'Licensee'),
+            (r'(?:The\s+)?Client[：:\s]+([^\n,;]+)', 'Client'),
+            (r'(?:The\s+)?Contractor[：:\s]+([^\n,;]+)', 'Contractor'),
+            (r'(?:The\s+)?Service\s+Provider[：:\s]+([^\n,;]+)', 'Service Provider'),
         ]
+
+        has_specific_name = False
+        seen_roles = set()  # 避免重复添加同一角色
 
         for pattern, role in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            if role in seen_roles:
+                continue
+            match = re.search(pattern, text_preview, re.IGNORECASE)
             if match:
                 name = match.group(1).strip()[:50]  # 限制长度
-                parties.append({
-                    "role": role,
-                    "name": name if name else "未指明",
-                    "description": ""
-                })
+                # 清理名称中的多余字符
+                name = re.sub(r'[（\(][^）\)]*[）\)]', '', name).strip()
+                name = re.sub(r'\s+', ' ', name)
+                # 过滤掉明显不是名称的内容
+                if name and len(name) >= 2 and not re.match(r'^[\d\s\-]+$', name):
+                    seen_roles.add(role)
+                    parties.append({
+                        "role": role,
+                        "name": name,
+                        "description": ""
+                    })
+                    # 检查是否有具体名称（包含公司/有限/集团等关键词）
+                    if re.search(r'(公司|有限|集团|股份|合伙|企业|中心|研究院|事务所|Ltd|Inc|Corp|LLC|Co\.|Limited|GmbH|S\.A\.|PLC)', name, re.IGNORECASE):
+                        has_specific_name = True
+
+        # 置信度：识别到当事方数量
+        if len(parties) >= 2:
+            confidence += 0.4
+        elif len(parties) == 1:
+            confidence += 0.2
+
+        # 置信度：有具体公司名称
+        if has_specific_name:
+            confidence += 0.2
 
         # 检测语言
-        chinese_chars = sum(1 for c in text[:2000] if '\u4e00' <= c <= '\u9fff')
-        total_chars = len([c for c in text[:2000] if c.strip()])
-        language = "zh-CN" if total_chars > 0 and chinese_chars / total_chars > 0.15 else "en"
+        chinese_chars = sum(1 for c in text_preview if '\u4e00' <= c <= '\u9fff')
+        total_chars = len([c for c in text_preview if c.strip()])
+        chinese_ratio = chinese_chars / total_chars if total_chars > 0 else 0
 
-        # 生成默认名称
+        if chinese_ratio > 0.15:
+            language = "zh-CN"
+        else:
+            language = "en"
+
+        # 置信度：语言检测明确
+        if chinese_ratio > 0.3 or chinese_ratio < 0.05:
+            confidence += 0.2
+
+        # 生成默认名称和文档类型
         suggested_name = "未命名文档"
+        document_type = ""
 
-        # 尝试从文本开头提取合同类型
+        # 尝试从文本开头提取合同类型 - 优先匹配书名号内的
         type_patterns = [
-            r'《([^》]+合同)》',
-            r'《([^》]+协议)》',
-            r'([^\n]{2,15}合同)',
-            r'([^\n]{2,15}协议)',
+            (r'《([^》]{2,25}(?:合同|协议|契约|合约))》', True),  # 书名号内，高置信度
+            (r'(?:^|\n)\s*([^\n]{2,20}(?:合同|协议|契约|合约))\s*(?:\n|$)', True),  # 独立行标题
+            (r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Agreement|Contract))', True),  # 英文合同标题
+            (r'([^\n\s]{2,15}合同)', False),  # 一般匹配
+            (r'([^\n\s]{2,15}协议)', False),  # 一般匹配
         ]
-        for pattern in type_patterns:
-            match = re.search(pattern, text[:500])
+
+        for pattern, high_confidence in type_patterns:
+            match = re.search(pattern, text_preview[:1000])
             if match:
-                suggested_name = match.group(1).strip()[:20]
+                suggested_name = match.group(1).strip()[:25]
+                document_type = suggested_name
+                if high_confidence:
+                    confidence += 0.2
+                else:
+                    confidence += 0.1
                 break
+
+        # 确保置信度不超过1
+        confidence = min(confidence, 1.0)
 
         return {
             "parties": parties,
             "suggested_name": suggested_name,
             "language": language,
-            "document_type": ""
-        }
+            "document_type": document_type
+        }, confidence
+
+    def _basic_detection(self, text: str) -> Dict[str, Any]:
+        """基础规则检测（兼容旧接口）"""
+        result, _ = self._basic_detection_with_confidence(text)
+        return result
 
     def _parse_response(self, response: str) -> Dict[str, Any]:
         """解析 LLM 响应"""
