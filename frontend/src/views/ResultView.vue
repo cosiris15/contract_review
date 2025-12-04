@@ -475,7 +475,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
@@ -1107,6 +1107,14 @@ async function handleExportRedline() {
     redlineExporting.value = false
   }
 }
+
+// 组件卸载时清理轮询
+onUnmounted(() => {
+  if (redlineStatusPoller) {
+    clearInterval(redlineStatusPoller)
+    redlineStatusPoller = null
+  }
+})
 
 // 下载已完成的导出文件
 async function handleDownloadRedline() {

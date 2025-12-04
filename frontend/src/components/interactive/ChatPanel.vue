@@ -156,7 +156,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { ChatDotRound, CircleCheck, Close, Loading, Promotion, Check, EditPen } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 import DiffView from './DiffView.vue'
@@ -199,6 +199,9 @@ const chatHistoryRef = ref(null)
 const inputRef = ref(null)
 const editableSuggestion = ref('')
 
+// 定时器引用
+let resizeTimer = null
+
 // 监听 currentSuggestion 变化，同步到可编辑文本框
 watch(() => props.currentSuggestion, (newVal) => {
   editableSuggestion.value = newVal
@@ -215,12 +218,17 @@ watch(() => props.activeItem?.id, () => {
   }
 })
 
-// 自动调整输入框高度
+// 防抖自动调整输入框高度
 function autoResize() {
-  const el = inputRef.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+  if (resizeTimer) {
+    clearTimeout(resizeTimer)
+  }
+  resizeTimer = setTimeout(() => {
+    const el = inputRef.value
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+  }, 50)
 }
 
 // 滚动到底部
@@ -232,9 +240,12 @@ function scrollToBottom() {
   })
 }
 
-// 监听消息变化，自动滚动
-watch(() => props.messages.length, scrollToBottom)
-watch(() => props.streaming, scrollToBottom)
+// 合并 watch：监听消息变化和流式状态，自动滚动
+watch(
+  [() => props.messages.length, () => props.streaming],
+  scrollToBottom,
+  { flush: 'post' }
+)
 
 // 切换条目时滚动到顶部
 watch(() => props.activeItem?.id, () => {
@@ -264,6 +275,13 @@ function send() {
     }
   })
 }
+
+// 清理定时器
+onUnmounted(() => {
+  if (resizeTimer) {
+    clearTimeout(resizeTimer)
+  }
+})
 </script>
 
 <style scoped>

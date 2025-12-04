@@ -196,7 +196,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -579,6 +579,14 @@ function goBack() {
     router.push('/')
   }
 }
+
+// 组件卸载时清理轮询
+onUnmounted(() => {
+  if (redlineStatusPoller) {
+    clearInterval(redlineStatusPoller)
+    redlineStatusPoller = null
+  }
+})
 </script>
 
 <style scoped>

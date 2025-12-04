@@ -34,7 +34,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import { Document, Loading } from '@element-plus/icons-vue'
 
 const props = defineProps({
@@ -60,61 +60,66 @@ const containerRef = ref(null)
 const contentRef = ref(null)
 const pulseIndex = ref(-1)
 
+// 定时器引用，用于清理
+let scrollDebounceTimer = null
+let pulseTimer = null
+
+// 优化：单次遍历搜索，多条件匹配
+function findParagraphIndex(text) {
+  if (!text || props.paragraphs.length === 0) return -1
+
+  const searchVariants = [
+    text.slice(0, 80),
+    text.slice(0, 40),
+    text.slice(0, 20)
+  ].filter(s => s.length > 0)
+
+  for (const variant of searchVariants) {
+    const idx = props.paragraphs.findIndex(p => p.text.includes(variant))
+    if (idx !== -1) return idx
+  }
+
+  return -1
+}
+
 // 计算哪个段落应该高亮
 const highlightedIndex = computed(() => {
-  if (!props.highlightText || props.paragraphs.length === 0) return -1
-
-  // 取前80个字符做匹配（避免太长的文本匹配问题）
-  const searchText = props.highlightText.slice(0, 80)
-
-  // 精确匹配
-  let targetIndex = props.paragraphs.findIndex(p => p.text.includes(searchText))
-
-  // 如果没找到，尝试用前40个字符
-  if (targetIndex === -1 && searchText.length > 40) {
-    const shorterText = searchText.slice(0, 40)
-    targetIndex = props.paragraphs.findIndex(p => p.text.includes(shorterText))
-  }
-
-  // 如果还没找到，尝试用前20个字符
-  if (targetIndex === -1 && searchText.length > 20) {
-    const shorterText = searchText.slice(0, 20)
-    targetIndex = props.paragraphs.findIndex(p => p.text.includes(shorterText))
-  }
-
-  return targetIndex
+  return findParagraphIndex(props.highlightText)
 })
 
-// 滚动到高亮的段落
+// 防抖滚动到高亮的段落
 function scrollToHighlight() {
   if (highlightedIndex.value === -1) return
 
-  nextTick(() => {
-    const element = document.getElementById(`para-${highlightedIndex.value}`)
-    if (element && contentRef.value) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // 清除之前的定时器
+  if (scrollDebounceTimer) {
+    clearTimeout(scrollDebounceTimer)
+  }
 
-      // 添加脉冲动画
-      pulseIndex.value = highlightedIndex.value
-      setTimeout(() => {
-        pulseIndex.value = -1
-      }, 2000)
-    }
-  })
+  scrollDebounceTimer = setTimeout(() => {
+    nextTick(() => {
+      const element = document.getElementById(`para-${highlightedIndex.value}`)
+      if (element && contentRef.value) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+        // 添加脉冲动画
+        pulseIndex.value = highlightedIndex.value
+
+        // 清除之前的脉冲定时器
+        if (pulseTimer) {
+          clearTimeout(pulseTimer)
+        }
+        pulseTimer = setTimeout(() => {
+          pulseIndex.value = -1
+        }, 2000)
+      }
+    })
+  }, 150)
 }
 
 // 滚动到指定文本（供外部调用）
 function scrollToText(text) {
-  if (!text || props.paragraphs.length === 0) return false
-
-  const searchText = text.slice(0, 80)
-  let targetIndex = props.paragraphs.findIndex(p => p.text.includes(searchText))
-
-  if (targetIndex === -1 && searchText.length > 40) {
-    const shorterText = searchText.slice(0, 40)
-    targetIndex = props.paragraphs.findIndex(p => p.text.includes(shorterText))
-  }
-
+  const targetIndex = findParagraphIndex(text)
   if (targetIndex === -1) return false
 
   nextTick(() => {
@@ -122,7 +127,11 @@ function scrollToText(text) {
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' })
       pulseIndex.value = targetIndex
-      setTimeout(() => {
+
+      if (pulseTimer) {
+        clearTimeout(pulseTimer)
+      }
+      pulseTimer = setTimeout(() => {
         pulseIndex.value = -1
       }, 2000)
     }
@@ -135,6 +144,16 @@ function scrollToText(text) {
 watch(() => props.highlightText, (newVal) => {
   if (newVal) {
     scrollToHighlight()
+  }
+})
+
+// 清理定时器
+onUnmounted(() => {
+  if (scrollDebounceTimer) {
+    clearTimeout(scrollDebounceTimer)
+  }
+  if (pulseTimer) {
+    clearTimeout(pulseTimer)
   }
 })
 

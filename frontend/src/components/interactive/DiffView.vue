@@ -12,7 +12,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { diffChars } from 'diff'
 
 const props = defineProps({
@@ -26,21 +26,43 @@ const props = defineProps({
   }
 })
 
-// 生成 diff HTML
-const diffHtml = computed(() => {
-  if (!props.original && !props.modified) {
+// 文本长度限制，避免超大文本卡顿
+const MAX_TEXT_LENGTH = 10000
+
+// 高效的 HTML 转义（使用字符串替换代替 DOM 操作）
+const htmlEscapeMap = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/[&<>"']/g, char => htmlEscapeMap[char])
+    .replace(/\n/g, '<br>')
+}
+
+// 计算 diff HTML
+function computeDiff(original, modified) {
+  if (!original && !modified) {
     return '<span class="no-diff">暂无内容</span>'
   }
 
-  if (!props.original) {
-    return `<span class="diff-added">${escapeHtml(props.modified)}</span>`
+  // 截断过长文本
+  const truncatedOriginal = original?.slice(0, MAX_TEXT_LENGTH) || ''
+  const truncatedModified = modified?.slice(0, MAX_TEXT_LENGTH) || ''
+
+  if (!truncatedOriginal) {
+    return `<span class="diff-added">${escapeHtml(truncatedModified)}</span>`
   }
 
-  if (!props.modified) {
-    return `<span class="diff-removed">${escapeHtml(props.original)}</span>`
+  if (!truncatedModified) {
+    return `<span class="diff-removed">${escapeHtml(truncatedOriginal)}</span>`
   }
 
-  const diff = diffChars(props.original, props.modified)
+  const diff = diffChars(truncatedOriginal, truncatedModified)
 
   return diff.map(part => {
     const text = escapeHtml(part.value)
@@ -52,14 +74,34 @@ const diffHtml = computed(() => {
     }
     return text
   }).join('')
-})
-
-// HTML 转义
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML.replace(/\n/g, '<br>')
 }
+
+// 使用 ref 存储结果，配合防抖
+const diffHtml = ref('<span class="no-diff">暂无内容</span>')
+
+// 防抖计算 diff
+let debounceTimer = null
+
+watch(
+  [() => props.original, () => props.modified],
+  ([original, modified]) => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+    }
+
+    debounceTimer = setTimeout(() => {
+      diffHtml.value = computeDiff(original, modified)
+    }, 100)
+  },
+  { immediate: true }
+)
+
+// 清理定时器
+onUnmounted(() => {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+  }
+})
 </script>
 
 <style scoped>
