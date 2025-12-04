@@ -63,7 +63,7 @@
             </button>
           </div>
           <div class="input-footer">
-            <span class="phase-hint">讨论阶段 - 确认风险后生成修改建议</span>
+            <span class="phase-hint">讨论阶段 - 点击生成修改建议</span>
             <div class="action-buttons">
               <button
                 class="skip-btn"
@@ -78,8 +78,8 @@
                 :disabled="loading"
               >
                 <el-icon v-if="confirmingRisk" class="is-loading"><Loading /></el-icon>
-                <el-icon v-else><Check /></el-icon>
-                确认风险
+                <el-icon v-else><EditPen /></el-icon>
+                修改建议
               </button>
             </div>
           </div>
@@ -157,7 +157,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { ChatDotRound, CircleCheck, Close, Loading, Promotion, Check } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheck, Close, Loading, Promotion, Check, EditPen } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 import DiffView from './DiffView.vue'
 
@@ -312,6 +312,8 @@ function send() {
 /* 底部输入区 */
 .input-area {
   flex-shrink: 0;
+  max-height: 60vh;
+  overflow-y: auto;
   padding: 16px 20px;
   background: #fff;
   border-top: 1px solid #eee;
