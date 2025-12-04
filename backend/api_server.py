@@ -4114,7 +4114,7 @@ async def stream_review_generator(
                         document_path=str(doc_path),
                         material_type=task.material_type,
                         our_party=task.our_party,
-                        review_standards_used=[],
+                        review_standards_used="",
                         language=getattr(task, 'language', 'zh-CN'),
                         business_line_id=business_line_id,
                         business_line_name=business_context.get("name") if business_context else None,
