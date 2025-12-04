@@ -103,6 +103,7 @@ class InteractiveReviewEngine:
         review_standards: Optional[List[ReviewStandard]] = None,
         business_context: Optional[Dict[str, Any]] = None,
         special_requirements: Optional[str] = None,
+        skip_modifications: bool = True,
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
     ) -> ReviewResult:
         """
@@ -123,6 +124,7 @@ class InteractiveReviewEngine:
                 - name: 业务条线名称
                 - contexts: BusinessContext 列表
             special_requirements: 特殊要求（可选）
+            skip_modifications: 是否跳过修改建议生成（默认 True，用于分阶段审阅）
             progress_callback: 进度回调函数
 
         Returns:
@@ -147,6 +149,7 @@ class InteractiveReviewEngine:
             review_standards=review_standards,
             business_context=business_context,
             special_requirements=special_requirements,
+            skip_modifications=skip_modifications,
         )
 
         update_progress("analyzing", 20, "AI 正在分析文档...")
@@ -163,7 +166,7 @@ class InteractiveReviewEngine:
 
         # 解析响应（使用相同的解析逻辑）
         risks, modifications, actions, summary = self._parse_quick_review_response(
-            response, language
+            response, language, skip_modifications=skip_modifications
         )
 
         update_progress("generating", 80, "正在生成报告...")
@@ -243,8 +246,15 @@ class InteractiveReviewEngine:
         self,
         response: str,
         language: Language = "zh-CN",
+        skip_modifications: bool = True,
     ) -> Tuple[List[RiskPoint], List[ModificationSuggestion], List[ActionRecommendation], Dict]:
-        """解析快速初审的 LLM 响应"""
+        """解析快速初审的 LLM 响应
+
+        Args:
+            response: LLM 原始响应
+            language: 语言
+            skip_modifications: 是否跳过修改建议解析（默认 True）
+        """
         risks = []
         modifications = []
         actions = []
@@ -281,6 +291,7 @@ class InteractiveReviewEngine:
                     risk_type=risk_data.get("risk_type", "未分类"),
                     description=risk_data.get("description", ""),
                     reason=risk_data.get("reason", ""),
+                    analysis=risk_data.get("analysis"),  # 深度分析字段
                     location=TextLocation(
                         original_text=risk_data.get("original_text", ""),
                     ) if risk_data.get("original_text") else None,
@@ -289,24 +300,27 @@ class InteractiveReviewEngine:
             except Exception as e:
                 logger.warning(f"解析风险点 {i} 失败: {e}")
 
-        # 解析修改建议
-        for i, mod_data in enumerate(data.get("modifications", [])):
-            try:
-                # 获取关联的风险点
-                risk_index = mod_data.get("risk_index", i)
-                risk_id = risks[risk_index].id if risk_index < len(risks) else None
+        # 解析修改建议（仅当 skip_modifications=False 时）
+        if not skip_modifications:
+            for i, mod_data in enumerate(data.get("modifications", [])):
+                try:
+                    # 获取关联的风险点
+                    risk_index = mod_data.get("risk_index", i)
+                    risk_id = risks[risk_index].id if risk_index < len(risks) else None
 
-                mod = ModificationSuggestion(
-                    id=f"mod_{generate_id()}",
-                    risk_id=risk_id or f"risk_{i}",
-                    original_text=mod_data.get("original_text", ""),
-                    suggested_text=mod_data.get("suggested_text", ""),
-                    modification_reason=mod_data.get("modification_reason", ""),
-                    priority=mod_data.get("priority", "should"),
-                )
-                modifications.append(mod)
-            except Exception as e:
-                logger.warning(f"解析修改建议 {i} 失败: {e}")
+                    mod = ModificationSuggestion(
+                        id=f"mod_{generate_id()}",
+                        risk_id=risk_id or f"risk_{i}",
+                        original_text=mod_data.get("original_text", ""),
+                        suggested_text=mod_data.get("suggested_text", ""),
+                        modification_reason=mod_data.get("modification_reason", ""),
+                        priority=mod_data.get("priority", "should"),
+                    )
+                    modifications.append(mod)
+                except Exception as e:
+                    logger.warning(f"解析修改建议 {i} 失败: {e}")
+        else:
+            logger.info("跳过修改建议解析（skip_modifications=True）")
 
         # 解析行动建议
         for i, action_data in enumerate(data.get("actions", [])):

@@ -83,9 +83,12 @@
           :current-suggestion="currentSuggestion"
           :loading="chatLoading"
           :streaming="isStreaming"
+          :confirming-risk="confirmingRisk"
           @select-item="selectItem"
           @send-message="sendMessage"
           @complete="completeCurrentItem"
+          @confirm-risk="confirmRisk"
+          @skip="skipItem"
           @locate="scrollToHighlight"
         />
       </div>
@@ -112,6 +115,7 @@ const taskId = computed(() => route.params.taskId)
 const loading = ref(false)
 const documentLoading = ref(false)
 const chatLoading = ref(false)
+const confirmingRisk = ref(false)
 const task = ref(null)
 const items = ref([])
 const activeItemId = ref(null)  // 用于 UI 选中状态 (item.id)
@@ -127,7 +131,10 @@ const activeItem = computed(() => {
 })
 
 const completedCount = computed(() => {
-  return items.value.filter(item => item.status === 'completed').length
+  return items.value.filter(item =>
+    item.chat_status === 'completed' || item.chat_status === 'skipped' ||
+    item.status === 'completed' || item.status === 'skipped'
+  ).length
 })
 
 const completionPercentage = computed(() => {
@@ -336,6 +343,7 @@ async function completeCurrentItem(finalSuggestion) {
     // 更新本地状态
     const localItem = items.value.find(i => i.id === activeItemId.value)
     if (localItem) {
+      localItem.chat_status = 'completed'
       localItem.status = 'completed'
       localItem.current_suggestion = finalSuggestion
     }
@@ -343,28 +351,109 @@ async function completeCurrentItem(finalSuggestion) {
     ElMessage.success('条目已确认')
 
     // 自动跳转到下一个未完成的条目
-    const nextPending = items.value.find(item => item.status !== 'completed')
-    if (nextPending) {
-      await selectItem(nextPending)
-    } else {
-      // 全部完成
-      ElMessageBox.confirm(
-        '恭喜！所有条目已审阅完成。是否导出结果？',
-        '审阅完成',
-        {
-          confirmButtonText: '导出 Word',
-          cancelButtonText: '稍后导出',
-          type: 'success'
-        }
-      ).then(() => {
-        handleExport('word')
-      }).catch(() => {
-        // 用户取消
-      })
-    }
+    goToNextPendingItem()
   } catch (error) {
     console.error('完成条目失败:', error)
     ElMessage.error('完成条目失败: ' + (error.message || '请重试'))
+  }
+}
+
+// 确认风险并生成修改建议
+async function confirmRisk() {
+  if (!activeItemApiId.value || confirmingRisk.value) return
+
+  confirmingRisk.value = true
+
+  try {
+    // 构建讨论摘要（从对话历史中提取）
+    const discussionSummary = buildDiscussionSummary(activeMessages.value)
+    const userDecision = '用户确认此风险需要处理'
+
+    // 调用单条修改建议生成 API
+    const response = await interactiveApi.generateSingleModification(
+      taskId.value,
+      activeItemApiId.value,
+      discussionSummary,
+      userDecision
+    )
+
+    // 更新本地状态
+    const localItem = items.value.find(i => i.id === activeItemId.value)
+    if (localItem) {
+      localItem.has_modification = true
+      localItem.modification_id = response.data.id
+      localItem.suggested_text = response.data.suggested_text
+      localItem.modification_reason = response.data.modification_reason
+    }
+    currentSuggestion.value = response.data.suggested_text
+
+    ElMessage.success('已生成修改建议')
+  } catch (error) {
+    console.error('生成修改建议失败:', error)
+    ElMessage.error('生成修改建议失败: ' + (error.message || '请重试'))
+  } finally {
+    confirmingRisk.value = false
+  }
+}
+
+// 跳过当前条目
+async function skipItem() {
+  if (!activeItemApiId.value) return
+
+  try {
+    await interactiveApi.skipItem(taskId.value, activeItemApiId.value)
+
+    // 更新本地状态
+    const localItem = items.value.find(i => i.id === activeItemId.value)
+    if (localItem) {
+      localItem.is_skipped = true
+      localItem.chat_status = 'skipped'
+      localItem.status = 'skipped'
+    }
+
+    ElMessage.info('已跳过此条目')
+
+    // 自动跳转到下一个未完成的条目
+    goToNextPendingItem()
+  } catch (error) {
+    console.error('跳过条目失败:', error)
+    ElMessage.error('跳过条目失败: ' + (error.message || '请重试'))
+  }
+}
+
+// 构建讨论摘要
+function buildDiscussionSummary(messages) {
+  if (!messages || messages.length === 0) return ''
+
+  return messages.map(msg =>
+    `${msg.role === 'user' ? '用户' : 'AI'}: ${msg.content}`
+  ).join('\n\n')
+}
+
+// 跳转到下一个未完成条目
+async function goToNextPendingItem() {
+  const nextPending = items.value.find(item =>
+    item.chat_status !== 'completed' && item.chat_status !== 'skipped' &&
+    item.status !== 'completed' && item.status !== 'skipped'
+  )
+
+  if (nextPending) {
+    await selectItem(nextPending)
+  } else {
+    // 全部完成
+    ElMessageBox.confirm(
+      '恭喜！所有条目已审阅完成。是否导出结果？',
+      '审阅完成',
+      {
+        confirmButtonText: '导出 Word',
+        cancelButtonText: '稍后导出',
+        type: 'success'
+      }
+    ).then(() => {
+      handleExport('word')
+    }).catch(() => {
+      // 用户取消
+    })
   }
 }
 

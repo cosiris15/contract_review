@@ -232,6 +232,30 @@ export default {
   },
 
   /**
+   * 跳过条目
+   * @param {string} taskId - 任务 ID
+   * @param {string} itemId - 条目 ID (risk_id)
+   */
+  skipItem(taskId, itemId) {
+    return api.post(`/interactive/${taskId}/items/${itemId}/skip`)
+  },
+
+  /**
+   * 为单个风险点生成修改建议
+   * @param {string} taskId - 任务 ID
+   * @param {string} riskId - 风险点 ID
+   * @param {string} discussionSummary - 讨论摘要
+   * @param {string} userDecision - 用户决策
+   * @returns {Promise<{id, suggested_text, modification_reason}>}
+   */
+  generateSingleModification(taskId, riskId, discussionSummary = '', userDecision = '') {
+    return api.post(`/tasks/${taskId}/risks/${riskId}/generate-modification`, {
+      discussion_summary: discussionSummary,
+      user_decision: userDecision
+    })
+  },
+
+  /**
    * 获取文档全文内容
    * @param {string} taskId - 任务 ID
    * @returns {Promise<{task_id, document_name, text, paragraphs}>}

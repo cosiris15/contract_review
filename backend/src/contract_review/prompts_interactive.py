@@ -189,6 +189,7 @@ def build_unified_review_messages(
     review_standards: Optional[List[ReviewStandard]] = None,
     business_context: Optional[Dict[str, Any]] = None,
     special_requirements: Optional[str] = None,
+    skip_modifications: bool = True,
 ) -> List[Dict[str, Any]]:
     """
     构建统一审阅的 Prompt 消息列表
@@ -207,6 +208,7 @@ def build_unified_review_messages(
             - name: 业务条线名称
             - contexts: BusinessContext 列表
         special_requirements: 特殊要求（可选）
+        skip_modifications: 是否跳过修改建议生成（默认 True，专注于风险分析）
 
     Returns:
         消息列表，格式为 [{"role": "system/user", "content": "..."}]
@@ -224,6 +226,7 @@ def build_unified_review_messages(
             language=language,
             business_context=business_context,
             special_requirements=special_requirements,
+            skip_modifications=skip_modifications,
         )
 
     # 有标准，使用标准审阅模式
@@ -236,6 +239,7 @@ def build_unified_review_messages(
         review_standards=review_standards,
         business_context=business_context,
         special_requirements=special_requirements,
+        skip_modifications=skip_modifications,
     )
 
 
@@ -248,8 +252,13 @@ def _build_unified_review_with_standards(
     review_standards: List[ReviewStandard],
     business_context: Optional[Dict[str, Any]] = None,
     special_requirements: Optional[str] = None,
+    skip_modifications: bool = True,
 ) -> List[Dict[str, Any]]:
-    """构建有标准的统一审阅 Prompt"""
+    """构建有标准的统一审阅 Prompt
+
+    注意：当使用审核标准时，目前仍然生成完整结果（包含 modifications）。
+    skip_modifications 参数预留用于未来扩展，当前暂不影响有标准模式。
+    """
 
     # 获取安全防护指令
     anti_injection = ANTI_INJECTION_INSTRUCTION.get(language, ANTI_INJECTION_INSTRUCTION["zh-CN"])
@@ -328,8 +337,15 @@ def _build_unified_review_without_standards(
     language: Language,
     business_context: Optional[Dict[str, Any]] = None,
     special_requirements: Optional[str] = None,
+    skip_modifications: bool = True,
 ) -> List[Dict[str, Any]]:
-    """构建无标准的统一审阅 Prompt（AI 自主审阅模式）"""
+    """构建无标准的统一审阅 Prompt（AI 自主审阅模式）
+
+    Args:
+        skip_modifications: 是否跳过修改建议生成（默认 True）
+            - True: 只生成风险分析，不生成修改建议（用于分阶段审阅）
+            - False: 同时生成风险分析和修改建议（传统模式）
+    """
 
     # 获取安全防护指令
     anti_injection = ANTI_INJECTION_INSTRUCTION.get(language, ANTI_INJECTION_INSTRUCTION["zh-CN"])
@@ -380,7 +396,67 @@ Note: These are special requirements from the user for this specific review. Ple
 
     # 构建增强版的自主审阅 system prompt
     if language == "zh-CN":
-        system_prompt = f"""{anti_injection}
+        if skip_modifications:
+            # 分阶段审阅模式：只生成风险分析，不生成修改建议
+            system_prompt = f"""{anti_injection}
+
+你是一位资深的法务审阅专家，正在为"{our_party}"（以下简称"我方"）审阅一份{material_type_text}。
+
+【任务目标】
+无需预设审核标准，请凭借你的专业知识自主识别文档中的所有潜在法律风险。
+重要：本阶段只需要进行深度风险分析，不需要提供修改建议。修改建议将在用户讨论确认后单独生成。
+
+【法律框架】
+适用中华人民共和国法律，包括但不限于：
+- 《中华人民共和国民法典》合同编
+- 相关司法解释和行业规范
+{business_context_section}{special_requirements_section}【审阅原则】
+1. 站在我方立场，识别所有对我方不利的条款
+2. 关注合同效力、权利义务平衡、违约责任、风险分担等核心问题
+3. 注意格式条款、免责条款、管辖条款等关键内容
+4. 识别模糊不清、可能产生歧义的表述
+5. 评估潜在的商业风险和法律风险
+6. 对每个风险进行深入分析，不要局限于表面描述
+
+【输出格式】
+请以 JSON 格式输出，包含以下结构：
+```json
+{{
+  "risks": [
+    {{
+      "risk_level": "high|medium|low",
+      "risk_type": "风险类型（如：责任条款、违约条款等）",
+      "description": "风险描述（简明扼要概括风险要点）",
+      "reason": "判定理由（简述为什么判定为该风险等级）",
+      "analysis": "深度分析（详细分析该风险的法律依据、潜在影响、可能后果、与其他条款的关联性等，充分发挥专业能力，无字数限制）",
+      "original_text": "相关原文摘录"
+    }}
+  ],
+  "actions": [
+    {{
+      "related_risk_indices": [0, 1],
+      "action_type": "沟通协商|补充材料|法务确认|内部审批",
+      "description": "具体行动描述",
+      "urgency": "immediate|soon|normal"
+    }}
+  ],
+  "summary": {{
+    "overall_risk": "high|medium|low",
+    "key_concerns": "主要关注点",
+    "recommendation": "总体建议"
+  }}
+}}
+```
+
+【重要说明】
+- 本阶段不需要输出 modifications 字段，专注于风险分析
+- analysis 字段是核心，请进行深入、全面、专业的分析，不要受字数限制
+- 风险分析应该能够帮助用户充分理解风险，为后续讨论提供依据
+- 请识别所有潜在风险，宁多勿漏
+"""
+        else:
+            # 传统模式：同时生成风险分析和修改建议
+            system_prompt = f"""{anti_injection}
 
 你是一位资深的法务审阅专家，正在为"{our_party}"（以下简称"我方"）审阅一份{material_type_text}。
 
@@ -443,7 +519,68 @@ Note: These are special requirements from the user for this specific review. Ple
 - 如果某个风险不需要修改文本（如需要补充协议），则只在 actions 中提供建议
 """
     else:
-        system_prompt = f"""{anti_injection}
+        if skip_modifications:
+            # Phase-based review mode: only generate risk analysis
+            system_prompt = f"""{anti_injection}
+
+You are a senior legal review expert, reviewing a {material_type_text} for "{our_party}" (hereinafter "our party").
+
+【Task Objective】
+Without predefined review standards, please use your professional expertise to independently identify all potential legal risks in the document.
+IMPORTANT: This phase only requires in-depth risk analysis. Modification suggestions will be generated separately after user discussion and confirmation.
+
+【Legal Framework】
+Apply common law principles, including but not limited to:
+- Contract formation (offer, acceptance, consideration)
+- Implied terms and conditions
+- Remedies for breach
+{business_context_section}{special_requirements_section}【Review Principles】
+1. Stand from our party's perspective, identify all clauses unfavorable to us
+2. Focus on contract validity, balance of rights and obligations, breach liability, risk allocation
+3. Pay attention to standard terms, exemption clauses, jurisdiction clauses
+4. Identify ambiguous or unclear expressions
+5. Assess potential commercial and legal risks
+6. Conduct in-depth analysis for each risk, don't be limited to surface descriptions
+
+【Output Format】
+Please output in JSON format with the following structure:
+```json
+{{
+  "risks": [
+    {{
+      "risk_level": "high|medium|low",
+      "risk_type": "Risk type (e.g., Liability, Breach, etc.)",
+      "description": "Risk description (concise summary of key risk points)",
+      "reason": "Reasoning (brief explanation of risk level determination)",
+      "analysis": "In-depth analysis (detailed analysis of legal basis, potential impacts, possible consequences, relationships with other clauses, etc. Use your full professional capability, no word limit)",
+      "original_text": "Relevant original text excerpt"
+    }}
+  ],
+  "actions": [
+    {{
+      "related_risk_indices": [0, 1],
+      "action_type": "Negotiation|Additional Documents|Legal Review|Internal Approval",
+      "description": "Specific action description",
+      "urgency": "immediate|soon|normal"
+    }}
+  ],
+  "summary": {{
+    "overall_risk": "high|medium|low",
+    "key_concerns": "Key concerns",
+    "recommendation": "Overall recommendation"
+  }}
+}}
+```
+
+【Important Notes】
+- Do NOT output modifications field in this phase, focus on risk analysis
+- The analysis field is the core - please provide in-depth, comprehensive, professional analysis without word limits
+- Risk analysis should help users fully understand risks and provide basis for subsequent discussions
+- Identify all potential risks, better to include more than miss any
+"""
+        else:
+            # Traditional mode: generate both risk analysis and modification suggestions
+            system_prompt = f"""{anti_injection}
 
 You are a senior legal review expert, reviewing a {material_type_text} for "{our_party}" (hereinafter "our party").
 

@@ -3654,16 +3654,27 @@ class UnifiedReviewRequest(BaseModel):
 
 
 class InteractiveItemResponse(BaseModel):
-    """单个交互条目响应"""
+    """单个交互条目响应（基于风险点）"""
     id: str
-    item_id: str
-    item_type: str
+    item_id: str  # risk.id
+    item_type: str = "risk"  # 改为基于 risk
     risk_level: str = "medium"
-    original_text: str
-    current_suggestion: str
+    risk_type: str = ""  # 风险类型
+    description: str = ""  # 风险描述
+    analysis: Optional[str] = None  # 深度分析
+    original_text: str  # 相关原文
+    reason: str = ""  # 判定理由
+    # 修改建议相关（用户确认后才有值）
+    has_modification: bool = False
+    modification_id: Optional[str] = None
+    suggested_text: Optional[str] = None
+    modification_reason: Optional[str] = None
+    # 对话状态
     chat_status: str
     message_count: int
     last_updated: Optional[str] = None
+    # 跳过状态
+    is_skipped: bool = False
 
 
 class InteractiveItemsResponse(BaseModel):
@@ -3762,6 +3773,8 @@ async def run_unified_review(
             task_manager.update_task(task)
 
         # 创建交互审阅引擎并执行统一审阅
+        # 注意：skip_modifications=True 表示初审只生成风险分析，不生成修改建议
+        # 用户需要在交互界面讨论后，点击"确认风险"才会生成修改建议
         engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
         result = await engine.unified_review(
             document=document,
@@ -3772,23 +3785,26 @@ async def run_unified_review(
             review_standards=review_standards,
             business_context=business_context,
             special_requirements=special_requirements,
+            skip_modifications=True,  # 默认跳过修改建议，待用户确认后再生成
             progress_callback=progress_callback,
         )
 
         # 保存结果
         storage_manager.save_result(result)
 
-        # 为所有条目创建对话记录（支持后续对话打磨）
+        # 为所有风险点创建对话记录（改造后基于 risks 而非 modifications）
         interactive_manager = get_interactive_manager()
-        modifications_data = [
+        risks_data = [
             {
-                "id": mod.id,
-                "original_text": mod.original_text,
-                "suggested_text": mod.suggested_text,
-                "modification_reason": mod.modification_reason,
-                "priority": mod.priority,
+                "id": risk.id,
+                "risk_level": risk.risk_level,
+                "risk_type": risk.risk_type,
+                "description": risk.description,
+                "analysis": risk.analysis,
+                "reason": risk.reason,
+                "original_text": risk.location.original_text if risk.location else "",
             }
-            for mod in result.modifications
+            for risk in result.risks
         ]
         actions_data = [
             {
@@ -3801,7 +3817,7 @@ async def run_unified_review(
         ]
         interactive_manager.initialize_chats_for_task(
             task_id=task_id,
-            modifications=modifications_data,
+            risks=risks_data,
             actions=actions_data,
         )
 
@@ -4034,7 +4050,10 @@ async def get_interactive_items(
     task_id: str,
     user_id: str = Depends(get_current_user),
 ):
-    """获取任务的所有交互条目及对话状态"""
+    """获取任务的所有交互条目及对话状态
+
+    改造后：基于 risks（风险点）构建条目，而非 modifications（修改建议）
+    """
     # 验证任务
     task = task_manager.get_task(task_id)
     if not task:
@@ -4050,29 +4069,47 @@ async def get_interactive_items(
     chats = interactive_manager.get_chats_by_task(task_id)
     chat_map = {chat.item_id: chat for chat in chats}
 
-    # 构建响应
+    # 构建 risk_id -> modification 的映射
+    mod_map = {}
+    for mod in result.modifications:
+        if mod.risk_id:
+            mod_map[mod.risk_id] = mod
+
+    # 构建响应（基于风险点）
     items = []
 
-    # 处理修改建议
-    for mod in result.modifications:
-        chat = chat_map.get(mod.id)
-        # 查找关联的风险点获取风险等级
-        risk_level = "medium"
-        for risk in result.risks:
-            if risk.id == mod.risk_id:
-                risk_level = risk.risk_level
-                break
+    for risk in result.risks:
+        chat = chat_map.get(risk.id)
+        modification = mod_map.get(risk.id)
+
+        # 获取原文
+        original_text = ""
+        if risk.location and risk.location.original_text:
+            original_text = risk.location.original_text
+        elif hasattr(risk, 'original_text') and risk.original_text:
+            original_text = risk.original_text
 
         items.append(InteractiveItemResponse(
-            id=chat.id if chat else f"temp_{mod.id}",
-            item_id=mod.id,
-            item_type="modification",
-            risk_level=risk_level,
-            original_text=mod.original_text[:200] + ("..." if len(mod.original_text) > 200 else ""),
-            current_suggestion=chat.current_suggestion if chat else mod.suggested_text,
+            id=chat.id if chat else f"temp_{risk.id}",
+            item_id=risk.id,
+            item_type="risk",
+            risk_level=risk.risk_level,
+            risk_type=risk.risk_type,
+            description=risk.description,
+            analysis=risk.analysis,
+            original_text=original_text,
+            reason=risk.reason,
+            # 修改建议（如果已生成）
+            has_modification=modification is not None,
+            modification_id=modification.id if modification else None,
+            suggested_text=modification.suggested_text if modification else None,
+            modification_reason=modification.modification_reason if modification else None,
+            # 对话状态
             chat_status=chat.status if chat else "pending",
             message_count=len(chat.messages) if chat else 0,
             last_updated=chat.updated_at.isoformat() if chat else None,
+            # 跳过状态（从 chat 元数据获取）
+            is_skipped=getattr(chat, 'is_skipped', False) if chat else False,
         ))
 
     # 获取统计
@@ -4091,7 +4128,10 @@ async def get_interactive_item_detail(
     item_id: str,
     user_id: str = Depends(get_current_user),
 ):
-    """获取单个条目的详细信息和对话历史"""
+    """获取单个条目的详细信息和对话历史
+
+    改造后：item_id 是 risk.id，基于风险点查找
+    """
     # 验证任务
     task = task_manager.get_task(task_id)
     if not task:
@@ -4102,53 +4142,68 @@ async def get_interactive_item_detail(
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
-    # 查找条目
-    modification = None
+    # 查找风险点（item_id 现在是 risk.id）
     risk = None
-    for mod in result.modifications:
-        if mod.id == item_id:
-            modification = mod
-            # 查找关联的风险点
-            for r in result.risks:
-                if r.id == mod.risk_id:
-                    risk = r
-                    break
+    for r in result.risks:
+        if r.id == item_id:
+            risk = r
             break
 
-    if not modification:
+    if not risk:
         raise HTTPException(status_code=404, detail="条目不存在")
+
+    # 查找关联的修改建议（如果有）
+    modification = None
+    for mod in result.modifications:
+        if mod.risk_id == risk.id:
+            modification = mod
+            break
 
     # 获取对话记录
     interactive_manager = get_interactive_manager()
     chat = interactive_manager.get_chat_by_item(task_id, item_id)
 
+    # 获取原文
+    original_text = ""
+    if risk.location and risk.location.original_text:
+        original_text = risk.location.original_text
+
     return {
         "task_id": task_id,
         "item_id": item_id,
-        "item_type": "modification",
-        "original_text": modification.original_text,
-        "current_suggestion": chat.current_suggestion if chat else modification.suggested_text,
-        "modification_reason": modification.modification_reason,
-        "priority": modification.priority,
-        "risk": {
-            "id": risk.id if risk else None,
-            "level": risk.risk_level if risk else "medium",
-            "type": risk.risk_type if risk else "",
-            "description": risk.description if risk else "",
-        } if risk else None,
-        "chat": {
-            "id": chat.id,
-            "status": chat.status,
-            "messages": [
-                {
-                    "role": msg.role,
-                    "content": msg.content,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                    "suggestion_snapshot": msg.suggestion_snapshot,
-                }
-                for msg in chat.messages
-            ],
-        } if chat else None,
+        "item_type": "risk",
+        # 风险信息
+        "risk_level": risk.risk_level,
+        "risk_type": risk.risk_type,
+        "description": risk.description,
+        "analysis": risk.analysis,
+        "reason": risk.reason,
+        "original_text": original_text,
+        # 修改建议（如果已生成）
+        "has_modification": modification is not None,
+        "modification": {
+            "id": modification.id,
+            "suggested_text": modification.suggested_text,
+            "modification_reason": modification.modification_reason,
+            "priority": modification.priority,
+        } if modification else None,
+        "current_suggestion": (
+            chat.current_suggestion if chat
+            else (modification.suggested_text if modification else None)
+        ),
+        # 对话记录
+        "status": chat.status if chat else "pending",
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+                "suggestion_snapshot": msg.suggestion_snapshot,
+            }
+            for msg in (chat.messages if chat else [])
+        ],
+        # 跳过状态
+        "is_skipped": getattr(chat, 'is_skipped', False) if chat else False,
     }
 
 
@@ -4434,6 +4489,42 @@ async def complete_item(
         "item_id": item_id,
         "status": "completed",
         "final_suggestion": final_suggestion,
+    }
+
+
+@app.post("/api/interactive/{task_id}/items/{item_id}/skip")
+async def skip_item(
+    task_id: str,
+    item_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """跳过风险点（用户选择不处理）
+
+    标记该风险点为"跳过"状态，不生成修改建议。
+    """
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取对话记录
+    interactive_manager = get_interactive_manager()
+    chat = interactive_manager.get_chat_by_item(task_id, item_id)
+
+    if not chat:
+        # 如果没有对话记录，尝试创建一个
+        raise HTTPException(status_code=404, detail="对话记录不存在")
+
+    # 标记为跳过状态
+    success = interactive_manager.skip_chat(chat.id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="跳过条目失败")
+
+    return {
+        "item_id": item_id,
+        "status": "skipped",
+        "message": "已跳过该风险点",
     }
 
 

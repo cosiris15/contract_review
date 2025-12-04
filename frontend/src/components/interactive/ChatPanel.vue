@@ -31,45 +31,123 @@
     <!-- 底部输入区 -->
     <div v-if="activeItem" class="input-area">
       <!-- 已完成提示 -->
-      <div v-if="activeItem.status === 'completed'" class="completed-banner">
+      <div v-if="activeItem.chat_status === 'completed'" class="completed-banner">
         <el-icon><CircleCheck /></el-icon>
         <span>此条目已审阅完成</span>
       </div>
 
+      <!-- 已跳过提示 -->
+      <div v-else-if="activeItem.is_skipped || activeItem.chat_status === 'skipped'" class="skipped-banner">
+        <el-icon><Close /></el-icon>
+        <span>此风险点已跳过</span>
+      </div>
+
       <template v-else>
-        <!-- 输入框 -->
-        <div class="input-container">
-          <textarea
-            ref="inputRef"
-            v-model="inputText"
-            class="chat-input"
-            placeholder="输入您的意见或问题..."
-            rows="1"
-            @input="autoResize"
-            @keydown.enter.exact="handleEnter"
-            @keydown.enter.shift.exact="() => {}"
-            :disabled="loading"
-          ></textarea>
-          <button
-            class="send-btn"
-            @click="send"
-            :disabled="!inputText.trim() || loading"
-          >
-            <el-icon v-if="loading" class="is-loading"><Loading /></el-icon>
-            <el-icon v-else><Promotion /></el-icon>
-          </button>
-        </div>
-        <div class="input-footer">
-          <span class="input-hint">Enter 发送 · Shift+Enter 换行</span>
-          <button
-            class="submit-btn"
-            @click="$emit('complete', currentSuggestion)"
-            :disabled="loading"
-          >
-            <el-icon><Check /></el-icon>
-            提交
-          </button>
-        </div>
+        <!-- 阶段1: 分析讨论阶段（未生成修改建议时） -->
+        <template v-if="!activeItem.has_modification">
+          <!-- 输入框 -->
+          <div class="input-container">
+            <textarea
+              ref="inputRef"
+              v-model="inputText"
+              class="chat-input"
+              placeholder="与AI讨论这个风险点..."
+              rows="1"
+              @input="autoResize"
+              @keydown.enter.exact="handleEnter"
+              @keydown.enter.shift.exact="() => {}"
+              :disabled="loading"
+            ></textarea>
+            <button
+              class="send-btn"
+              @click="send"
+              :disabled="!inputText.trim() || loading"
+            >
+              <el-icon v-if="loading" class="is-loading"><Loading /></el-icon>
+              <el-icon v-else><Promotion /></el-icon>
+            </button>
+          </div>
+          <div class="input-footer">
+            <span class="phase-hint">讨论阶段 - 确认风险后生成修改建议</span>
+            <div class="action-buttons">
+              <button
+                class="skip-btn"
+                @click="$emit('skip')"
+                :disabled="loading"
+              >
+                跳过
+              </button>
+              <button
+                class="confirm-btn"
+                @click="$emit('confirm-risk')"
+                :disabled="loading"
+              >
+                <el-icon v-if="confirmingRisk" class="is-loading"><Loading /></el-icon>
+                <el-icon v-else><Check /></el-icon>
+                确认风险
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- 阶段2: 修改确认阶段（已生成修改建议） -->
+        <template v-else>
+          <!-- 可编辑的修改建议 -->
+          <div class="modification-editor">
+            <div class="editor-label">
+              <span>修改建议（可编辑）</span>
+              <el-tag size="small" type="success">已生成</el-tag>
+            </div>
+            <textarea
+              v-model="editableSuggestion"
+              class="suggestion-textarea"
+              rows="4"
+              :disabled="loading"
+            ></textarea>
+          </div>
+          <!-- 仍可继续对话 -->
+          <div class="input-container secondary">
+            <textarea
+              ref="inputRef"
+              v-model="inputText"
+              class="chat-input"
+              placeholder="如有问题，可继续讨论..."
+              rows="1"
+              @input="autoResize"
+              @keydown.enter.exact="handleEnter"
+              @keydown.enter.shift.exact="() => {}"
+              :disabled="loading"
+            ></textarea>
+            <button
+              class="send-btn"
+              @click="send"
+              :disabled="!inputText.trim() || loading"
+            >
+              <el-icon v-if="loading" class="is-loading"><Loading /></el-icon>
+              <el-icon v-else><Promotion /></el-icon>
+            </button>
+          </div>
+          <div class="input-footer">
+            <span class="phase-hint">修改阶段 - 确认建议后提交</span>
+            <div class="action-buttons">
+              <button
+                class="skip-btn"
+                @click="$emit('skip')"
+                :disabled="loading"
+              >
+                跳过
+              </button>
+              <button
+                class="submit-btn"
+                @click="$emit('complete', editableSuggestion)"
+                :disabled="loading"
+              >
+                <el-icon><Check /></el-icon>
+                提交修改
+              </button>
+            </div>
+          </div>
+        </template>
       </template>
     </div>
   </div>
@@ -77,7 +155,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { ChatDotRound, CircleCheck, Loading, Promotion, Check } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheck, Close, Loading, Promotion, Check } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 
 const props = defineProps({
@@ -104,31 +182,89 @@ const props = defineProps({
   streaming: {
     type: Boolean,
     default: false
+  },
+  confirmingRisk: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate'])
+const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate', 'confirm-risk', 'skip'])
 
 const inputText = ref('')
 const chatHistoryRef = ref(null)
 const inputRef = ref(null)
+const editableSuggestion = ref('')
 
-// 构造 AI 的第一条消息（条目上下文）
+// 监听 currentSuggestion 变化，同步到可编辑文本框
+watch(() => props.currentSuggestion, (newVal) => {
+  editableSuggestion.value = newVal
+}, { immediate: true })
+
+// 监听 activeItem 变化，重置可编辑文本框
+watch(() => props.activeItem?.id, () => {
+  if (props.activeItem?.suggested_text) {
+    editableSuggestion.value = props.activeItem.suggested_text
+  } else if (props.currentSuggestion) {
+    editableSuggestion.value = props.currentSuggestion
+  } else {
+    editableSuggestion.value = ''
+  }
+})
+
+// 构造 AI 的第一条消息（条目上下文）- 根据阶段显示不同内容
 const contextMessage = computed(() => {
   if (!props.activeItem) return null
 
-  let content = `**原文**\n${props.activeItem.original_text}\n\n**建议修改**\n${props.currentSuggestion}`
+  // 阶段1: 风险分析（未生成修改建议时）
+  if (!props.activeItem.has_modification) {
+    let content = `**风险类型**：${props.activeItem.risk_type || '未分类'}\n`
+    content += `**风险等级**：${translateRiskLevel(props.activeItem.risk_level)}\n\n`
+    content += `**相关原文**\n${props.activeItem.original_text}\n\n`
 
-  if (props.activeItem.risk_description || props.activeItem.modification_reason) {
-    content += `\n\n**风险说明**\n${props.activeItem.risk_description || props.activeItem.modification_reason}`
+    // 显示深度分析或描述
+    if (props.activeItem.analysis) {
+      content += `**风险分析**\n${props.activeItem.analysis}\n\n`
+    } else if (props.activeItem.description) {
+      content += `**风险描述**\n${props.activeItem.description}\n\n`
+    }
+
+    if (props.activeItem.reason) {
+      content += `**判定理由**\n${props.activeItem.reason}`
+    }
+
+    return {
+      role: 'assistant',
+      content,
+      isContext: true,
+      phase: 'analysis'
+    }
+  }
+
+  // 阶段2: 已生成修改建议
+  let content = `**原文**\n${props.activeItem.original_text}\n\n`
+  content += `**修改建议**\n${props.activeItem.suggested_text || props.currentSuggestion}\n\n`
+  if (props.activeItem.modification_reason) {
+    content += `**修改理由**\n${props.activeItem.modification_reason}`
   }
 
   return {
     role: 'assistant',
     content,
-    isContext: true  // 标记为上下文消息，用于显示定位按钮
+    isContext: true,
+    phase: 'modification'
   }
 })
+
+// 翻译风险等级
+function translateRiskLevel(level) {
+  const mapping = {
+    'high': '高风险',
+    'medium': '中风险',
+    'low': '低风险'
+  }
+  return mapping[level] || level || '未知'
+}
 
 // 自动调整输入框高度
 function autoResize() {
@@ -245,6 +381,19 @@ function send() {
   font-size: 14px;
 }
 
+/* 已跳过横幅 */
+.skipped-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  color: #999;
+  font-size: 14px;
+}
+
 /* 输入框容器 */
 .input-container {
   display: flex;
@@ -255,6 +404,11 @@ function send() {
   border: 1px solid transparent;
   border-radius: 12px;
   transition: all 0.2s;
+}
+
+.input-container.secondary {
+  margin-top: 12px;
+  background: #fafafa;
 }
 
 .input-container:focus-within {
@@ -308,6 +462,44 @@ function send() {
   cursor: not-allowed;
 }
 
+/* 修改建议编辑器 */
+.modification-editor {
+  margin-bottom: 12px;
+}
+
+.editor-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #666;
+}
+
+.suggestion-textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.suggestion-textarea:focus {
+  outline: none;
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+.suggestion-textarea:disabled {
+  background: #f5f5f5;
+  opacity: 0.7;
+}
+
 /* 输入框底部 */
 .input-footer {
   display: flex;
@@ -316,9 +508,64 @@ function send() {
   margin-top: 10px;
 }
 
-.input-hint {
+.phase-hint {
   font-size: 12px;
-  color: #bbb;
+  color: #999;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* 跳过按钮 */
+.skip-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.skip-btn:hover:not(:disabled) {
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+.skip-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 确认风险按钮 */
+.confirm-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #1890ff;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.confirm-btn:hover:not(:disabled) {
+  background: #40a9ff;
+}
+
+.confirm-btn:disabled {
+  background: #d9d9d9;
+  cursor: not-allowed;
 }
 
 /* 提交按钮 */
@@ -350,6 +597,17 @@ function send() {
 @media (max-width: 480px) {
   .chat-history {
     padding: 16px;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .skip-btn,
+  .confirm-btn,
+  .submit-btn {
+    justify-content: center;
   }
 }
 </style>

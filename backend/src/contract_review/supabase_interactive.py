@@ -303,6 +303,33 @@ class SupabaseInteractiveManager:
             logger.error(f"完成对话失败: {e}")
             return False
 
+    def skip_chat(self, chat_id: str) -> bool:
+        """
+        标记对话为跳过状态
+
+        用户可以选择跳过某个风险点，不生成修改建议直接进入下一条。
+
+        Args:
+            chat_id: 对话记录 ID
+
+        Returns:
+            是否成功
+        """
+        try:
+            result = (
+                self.client.table(self.table_name)
+                .update({"status": "skipped"})
+                .eq("id", chat_id)
+                .execute()
+            )
+            if result.data:
+                logger.info(f"标记对话为跳过状态成功: chat_id={chat_id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"标记对话为跳过状态失败: {e}")
+            return False
+
     def _update_chat(self, chat: InteractiveChat) -> Optional[InteractiveChat]:
         """更新对话记录"""
         row = self._chat_to_row(chat)
@@ -329,15 +356,20 @@ class SupabaseInteractiveManager:
     def initialize_chats_for_task(
         self,
         task_id: str,
-        modifications: List[Dict[str, Any]],
+        risks: List[Dict[str, Any]] = None,
+        modifications: List[Dict[str, Any]] = None,
         actions: List[Dict[str, Any]] = None,
     ) -> int:
         """
         为任务的所有条目批量创建对话记录
 
+        改造后：支持基于风险点 (risks) 或修改建议 (modifications) 初始化。
+        优先使用 risks，如果没有则使用 modifications（向后兼容）。
+
         Args:
             task_id: 任务 ID
-            modifications: 修改建议列表
+            risks: 风险点列表（新模式）
+            modifications: 修改建议列表（旧模式，向后兼容）
             actions: 行动建议列表（可选）
 
         Returns:
@@ -345,24 +377,44 @@ class SupabaseInteractiveManager:
         """
         rows = []
 
-        # 为每个修改建议创建对话记录
-        for mod in modifications:
-            chat = InteractiveChat(
-                id=generate_id(),
-                task_id=task_id,
-                item_id=mod.get("id", ""),
-                item_type="modification",
-                current_suggestion=mod.get("suggested_text", ""),
-                status="pending",
-            )
-            # 添加初始 AI 消息
-            initial_content = self._build_initial_message(mod, "modification")
-            chat.messages.append(ChatMessage(
-                role="assistant",
-                content=initial_content,
-                suggestion_snapshot=mod.get("suggested_text", ""),
-            ))
-            rows.append(self._chat_to_row(chat))
+        # 新模式：基于风险点创建对话记录
+        if risks:
+            for risk in risks:
+                chat = InteractiveChat(
+                    id=generate_id(),
+                    task_id=task_id,
+                    item_id=risk.get("id", ""),
+                    item_type="risk",
+                    current_suggestion=None,  # 风险阶段没有修改建议
+                    status="pending",
+                )
+                # 添加初始 AI 消息（风险分析）
+                initial_content = self._build_initial_message(risk, "risk")
+                chat.messages.append(ChatMessage(
+                    role="assistant",
+                    content=initial_content,
+                    suggestion_snapshot=None,
+                ))
+                rows.append(self._chat_to_row(chat))
+
+        # 旧模式（向后兼容）：基于修改建议创建对话记录
+        elif modifications:
+            for mod in modifications:
+                chat = InteractiveChat(
+                    id=generate_id(),
+                    task_id=task_id,
+                    item_id=mod.get("id", ""),
+                    item_type="modification",
+                    current_suggestion=mod.get("suggested_text", ""),
+                    status="pending",
+                )
+                initial_content = self._build_initial_message(mod, "modification")
+                chat.messages.append(ChatMessage(
+                    role="assistant",
+                    content=initial_content,
+                    suggestion_snapshot=mod.get("suggested_text", ""),
+                ))
+                rows.append(self._chat_to_row(chat))
 
         # 为每个行动建议创建对话记录（可选）
         if actions:
@@ -397,7 +449,38 @@ class SupabaseInteractiveManager:
 
     def _build_initial_message(self, item: Dict[str, Any], item_type: str) -> str:
         """构建初始 AI 消息"""
-        if item_type == "modification":
+        if item_type == "risk":
+            # 新模式：基于风险点的初始消息
+            risk_level = item.get("risk_level", "medium")
+            risk_type = item.get("risk_type", "")
+            description = item.get("description", "")
+            analysis = item.get("analysis", "")
+            reason = item.get("reason", "")
+            original_text = item.get("original_text", "")[:200]
+
+            return f"""根据初步审阅，发现以下风险点：
+
+**风险类型**：{risk_type}
+**风险等级**：{self._translate_risk_level(risk_level)}
+
+**相关原文**：
+{original_text}{"..." if len(item.get("original_text", "")) > 200 else ""}
+
+**风险描述**：
+{description}
+
+**判定理由**：
+{reason}
+
+**深度分析**：
+{analysis if analysis else "暂无深度分析"}
+
+请您仔细查看这个风险点。您可以：
+- 提问以了解更多细节
+- 讨论这个风险是否需要处理
+- 确认后我会为您生成修改建议
+"""
+        elif item_type == "modification":
             risk_level = item.get("priority", "should")
             original_text = item.get("original_text", "")[:100]
             suggested_text = item.get("suggested_text", "")
@@ -446,6 +529,15 @@ class SupabaseInteractiveManager:
         }
         return mapping.get(priority, priority)
 
+    def _translate_risk_level(self, risk_level: str) -> str:
+        """翻译风险等级"""
+        mapping = {
+            "high": "高风险",
+            "medium": "中风险",
+            "low": "低风险",
+        }
+        return mapping.get(risk_level, risk_level)
+
     def _translate_urgency(self, urgency: str) -> str:
         """翻译紧急程度"""
         mapping = {
@@ -463,12 +555,15 @@ class SupabaseInteractiveManager:
             "completed": 0,
             "in_progress": 0,
             "pending": 0,
+            "skipped": 0,
         }
         for chat in chats:
             if chat.status == "completed":
                 summary["completed"] += 1
             elif chat.status == "in_progress":
                 summary["in_progress"] += 1
+            elif chat.status == "skipped":
+                summary["skipped"] += 1
             else:
                 summary["pending"] += 1
         return summary
