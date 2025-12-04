@@ -34,10 +34,19 @@ export default defineConfig({
     assetsDir: 'assets',
     rollupOptions: {
       output: {
-        manualChunks: {
-          'element-plus': ['element-plus'],
-          'vendor': ['vue', 'vue-router', 'pinia', 'axios'],
-          'clerk': ['@clerk/vue', '@clerk/localizations']
+        manualChunks(id) {
+          // Clerk 单独打包
+          if (id.includes('@clerk')) {
+            return 'clerk'
+          }
+          // Element Plus 和 Vue 放在一起避免循环依赖
+          if (id.includes('element-plus') || id.includes('@vue') || id.includes('vue')) {
+            return 'ui-vendor'
+          }
+          // 其他 node_modules
+          if (id.includes('node_modules')) {
+            return 'vendor'
+          }
         }
       }
     }
