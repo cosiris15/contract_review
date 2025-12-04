@@ -97,7 +97,8 @@ const documentLoading = ref(false)
 const chatLoading = ref(false)
 const task = ref(null)
 const items = ref([])
-const activeItemId = ref(null)
+const activeItemId = ref(null)  // 用于 UI 选中状态 (item.id)
+const activeItemApiId = ref(null)  // 用于 API 调用 (item.item_id)
 const activeMessages = ref([])
 const currentSuggestion = ref('')
 const documentParagraphs = ref([])
@@ -177,12 +178,13 @@ async function selectItem(item) {
   if (activeItemId.value === item.id) return
 
   activeItemId.value = item.id
+  activeItemApiId.value = item.item_id  // 保存 API 调用需要的 item_id
   activeMessages.value = []
   currentSuggestion.value = item.current_suggestion || item.suggested_text || ''
 
   // 加载条目详情（含对话历史）
   try {
-    const response = await interactiveApi.getItemDetail(taskId.value, item.id)
+    const response = await interactiveApi.getItemDetail(taskId.value, item.item_id)
     const detail = response.data
 
     activeMessages.value = detail.messages || []
@@ -210,7 +212,7 @@ function scrollToHighlight() {
 
 // 发送消息（流式输出）
 async function sendMessage(message) {
-  if (!activeItemId.value || chatLoading.value) return
+  if (!activeItemApiId.value || chatLoading.value) return
 
   // 添加用户消息到界面
   activeMessages.value.push({
@@ -235,7 +237,7 @@ async function sendMessage(message) {
   try {
     await interactiveApi.sendChatMessageStream(
       taskId.value,
-      activeItemId.value,
+      activeItemApiId.value,
       message,
       'deepseek',
       {
@@ -285,10 +287,10 @@ async function sendMessage(message) {
 
 // 完成当前条目
 async function completeCurrentItem(finalSuggestion) {
-  if (!activeItemId.value) return
+  if (!activeItemApiId.value) return
 
   try {
-    await interactiveApi.completeItem(taskId.value, activeItemId.value, finalSuggestion)
+    await interactiveApi.completeItem(taskId.value, activeItemApiId.value, finalSuggestion)
 
     // 更新本地状态
     const localItem = items.value.find(i => i.id === activeItemId.value)
