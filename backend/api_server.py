@@ -4812,11 +4812,14 @@ async def chat_with_item_stream(
 
                 # 同步更新 review_results 中的建议
                 if updated_suggestion:
+                    found = False
                     for mod in result.modifications:
-                        if mod.id == item_id:
+                        if mod.id == item_id or mod.risk_id == item_id:
                             mod.suggested_text = updated_suggestion
+                            found = True
                             break
-                    storage_manager.save_result(result)
+                    if found:
+                        storage_manager.save_result(result)
 
         except Exception as e:
             logger.error(f"流式对话失败: {e}")
@@ -4863,11 +4866,38 @@ async def complete_item(
     # 同步更新 review_results
     result = storage_manager.load_result(task_id)
     if result:
+        found = False
+        # 支持 risk_id 或 modification_id
         for mod in result.modifications:
-            if mod.id == item_id:
+            if mod.id == item_id or mod.risk_id == item_id:
                 mod.suggested_text = final_suggestion
                 mod.user_confirmed = True
+                found = True
                 break
+
+        # 如果没有找到对应的 modification，可能需要创建一个新的
+        if not found and item_id.startswith("risk_"):
+            # 查找对应的风险点
+            risk = next((r for r in result.risks if r.id == item_id), None)
+            if risk:
+                # 获取原文
+                original_text = ""
+                if risk.location and risk.location.original_text:
+                    original_text = risk.location.original_text
+                elif hasattr(risk, 'original_text') and risk.original_text:
+                    original_text = risk.original_text
+
+                # 创建新的修改建议
+                from src.contract_review.models import ModificationSuggestion
+                new_mod = ModificationSuggestion(
+                    risk_id=item_id,
+                    original_text=original_text,
+                    suggested_text=final_suggestion,
+                    modification_reason=risk.description,
+                    user_confirmed=True,
+                )
+                result.modifications.append(new_mod)
+
         storage_manager.save_result(result)
 
     return {
