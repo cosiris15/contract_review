@@ -1045,6 +1045,7 @@ class PreprocessResponse(BaseModel):
     suggested_name: str
     language: str
     document_type: str = ""
+    document_preview: str = ""  # 文档开头内容预览，方便用户判断身份
 
 
 @app.post("/api/tasks/{task_id}/preprocess", response_model=PreprocessResponse)
@@ -1066,7 +1067,8 @@ async def preprocess_document(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 验证用户权限
-    if task.user_id != user_id:
+    task_owner = task_manager.get_task_user_id(task_id)
+    if task_owner != user_id:
         raise HTTPException(status_code=403, detail="无权访问此任务")
 
     # 检查是否有文档
@@ -1090,11 +1092,17 @@ async def preprocess_document(
         preprocessor = DocumentPreprocessor(settings)
         result = await preprocessor.preprocess(document.text)
 
+        # 提取文档开头内容作为预览（前1500字符）
+        document_preview = document.text[:1500].strip()
+        if len(document.text) > 1500:
+            document_preview += "\n\n..."
+
         return PreprocessResponse(
             parties=[PartyInfo(**p) for p in result.get("parties", [])],
             suggested_name=result.get("suggested_name", "未命名文档"),
             language=result.get("language", "zh-CN"),
             document_type=result.get("document_type", ""),
+            document_preview=document_preview,
         )
     except Exception as e:
         logger.error(f"文档预处理失败: {e}")

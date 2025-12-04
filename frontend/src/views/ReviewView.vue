@@ -124,131 +124,158 @@
 
           <el-divider />
 
-          <!-- 步骤 3: 任务要求配置（可选） -->
-          <div class="task-requirements-section">
-            <h4>
-              <el-icon><List /></el-icon>
-              任务要求
-            </h4>
-
-            <!-- 审阅标准与业务条线选择入口 -->
-            <div class="requirement-selection-entry">
-              <el-button type="primary" @click="openStandardSelector">
-                <el-icon><Collection /></el-icon>
-                审阅标准
-                <el-tag v-if="selectedStandards.length" size="small" type="success" class="btn-tag">
-                  {{ selectedStandards.length }}
-                </el-tag>
-              </el-button>
-              <el-button @click="openBusinessSelector">
-                <el-icon><Briefcase /></el-icon>
-                业务条线
-                <el-tag v-if="selectedBusinessLineId" size="small" type="success" class="btn-tag">
-                  1
-                </el-tag>
-              </el-button>
-            </div>
-
-            <!-- 隐藏的上传组件 -->
-            <el-upload
-              ref="standardUploadRef"
-              :auto-upload="false"
-              :show-file-list="false"
-              :on-change="handleStandardUpload"
-              accept=".xlsx,.xls,.csv,.docx,.md,.txt"
-              style="display: none;"
-            />
-
-            <!-- 已选标准显示 -->
-            <div v-if="selectedStandards.length > 0" class="selected-standards-section">
-              <div class="selected-header">
-                <span class="selected-label">已选标准</span>
-                <el-tag type="success" size="small">{{ selectedStandards.length }} 条</el-tag>
-                <el-button text type="primary" size="small" @click="showStandardPreview = true">
-                  查看详情
-                </el-button>
+          <!-- 高级选项（默认折叠） -->
+          <div class="advanced-options-section">
+            <div
+              class="advanced-options-header"
+              :class="{ expanded: showAdvancedOptions, 'has-selection': hasAdvancedSelection }"
+              @click="showAdvancedOptions = !showAdvancedOptions"
+            >
+              <div class="header-left">
+                <el-icon><Setting /></el-icon>
+                <span class="header-title">高级选项</span>
+                <span class="header-subtitle">审阅标准、业务条线、特殊要求</span>
               </div>
-              <div class="selected-tags">
-                <el-tag
-                  v-for="s in selectedStandards.slice(0, 6)"
-                  :key="s.id || s.item"
-                  size="small"
-                  style="margin: 2px"
-                >
-                  {{ s.item }}
-                </el-tag>
-                <span v-if="selectedStandards.length > 6" class="more-count">
-                  +{{ selectedStandards.length - 6 }} 条
-                </span>
-              </div>
-            </div>
-
-            <!-- 特殊要求输入（可选但优先级最高） -->
-            <div class="special-requirements" :class="{ 'has-content': specialRequirements.trim() }">
-              <div class="special-header" @click="showSpecialInput = !showSpecialInput">
-                <el-icon><Edit /></el-icon>
-                <span class="special-title">本次特殊要求</span>
-                <span class="special-priority-hint">优先级最高</span>
-                <el-icon class="expand-icon" :class="{ expanded: showSpecialInput }">
+              <div class="header-right">
+                <template v-if="hasAdvancedSelection">
+                  <el-tag v-if="selectedStandards.length" size="small" type="success">
+                    {{ selectedStandards.length }} 条标准
+                  </el-tag>
+                  <el-tag v-if="selectedBusinessLineId" size="small" type="info">
+                    业务条线
+                  </el-tag>
+                  <el-tag v-if="specialRequirements.trim()" size="small" type="warning">
+                    特殊要求
+                  </el-tag>
+                </template>
+                <el-icon class="expand-icon" :class="{ expanded: showAdvancedOptions }">
                   <ArrowDown />
                 </el-icon>
               </div>
-              <el-collapse-transition>
-                <div v-show="showSpecialInput" class="special-content">
-                  <p class="special-desc">
-                    输入本次项目的特殊审核要求。当与审阅标准或业务背景冲突时，以此处要求为准。
-                  </p>
-                  <el-input
-                    v-model="specialRequirements"
-                    type="textarea"
-                    :rows="5"
-                    :autosize="{ minRows: 5, maxRows: 10 }"
-                    placeholder="例如：&#10;&#10;• 本项目为政府采购，需特别关注合规要求&#10;&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;&#10;• 涉及数据跨境，需审核数据安全条款"
-                  />
-                  <div v-if="specialRequirements.trim()" class="special-mode-selection">
-                    <span class="mode-label">处理方式：</span>
-                    <el-radio-group v-model="specialReqMode" size="small">
-                      <el-radio value="direct">
-                        <span class="mode-option">
-                          <span class="mode-name">直接应用</span>
-                          <span class="mode-desc">审阅时自动参考，无需等待</span>
-                        </span>
-                      </el-radio>
-                      <el-radio value="merge">
-                        <span class="mode-option">
-                          <span class="mode-name">修改标准</span>
-                          <span class="mode-desc">先调整审核标准，可预览效果</span>
-                        </span>
-                      </el-radio>
-                    </el-radio-group>
-                  </div>
-                  <div v-if="specialRequirements.trim() && specialReqMode === 'merge'" class="special-footer">
-                    <el-button
-                      type="primary"
-                      size="default"
-                      :loading="merging"
-                      :disabled="!specialRequirements.trim() || !selectedStandards.length"
-                      @click="mergeSpecialRequirements"
-                    >
-                      <el-icon><MagicStick /></el-icon>
-                      开始修改标准
-                    </el-button>
-                    <span class="special-tip">AI 将根据特殊要求调整审核标准（约30-60秒）</span>
-                  </div>
-                  <div v-if="specialRequirements.trim() && specialReqMode === 'direct'" class="special-footer direct-mode">
-                    <el-icon color="#67c23a"><CircleCheck /></el-icon>
-                    <span class="direct-hint">开始审阅后，特殊要求将自动生效</span>
-                  </div>
-                </div>
-              </el-collapse-transition>
             </div>
 
-            <!-- 当前应用的标准状态 -->
-            <div v-if="currentTask?.standard_filename" class="applied-standard">
-              <el-icon color="#67c23a"><CircleCheck /></el-icon>
-              <span>已应用: {{ currentTask.standard_filename }}</span>
-              <el-button text type="primary" size="small" @click="reselect">重新选择</el-button>
-            </div>
+            <el-collapse-transition>
+              <div v-show="showAdvancedOptions" class="advanced-options-content">
+                <!-- 审阅标准与业务条线选择入口 -->
+                <div class="requirement-selection-entry">
+                  <el-button type="primary" @click="openStandardSelector">
+                    <el-icon><Collection /></el-icon>
+                    审阅标准
+                    <el-tag v-if="selectedStandards.length" size="small" type="success" class="btn-tag">
+                      {{ selectedStandards.length }}
+                    </el-tag>
+                  </el-button>
+                  <el-button @click="openBusinessSelector">
+                    <el-icon><Briefcase /></el-icon>
+                    业务条线
+                    <el-tag v-if="selectedBusinessLineId" size="small" type="success" class="btn-tag">
+                      1
+                    </el-tag>
+                  </el-button>
+                </div>
+
+                <!-- 隐藏的上传组件 -->
+                <el-upload
+                  ref="standardUploadRef"
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  :on-change="handleStandardUpload"
+                  accept=".xlsx,.xls,.csv,.docx,.md,.txt"
+                  style="display: none;"
+                />
+
+                <!-- 已选标准显示 -->
+                <div v-if="selectedStandards.length > 0" class="selected-standards-section">
+                  <div class="selected-header">
+                    <span class="selected-label">已选标准</span>
+                    <el-tag type="success" size="small">{{ selectedStandards.length }} 条</el-tag>
+                    <el-button text type="primary" size="small" @click="showStandardPreview = true">
+                      查看详情
+                    </el-button>
+                  </div>
+                  <div class="selected-tags">
+                    <el-tag
+                      v-for="s in selectedStandards.slice(0, 6)"
+                      :key="s.id || s.item"
+                      size="small"
+                      style="margin: 2px"
+                    >
+                      {{ s.item }}
+                    </el-tag>
+                    <span v-if="selectedStandards.length > 6" class="more-count">
+                      +{{ selectedStandards.length - 6 }} 条
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 特殊要求输入 -->
+                <div class="special-requirements" :class="{ 'has-content': specialRequirements.trim() }">
+                  <div class="special-header" @click="showSpecialInput = !showSpecialInput">
+                    <el-icon><Edit /></el-icon>
+                    <span class="special-title">本次特殊要求</span>
+                    <span class="special-priority-hint">优先级最高</span>
+                    <el-icon class="expand-icon" :class="{ expanded: showSpecialInput }">
+                      <ArrowDown />
+                    </el-icon>
+                  </div>
+                  <el-collapse-transition>
+                    <div v-show="showSpecialInput" class="special-content">
+                      <p class="special-desc">
+                        输入本次项目的特殊审核要求。当与审阅标准或业务背景冲突时，以此处要求为准。
+                      </p>
+                      <el-input
+                        v-model="specialRequirements"
+                        type="textarea"
+                        :rows="5"
+                        :autosize="{ minRows: 5, maxRows: 10 }"
+                        placeholder="例如：&#10;&#10;• 本项目为政府采购，需特别关注合规要求&#10;&#10;• 我方为乙方，重点关注付款条款和违约责任&#10;&#10;• 涉及数据跨境，需审核数据安全条款"
+                      />
+                      <div v-if="specialRequirements.trim()" class="special-mode-selection">
+                        <span class="mode-label">处理方式：</span>
+                        <el-radio-group v-model="specialReqMode" size="small">
+                          <el-radio value="direct">
+                            <span class="mode-option">
+                              <span class="mode-name">直接应用</span>
+                              <span class="mode-desc">审阅时自动参考，无需等待</span>
+                            </span>
+                          </el-radio>
+                          <el-radio value="merge">
+                            <span class="mode-option">
+                              <span class="mode-name">修改标准</span>
+                              <span class="mode-desc">先调整审核标准，可预览效果</span>
+                            </span>
+                          </el-radio>
+                        </el-radio-group>
+                      </div>
+                      <div v-if="specialRequirements.trim() && specialReqMode === 'merge'" class="special-footer">
+                        <el-button
+                          type="primary"
+                          size="default"
+                          :loading="merging"
+                          :disabled="!specialRequirements.trim() || !selectedStandards.length"
+                          @click="mergeSpecialRequirements"
+                        >
+                          <el-icon><MagicStick /></el-icon>
+                          开始修改标准
+                        </el-button>
+                        <span class="special-tip">AI 将根据特殊要求调整审核标准（约30-60秒）</span>
+                      </div>
+                      <div v-if="specialRequirements.trim() && specialReqMode === 'direct'" class="special-footer direct-mode">
+                        <el-icon color="#67c23a"><CircleCheck /></el-icon>
+                        <span class="direct-hint">开始审阅后，特殊要求将自动生效</span>
+                      </div>
+                    </div>
+                  </el-collapse-transition>
+                </div>
+
+                <!-- 当前应用的标准状态 -->
+                <div v-if="currentTask?.standard_filename" class="applied-standard">
+                  <el-icon color="#67c23a"><CircleCheck /></el-icon>
+                  <span>已应用: {{ currentTask.standard_filename }}</span>
+                  <el-button text type="primary" size="small" @click="reselect">重新选择</el-button>
+                </div>
+              </div>
+            </el-collapse-transition>
           </div>
 
           <!-- 标准推荐对话框 -->
@@ -631,10 +658,11 @@
             </template>
           </el-button>
 
-          <!-- 标准提示 -->
-          <div class="standard-hint" v-if="!selectedStandards.length && !store.isReviewing">
+          <!-- 模式提示 -->
+          <div class="mode-hint" v-if="!store.isReviewing">
             <el-icon><InfoFilled /></el-icon>
-            <span>未选择审核标准，将使用 AI 自主审阅模式</span>
+            <span v-if="selectedStandards.length">将基于已选标准进行审阅</span>
+            <span v-else>默认使用 AI 智能审阅，无需选择标准</span>
           </div>
         </el-card>
       </el-col>
@@ -717,6 +745,7 @@
     <PartySelectDialog
       v-model="showPartySelectDialog"
       :parties="recognizedParties"
+      :document-preview="documentPreview"
       @confirm="handlePartySelected"
       @cancel="handlePartySelectCancel"
     />
@@ -728,7 +757,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
 import { ElMessage } from 'element-plus'
-import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus, Warning } from '@element-plus/icons-vue'
+import { Loading, Search, Folder, CircleCheck, InfoFilled, Briefcase, Plus, Warning, Setting } from '@element-plus/icons-vue'
 import api from '@/api'
 import interactiveApi from '@/api/interactive'
 import PartySelectDialog from '@/components/common/PartySelectDialog.vue'
@@ -756,6 +785,7 @@ const detectedConfidence = ref(0)
 const preprocessing = ref(false)
 const showPartySelectDialog = ref(false)
 const recognizedParties = ref([])
+const documentPreview = ref('')  // 文档开头预览内容
 const preprocessResult = ref(null)
 const pendingFile = ref(null) // 暂存待上传的文件
 
@@ -774,6 +804,14 @@ const showLibrarySelector = ref(false)
 const collectionSearch = ref('')
 const applyingStandards = ref(false)
 const showStandardPreview = ref(false)
+
+// 高级选项（默认折叠）
+const showAdvancedOptions = ref(false)
+const hasAdvancedSelection = computed(() => {
+  return selectedStandards.value.length > 0 ||
+    selectedBusinessLineId.value ||
+    specialRequirements.value.trim()
+})
 
 // 特殊要求相关状态
 const showSpecialInput = ref(false)
@@ -945,21 +983,18 @@ async function preprocessDocument() {
     const response = await api.preprocessDocument(taskId.value)
     preprocessResult.value = response.data
 
-    // 保存识别到的各方
+    // 保存识别到的各方和文档预览
     recognizedParties.value = response.data.parties || []
+    documentPreview.value = response.data.document_preview || ''
 
-    // 如果识别到了各方，弹出选择对话框
-    if (recognizedParties.value.length > 0) {
-      showPartySelectDialog.value = true
-    } else {
-      // 没有识别到各方，使用默认值并提示用户手动输入
-      ElMessage.warning('未能识别合同各方，请手动选择您的身份')
-      showPartySelectDialog.value = true
-    }
+    // 弹出选择对话框（无论是否识别到各方）
+    showPartySelectDialog.value = true
   } catch (error) {
     console.error('预处理失败:', error)
     ElMessage.warning('文档分析失败，请手动输入信息')
     // 即使预处理失败，也允许用户继续
+    recognizedParties.value = []
+    documentPreview.value = ''
     showPartySelectDialog.value = true
   } finally {
     preprocessing.value = false
@@ -1857,21 +1892,22 @@ async function applyStandards() {
   margin-top: var(--spacing-4);
 }
 
-/* AI 自主审阅提示 */
-.standard-hint {
+/* 模式提示 */
+.mode-hint {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--spacing-2);
   margin-top: var(--spacing-3);
   padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-info-bg, #f4f4f5);
+  background: var(--color-success-bg, #f0f9eb);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--color-success, #67c23a);
 }
 
-.standard-hint .el-icon {
-  color: var(--color-info, #909399);
+.mode-hint .el-icon {
+  color: var(--color-success, #67c23a);
 }
 
 .waiting-state {
@@ -2769,5 +2805,82 @@ async function applyStandards() {
 .change-reason .el-icon {
   margin-top: 2px;
   flex-shrink: 0;
+}
+
+/* 高级选项区域 */
+.advanced-options-section {
+  margin-top: var(--spacing-2);
+}
+
+.advanced-options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-3) var(--spacing-4);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.advanced-options-header:hover {
+  border-color: var(--color-primary-lighter);
+  background: var(--color-bg-hover);
+}
+
+.advanced-options-header.expanded {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+
+.advanced-options-header.has-selection {
+  border-color: var(--color-primary-lighter);
+  background: var(--color-primary-bg);
+}
+
+.advanced-options-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.advanced-options-header .header-left .el-icon {
+  color: var(--color-text-secondary);
+}
+
+.advanced-options-header .header-title {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.advanced-options-header .header-subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-left: var(--spacing-1);
+}
+
+.advanced-options-header .header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.advanced-options-header .expand-icon {
+  transition: transform 0.2s;
+  color: var(--color-text-tertiary);
+}
+
+.advanced-options-header .expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.advanced-options-content {
+  padding: var(--spacing-4);
+  border: 1px solid var(--color-border-light);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--color-bg);
 }
 </style>
