@@ -4110,7 +4110,7 @@ async def stream_review_generator(
 
                     initial_result = ReviewResult(
                         task_id=task_id,
-                        document_name=document.filename,
+                        document_name=document.path.name,
                         document_path=str(doc_path),
                         material_type=task.material_type,
                         our_party=task.our_party,
