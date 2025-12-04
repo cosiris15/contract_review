@@ -14,7 +14,7 @@
     </div>
     <div class="message-content">
       <div class="message-header">
-        <span class="sender-name">{{ message.role === 'assistant' ? 'AI 助手' : '您' }}</span>
+        <span class="sender-name">{{ message.role === 'assistant' ? '十行' : '您' }}</span>
       </div>
       <div class="message-text" v-html="renderContent(message.content)"></div>
 

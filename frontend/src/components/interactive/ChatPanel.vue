@@ -38,38 +38,38 @@
 
       <template v-else>
         <!-- 输入框 -->
-        <div class="input-row">
-          <div class="input-container">
-            <textarea
-              ref="inputRef"
-              v-model="inputText"
-              class="chat-input"
-              placeholder="输入您的意见或问题..."
-              rows="1"
-              @input="autoResize"
-              @keydown.enter.exact="handleEnter"
-              @keydown.enter.shift.exact="() => {}"
-              :disabled="loading"
-            ></textarea>
-            <button
-              class="send-btn"
-              @click="send"
-              :disabled="!inputText.trim() || loading"
-            >
-              <el-icon v-if="loading" class="is-loading"><Loading /></el-icon>
-              <el-icon v-else><Promotion /></el-icon>
-            </button>
-          </div>
+        <div class="input-container">
+          <textarea
+            ref="inputRef"
+            v-model="inputText"
+            class="chat-input"
+            placeholder="输入您的意见或问题..."
+            rows="1"
+            @input="autoResize"
+            @keydown.enter.exact="handleEnter"
+            @keydown.enter.shift.exact="() => {}"
+            :disabled="loading"
+          ></textarea>
           <button
-            class="next-btn"
+            class="send-btn"
+            @click="send"
+            :disabled="!inputText.trim() || loading"
+          >
+            <el-icon v-if="loading" class="is-loading"><Loading /></el-icon>
+            <el-icon v-else><Promotion /></el-icon>
+          </button>
+        </div>
+        <div class="input-footer">
+          <span class="input-hint">Enter 发送 · Shift+Enter 换行</span>
+          <button
+            class="submit-btn"
             @click="$emit('complete', currentSuggestion)"
             :disabled="loading"
           >
-            下一条
-            <el-icon><ArrowRight /></el-icon>
+            <el-icon><Check /></el-icon>
+            提交
           </button>
         </div>
-        <div class="input-hint">Enter 发送 · Shift+Enter 换行</div>
       </template>
     </div>
   </div>
@@ -77,7 +77,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { ChatDotRound, CircleCheck, Loading, Promotion, ArrowRight } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheck, Loading, Promotion, Check } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 
 const props = defineProps({
@@ -245,16 +245,8 @@ function send() {
   font-size: 14px;
 }
 
-/* 输入行 */
-.input-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-}
-
 /* 输入框容器 */
 .input-container {
-  flex: 1;
   display: flex;
   align-items: flex-end;
   gap: 8px;
@@ -316,54 +308,48 @@ function send() {
   cursor: not-allowed;
 }
 
-/* 下一条按钮 */
-.next-btn {
-  flex-shrink: 0;
+/* 输入框底部 */
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.input-hint {
+  font-size: 12px;
+  color: #bbb;
+}
+
+/* 提交按钮 */
+.submit-btn {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 20px;
-  height: 52px;
+  padding: 8px 16px;
   border: none;
-  border-radius: 12px;
+  border-radius: 6px;
   background: #52c41a;
   color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.2s;
 }
 
-.next-btn:hover:not(:disabled) {
+.submit-btn:hover:not(:disabled) {
   background: #73d13d;
 }
 
-.next-btn:disabled {
+.submit-btn:disabled {
   background: #d9d9d9;
   cursor: not-allowed;
-}
-
-.input-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #bbb;
 }
 
 /* 响应式 */
 @media (max-width: 480px) {
   .chat-history {
     padding: 16px;
-  }
-
-  .input-row {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .next-btn {
-    width: 100%;
-    height: 44px;
-    justify-content: center;
   }
 }
 </style>
