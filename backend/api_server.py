@@ -4491,9 +4491,9 @@ async def get_document_text(
             raise HTTPException(status_code=404, detail="文档文件不存在")
 
         # 使用已有的文档加载功能解析文档
-        doc_text = await load_document_async(doc_path)
+        document = await load_document_async(doc_path)
 
-        if not doc_text:
+        if not document or not document.text:
             raise HTTPException(status_code=500, detail="无法解析文档内容")
 
         # 将文档拆分为段落
@@ -4501,7 +4501,7 @@ async def get_document_text(
         current_pos = 0
 
         # 按换行符分割，保留非空段落
-        raw_paragraphs = doc_text.split('\n')
+        raw_paragraphs = document.text.split('\n')
 
         for idx, para_text in enumerate(raw_paragraphs):
             # 跳过空段落

@@ -137,7 +137,8 @@ async function loadData() {
     ])
 
     task.value = taskResponse.data
-    items.value = itemsResponse.data || []
+    // itemsResponse.data 是 { task_id, items, summary } 结构
+    items.value = itemsResponse.data?.items || []
 
     // 异步加载文档内容（不阻塞主流程）
     loadDocumentText()
