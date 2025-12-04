@@ -161,37 +161,53 @@ class SupabaseTaskManager:
 
         return [self._row_to_task(row) for row in result.data]
 
-    def update_task(self, task: ReviewTask) -> None:
-        """更新任务"""
-        update_data = {
-            "name": task.name,
-            "our_party": task.our_party,
-            "material_type": task.material_type,
-            "language": task.language,
-            "status": task.status,
-            "message": task.message,
-            "progress": task.progress.model_dump() if task.progress else {},
-            "document_filename": task.document_filename,
-            "standard_filename": task.standard_filename,
-            "standard_template": task.standard_template,
-            "updated_at": datetime.now().isoformat(),
-        }
-
-        self.client.table("tasks").update(update_data).eq("id", task.id).execute()
-
-    def update_task(self, task_id: str, update_data: dict) -> Optional[ReviewTask]:
+    def update_task(self, task_or_id, update_data: dict = None) -> Optional[ReviewTask]:
         """
-        更新任务基本信息
+        更新任务
+
+        支持两种调用方式：
+        1. update_task(task: ReviewTask) - 传入任务对象，自动提取所有字段
+        2. update_task(task_id: str, update_data: dict) - 传入任务 ID 和要更新的字段
 
         Args:
-            task_id: 任务 ID
-            update_data: 要更新的字段字典
+            task_or_id: ReviewTask 对象或任务 ID 字符串
+            update_data: 要更新的字段字典（仅当 task_or_id 是字符串时使用）
 
         Returns:
             更新后的任务，或 None（如果失败）
         """
         try:
-            result = self.client.table("tasks").update(update_data).eq("id", task_id).execute()
+            # 判断是哪种调用方式
+            if isinstance(task_or_id, ReviewTask):
+                # 传入的是 ReviewTask 对象
+                task = task_or_id
+                task_id = task.id
+                data = {
+                    "name": task.name,
+                    "our_party": task.our_party,
+                    "material_type": task.material_type,
+                    "language": task.language,
+                    "status": task.status,
+                    "message": task.message,
+                    "progress": task.progress.model_dump() if task.progress else {},
+                    "document_filename": task.document_filename,
+                    "standard_filename": task.standard_filename,
+                    "standard_template": task.standard_template,
+                    "review_mode": task.review_mode,
+                    "updated_at": datetime.now().isoformat(),
+                }
+            else:
+                # 传入的是任务 ID 字符串
+                task_id = task_or_id
+                if update_data is None:
+                    print("update_task: 需要提供 update_data 参数")
+                    return None
+                data = update_data
+                # 确保有 updated_at
+                if "updated_at" not in data:
+                    data["updated_at"] = datetime.now().isoformat()
+
+            result = self.client.table("tasks").update(data).eq("id", task_id).execute()
             if result.data:
                 return self._row_to_task(result.data[0])
             return None

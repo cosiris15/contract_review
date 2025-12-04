@@ -1089,11 +1089,7 @@ async def preprocess_document(
             raise HTTPException(status_code=400, detail="文档文件不存在")
 
         # 读取文档内容
-        document = await load_document_async(
-            doc_path.read_bytes(),
-            task.document_filename,
-            get_ocr_service()
-        )
+        document = await load_document_async(doc_path, ocr_service=get_ocr_service())
     except HTTPException:
         raise
     except Exception as e:
