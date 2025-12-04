@@ -129,6 +129,97 @@ export default {
   },
 
   /**
+   * 发送流式对话消息（SSE）
+   * @param {string} taskId - 任务 ID
+   * @param {string} itemId - 条目 ID
+   * @param {string} message - 用户消息
+   * @param {string} llmProvider - LLM 提供者
+   * @param {Object} callbacks - 回调函数
+   * @param {Function} callbacks.onChunk - 收到文本片段时的回调
+   * @param {Function} callbacks.onSuggestion - 收到更新建议时的回调
+   * @param {Function} callbacks.onDone - 完成时的回调
+   * @param {Function} callbacks.onError - 错误时的回调
+   * @returns {Promise<void>}
+   */
+  async sendChatMessageStream(taskId, itemId, message, llmProvider = 'deepseek', callbacks = {}) {
+    const { onChunk, onSuggestion, onDone, onError } = callbacks
+
+    // 获取 token
+    let token = ''
+    if (getTokenFn) {
+      try {
+        token = await getTokenFn()
+      } catch (error) {
+        console.error('获取 token 失败:', error)
+      }
+    }
+
+    // 使用 fetch API 进行 SSE 请求（POST 方法）
+    try {
+      const response = await fetch(`${API_BASE_URL}/interactive/${taskId}/items/${itemId}/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          message,
+          llm_provider: llmProvider
+        })
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: '请求失败' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // 解析 SSE 事件
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // 保留未完成的行
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              const { type, content } = data
+
+              switch (type) {
+                case 'chunk':
+                  if (onChunk) onChunk(content)
+                  break
+                case 'suggestion':
+                  if (onSuggestion) onSuggestion(content)
+                  break
+                case 'done':
+                  if (onDone) onDone(content)
+                  break
+                case 'error':
+                  if (onError) onError(new Error(content))
+                  break
+              }
+            } catch (e) {
+              // 忽略无法解析的行
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (onError) onError(error)
+      throw error
+    }
+  },
+
+  /**
    * 标记条目为已完成
    * @param {string} taskId - 任务 ID
    * @param {string} itemId - 条目 ID

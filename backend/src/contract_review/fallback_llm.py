@@ -201,8 +201,7 @@ class FallbackLLMClient:
         流式发送聊天请求，支持自动 fallback
 
         先尝试主 LLM，失败后自动切换到备用 LLM。
-        注意：目前只有 DeepSeek (LLMClient) 支持真正的流式输出，
-        Gemini 会回退到非流式模式。
+        DeepSeek 和 Gemini 都支持流式输出。
 
         Args:
             messages: 消息列表
@@ -216,8 +215,8 @@ class FallbackLLMClient:
 
         # 尝试主 LLM
         try:
-            # 检查主 LLM 是否支持流式
-            if isinstance(self.primary, LLMClient) and hasattr(self.primary, 'chat_stream'):
+            # 检查是否支持流式（LLMClient 和 GeminiClient 都支持）
+            if hasattr(self.primary, 'chat_stream'):
                 async for chunk in self.primary.chat_stream(
                     messages=messages,
                     temperature=temperature,
@@ -250,7 +249,7 @@ class FallbackLLMClient:
         # 尝试备用 LLM
         logger.info(f"切换到备用 LLM: {self.fallback_name}")
         try:
-            if isinstance(self.fallback, LLMClient) and hasattr(self.fallback, 'chat_stream'):
+            if hasattr(self.fallback, 'chat_stream'):
                 async for chunk in self.fallback.chat_stream(
                     messages=messages,
                     temperature=temperature,

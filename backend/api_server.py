@@ -20,7 +20,7 @@ import httpx
 import jwt
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -4311,6 +4311,139 @@ async def chat_with_item(
             }
             for msg in (updated_chat.messages if updated_chat else [])
         ],
+    )
+
+
+@app.post("/api/interactive/{task_id}/items/{item_id}/chat/stream")
+async def chat_with_item_stream(
+    task_id: str,
+    item_id: str,
+    request: ChatRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    流式与特定条目进行对话（SSE）
+
+    返回 Server-Sent Events 流，格式：
+    - data: {"type": "chunk", "content": "文本片段"}
+    - data: {"type": "suggestion", "content": "更新后的建议"}
+    - data: {"type": "done", "content": "完整回复"}
+    - data: {"type": "error", "content": "错误信息"}
+    """
+    import json as json_module
+
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取审阅结果
+    result = storage_manager.get_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="审阅结果不存在")
+
+    # 查找条目
+    modification = None
+    risk = None
+    for mod in result.modifications:
+        if mod.id == item_id:
+            modification = mod
+            for r in result.risks:
+                if r.id == mod.risk_id:
+                    risk = r
+                    break
+            break
+
+    if not modification:
+        raise HTTPException(status_code=404, detail="条目不存在")
+
+    # 获取或创建对话记录
+    interactive_manager = get_interactive_manager()
+    chat = interactive_manager.get_chat_by_item(task_id, item_id)
+
+    if not chat:
+        # 创建新的对话记录
+        chat = interactive_manager.create_chat(
+            task_id=task_id,
+            item_id=item_id,
+            item_type="modification",
+            initial_suggestion=modification.suggested_text,
+        )
+
+    # 准备对话历史
+    chat_history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in chat.messages
+    ]
+
+    # 创建引擎
+    engine = InteractiveReviewEngine(settings, llm_provider=request.llm_provider)
+
+    async def event_generator():
+        """生成 SSE 事件流"""
+        full_response = ""
+        updated_suggestion = ""
+
+        try:
+            async for event in engine.refine_item_stream(
+                original_clause=modification.original_text,
+                current_suggestion=chat.current_suggestion or modification.suggested_text,
+                risk_description=risk.description if risk else modification.modification_reason,
+                user_message=request.message,
+                chat_history=chat_history,
+                document_summary="",
+                language=getattr(task, 'language', 'zh-CN'),
+            ):
+                event_type = event.get("type", "chunk")
+                content = event.get("content", "")
+
+                if event_type == "done":
+                    full_response = content
+                elif event_type == "suggestion":
+                    updated_suggestion = content
+                elif event_type == "error":
+                    yield f"data: {json_module.dumps({'type': 'error', 'content': content}, ensure_ascii=False)}\n\n"
+                    return
+
+                yield f"data: {json_module.dumps({'type': event_type, 'content': content}, ensure_ascii=False)}\n\n"
+
+            # 流式完成后，保存对话记录
+            if full_response:
+                # 添加用户消息
+                interactive_manager.add_message(
+                    chat_id=chat.id,
+                    role="user",
+                    content=request.message,
+                )
+
+                # 添加 AI 回复
+                interactive_manager.add_message(
+                    chat_id=chat.id,
+                    role="assistant",
+                    content=full_response,
+                    suggestion_snapshot=updated_suggestion or chat.current_suggestion,
+                )
+
+                # 同步更新 review_results 中的建议
+                if updated_suggestion:
+                    for mod in result.modifications:
+                        if mod.id == item_id:
+                            mod.suggested_text = updated_suggestion
+                            break
+                    storage_manager.save_result(result)
+
+        except Exception as e:
+            logger.error(f"流式对话失败: {e}")
+            yield f"data: {json_module.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
     )
 
 

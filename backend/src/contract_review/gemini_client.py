@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 
@@ -233,6 +233,112 @@ class GeminiClient:
             raise Exception("Gemini API 请求超时，请稍后重试")
         except httpx.RequestError as e:
             logger.error(f"Gemini API 请求错误: {e}")
+            raise Exception(f"Gemini API 请求错误: {str(e)}")
+
+    async def chat_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        """
+        流式发送聊天请求
+
+        将 OpenAI 格式的 messages 转换为 Gemini 格式，使用 SSE 流式返回。
+
+        Args:
+            messages: 消息列表，格式为 [{"role": "system/user/assistant", "content": "..."}]
+            temperature: 可选的温度参数
+            max_output_tokens: 可选的最大输出 token 数
+
+        Yields:
+            LLM 响应的文本片段
+        """
+        # 提取 system message 作为 system_instruction
+        system_instruction = None
+        conversation_parts = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            if role == "system":
+                system_instruction = content
+            elif role == "user":
+                conversation_parts.append(f"User: {content}")
+            elif role == "assistant":
+                conversation_parts.append(f"Assistant: {content}")
+
+        # 组合非系统消息为 prompt
+        prompt = "\n\n".join(conversation_parts)
+
+        # 使用流式端点
+        url = f"{self.BASE_URL}/models/{self.model}:streamGenerateContent"
+
+        # 构建请求体
+        request_body: Dict[str, Any] = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": temperature if temperature is not None else 0.1,
+                "maxOutputTokens": max_output_tokens or 4000,
+            },
+        }
+
+        # 添加系统指令
+        if system_instruction:
+            request_body["systemInstruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    params={"key": self.api_key, "alt": "sse"},
+                    json=request_body,
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        logger.error(f"Gemini API 流式错误: {response.status_code} - {error_text.decode()}")
+                        raise Exception(f"Gemini API 请求失败: {response.status_code}")
+
+                    # 解析 SSE 流
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+
+                        # SSE 格式: data: {...}
+                        if line.startswith("data: "):
+                            data_str = line[6:]  # 移除 "data: " 前缀
+                            if not data_str.strip():
+                                continue
+
+                            try:
+                                data = json.loads(data_str)
+                                # 提取文本内容
+                                candidates = data.get("candidates", [])
+                                if candidates:
+                                    content = candidates[0].get("content", {})
+                                    parts = content.get("parts", [])
+                                    if parts:
+                                        text = parts[0].get("text", "")
+                                        if text:
+                                            yield text
+                            except json.JSONDecodeError:
+                                # 忽略无法解析的行
+                                continue
+
+        except httpx.TimeoutException:
+            logger.error("Gemini API 流式请求超时")
+            raise Exception("Gemini API 请求超时，请稍后重试")
+        except httpx.RequestError as e:
+            logger.error(f"Gemini API 流式请求错误: {e}")
             raise Exception(f"Gemini API 请求错误: {str(e)}")
 
     async def generate_standards(

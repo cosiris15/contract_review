@@ -87,10 +87,15 @@
         @copy-suggestion="copySuggestion"
       />
 
-      <!-- 正在加载 -->
-      <div v-if="loading" class="loading-message">
+      <!-- 正在加载（仅在 loading 且非 streaming 时显示，因为 streaming 时会显示实时内容） -->
+      <div v-if="loading && !streaming && messages.length === 0" class="loading-message">
         <el-icon class="is-loading" :size="16"><Loading /></el-icon>
         <span>AI 思考中...</span>
+      </div>
+
+      <!-- 流式输出中的打字光标 -->
+      <div v-if="streaming" class="streaming-indicator">
+        <span class="typing-cursor"></span>
       </div>
     </div>
 
@@ -193,6 +198,10 @@ const props = defineProps({
     default: ''
   },
   loading: {
+    type: Boolean,
+    default: false
+  },
+  streaming: {
     type: Boolean,
     default: false
   }
@@ -466,6 +475,24 @@ function copySuggestion() {
   padding: var(--spacing-2) var(--spacing-3);
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
+}
+
+.streaming-indicator {
+  padding: 0 var(--spacing-3);
+  height: 20px;
+}
+
+.typing-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--color-primary);
+  animation: blink 1s steps(2, start) infinite;
+  border-radius: 1px;
+}
+
+@keyframes blink {
+  to { visibility: hidden; }
 }
 
 /* 输入区域 */

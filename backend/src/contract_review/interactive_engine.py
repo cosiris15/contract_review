@@ -13,7 +13,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 from .config import Settings
 from .fallback_llm import FallbackLLMClient
@@ -393,6 +393,86 @@ class InteractiveReviewEngine:
             "assistant_reply": response,
             "updated_suggestion": updated_suggestion,
         }
+
+    async def refine_item_stream(
+        self,
+        original_clause: str,
+        current_suggestion: str,
+        risk_description: str,
+        user_message: str,
+        chat_history: List[Dict[str, Any]],
+        document_summary: str = "",
+        language: Language = "zh-CN",
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        流式处理用户输入，逐步生成回复
+
+        Args:
+            original_clause: 原始条款文本
+            current_suggestion: 当前的修改建议
+            risk_description: 风险描述
+            user_message: 用户的新消息
+            chat_history: 历史对话记录
+            document_summary: 文档摘要
+            language: 语言
+
+        Yields:
+            {
+                "type": "chunk" | "suggestion" | "done",
+                "content": "文本片段" | "更新后的建议" | "完整回复"
+            }
+        """
+        # 构建 Prompt
+        messages = build_item_chat_messages(
+            original_clause=original_clause,
+            current_suggestion=current_suggestion,
+            risk_description=risk_description,
+            user_message=user_message,
+            chat_history=chat_history,
+            document_summary=document_summary,
+            language=language,
+        )
+
+        # 收集完整响应用于提取建议
+        full_response = ""
+
+        # 流式调用 LLM
+        try:
+            async for chunk in self.llm.chat_stream(messages, max_output_tokens=2000):
+                full_response += chunk
+                yield {
+                    "type": "chunk",
+                    "content": chunk,
+                }
+
+            logger.info(f"条目对话流式响应完成，长度: {len(full_response)}")
+
+            # 提取更新后的建议
+            updated_suggestion = extract_suggestion_from_response(full_response, language)
+
+            # 如果无法提取，使用当前建议
+            if not updated_suggestion:
+                logger.warning("无法从 AI 回复中提取建议，使用当前建议")
+                updated_suggestion = current_suggestion
+
+            # 发送建议
+            yield {
+                "type": "suggestion",
+                "content": updated_suggestion,
+            }
+
+            # 发送完成信号
+            yield {
+                "type": "done",
+                "content": full_response,
+            }
+
+        except Exception as e:
+            logger.error(f"条目对话流式 LLM 调用失败: {e}")
+            yield {
+                "type": "error",
+                "content": str(e),
+            }
 
     async def generate_document_summary(
         self,

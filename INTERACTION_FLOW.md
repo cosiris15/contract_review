@@ -334,6 +334,16 @@ ReviewTask (任务)
    - 备：Gemini
    - 自动切换，用户无感知
 
+5. **流式输出**
+   - 交互对话支持 SSE (Server-Sent Events) 流式响应
+   - 前端实时显示 AI 回复，带打字光标效果
+   - 后端 API: `POST /api/interactive/{task_id}/items/{item_id}/chat/stream`
+   - 事件类型：
+     - `chunk`: 文本片段
+     - `suggestion`: 更新后的建议
+     - `done`: 完成信号
+     - `error`: 错误信息
+
 ---
 
 *文档结束*

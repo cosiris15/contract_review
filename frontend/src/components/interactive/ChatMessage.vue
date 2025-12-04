@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-message" :class="[message.role, { 'has-suggestion': message.suggestion_snapshot, compact: compact }]">
+  <div class="chat-message" :class="[message.role, { 'has-suggestion': message.suggestion_snapshot, compact: compact, streaming: message.isStreaming, error: message.isError }]">
     <div class="message-avatar">
       <el-icon v-if="message.role === 'assistant'" :size="compact ? 18 : 24" color="#409eff">
         <Service />
@@ -278,5 +278,29 @@ function renderMarkdown(content) {
   line-height: var(--line-height-relaxed);
   color: var(--color-text-primary);
   white-space: pre-wrap;
+}
+
+/* 流式输出中的消息 - 添加打字光标 */
+.chat-message.streaming .message-body::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 14px;
+  margin-left: 2px;
+  background: var(--color-primary);
+  animation: blink 1s steps(2, start) infinite;
+  border-radius: 1px;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  to { visibility: hidden; }
+}
+
+/* 错误消息样式 */
+.chat-message.error .message-body {
+  background: var(--color-error-bg, #fef0f0);
+  border-color: var(--color-error-light, #f56c6c);
+  color: var(--color-error, #f56c6c);
 }
 </style>

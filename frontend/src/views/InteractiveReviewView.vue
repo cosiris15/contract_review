@@ -65,6 +65,7 @@
           :messages="activeMessages"
           :current-suggestion="currentSuggestion"
           :loading="chatLoading"
+          :streaming="isStreaming"
           @select-item="selectItem"
           @send-message="sendMessage"
           @complete="completeCurrentItem"
@@ -114,6 +115,11 @@ const completedCount = computed(() => {
 const completionPercentage = computed(() => {
   if (items.value.length === 0) return 0
   return Math.round((completedCount.value / items.value.length) * 100)
+})
+
+// 判断当前是否有流式输出进行中
+const isStreaming = computed(() => {
+  return activeMessages.value.some(msg => msg.isStreaming)
 })
 
 // 加载数据
@@ -201,7 +207,7 @@ function scrollToHighlight() {
   }
 }
 
-// 发送消息
+// 发送消息（流式输出）
 async function sendMessage(message) {
   if (!activeItemId.value || chatLoading.value) return
 
@@ -212,40 +218,65 @@ async function sendMessage(message) {
     timestamp: new Date().toISOString()
   })
 
+  // 添加一个空的 AI 回复占位，用于流式填充
+  const aiMessageIndex = activeMessages.value.length
+  activeMessages.value.push({
+    role: 'assistant',
+    content: '',
+    timestamp: new Date().toISOString(),
+    suggestion_snapshot: null,
+    isStreaming: true // 标记为正在流式输出
+  })
+
   chatLoading.value = true
+  let streamedContent = ''
+
   try {
-    const response = await interactiveApi.sendChatMessage(
+    await interactiveApi.sendChatMessageStream(
       taskId.value,
       activeItemId.value,
       message,
-      'deepseek'
+      'deepseek',
+      {
+        onChunk: (chunk) => {
+          // 实时更新 AI 回复内容
+          streamedContent += chunk
+          activeMessages.value[aiMessageIndex].content = streamedContent
+        },
+        onSuggestion: (suggestion) => {
+          // 更新当前建议
+          currentSuggestion.value = suggestion
+          activeMessages.value[aiMessageIndex].suggestion_snapshot = suggestion
+        },
+        onDone: (fullContent) => {
+          // 流式完成，移除 streaming 标记
+          activeMessages.value[aiMessageIndex].isStreaming = false
+
+          // 更新本地条目状态
+          const localItem = items.value.find(i => i.id === activeItemId.value)
+          if (localItem) {
+            localItem.status = 'in_progress'
+            localItem.current_suggestion = currentSuggestion.value
+            localItem.message_count = activeMessages.value.length
+          }
+        },
+        onError: (error) => {
+          console.error('流式对话失败:', error)
+          // 更新 AI 消息显示错误
+          activeMessages.value[aiMessageIndex].content = '抱歉，对话出错了：' + error.message
+          activeMessages.value[aiMessageIndex].isStreaming = false
+          activeMessages.value[aiMessageIndex].isError = true
+        }
+      }
     )
-
-    const result = response.data
-
-    // 添加 AI 回复
-    activeMessages.value.push({
-      role: 'assistant',
-      content: result.assistant_reply,
-      timestamp: new Date().toISOString(),
-      suggestion_snapshot: result.updated_suggestion
-    })
-
-    // 更新当前建议
-    currentSuggestion.value = result.updated_suggestion
-
-    // 更新本地条目状态
-    const localItem = items.value.find(i => i.id === activeItemId.value)
-    if (localItem) {
-      localItem.status = 'in_progress'
-      localItem.current_suggestion = result.updated_suggestion
-      localItem.message_count = activeMessages.value.length
-    }
   } catch (error) {
     console.error('发送消息失败:', error)
     ElMessage.error('发送消息失败: ' + (error.message || '请重试'))
-    // 移除失败的用户消息
-    activeMessages.value.pop()
+    // 如果 AI 回复是空的，移除它
+    if (!streamedContent) {
+      activeMessages.value.pop() // 移除空的 AI 回复
+      activeMessages.value.pop() // 移除用户消息
+    }
   } finally {
     chatLoading.value = false
   }
