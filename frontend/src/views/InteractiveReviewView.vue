@@ -530,6 +530,15 @@ async function goToNextPendingItem() {
 // 导出
 async function handleExport(format) {
   if (format === 'word') {
+    // 检查是否有已完成的条目
+    const confirmedItems = items.value.filter(item =>
+      item.chat_status === 'completed' && item.has_modification
+    )
+    if (confirmedItems.length === 0) {
+      ElMessage.warning('请先完成至少一个条目的修改建议后再导出')
+      return
+    }
+
     // 调用现有的导出 Word 功能
     try {
       ElMessage.info('正在生成修订版 Word 文档...')
@@ -547,7 +556,12 @@ async function handleExport(format) {
       ElMessage.success('导出成功')
     } catch (error) {
       console.error('导出失败:', error)
-      ElMessage.error('导出失败: ' + (error.message || '请重试'))
+      // 更友好的错误提示
+      if (error.message?.includes('没有已确认的修改建议')) {
+        ElMessage.error('请先完成至少一个条目的修改建议后再导出')
+      } else {
+        ElMessage.error('导出失败: ' + (error.message || '请重试'))
+      }
     }
   } else if (format === 'json') {
     // 导出 JSON
