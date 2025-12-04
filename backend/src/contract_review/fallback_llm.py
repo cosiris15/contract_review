@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from .llm_client import LLMClient
 from .gemini_client import GeminiClient
@@ -186,6 +186,92 @@ class FallbackLLMClient:
             self.stats["fallback_failed"] += 1
             logger.error(f"{self.fallback_name} 也失败了: {fallback_error}")
             # 抛出主 LLM 的错误，因为那是用户期望的
+            raise Exception(
+                f"所有 LLM 都失败了。{self.primary_name}: {primary_error}; "
+                f"{self.fallback_name}: {fallback_error}"
+            )
+
+    async def chat_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        """
+        流式发送聊天请求，支持自动 fallback
+
+        先尝试主 LLM，失败后自动切换到备用 LLM。
+        注意：目前只有 DeepSeek (LLMClient) 支持真正的流式输出，
+        Gemini 会回退到非流式模式。
+
+        Args:
+            messages: 消息列表
+            temperature: 温度参数
+            max_output_tokens: 最大输出 token 数
+
+        Yields:
+            LLM 响应文本片段
+        """
+        primary_error = None
+
+        # 尝试主 LLM
+        try:
+            # 检查主 LLM 是否支持流式
+            if isinstance(self.primary, LLMClient) and hasattr(self.primary, 'chat_stream'):
+                async for chunk in self.primary.chat_stream(
+                    messages=messages,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                ):
+                    yield chunk
+                self.stats["primary_success"] += 1
+                return
+            else:
+                # 不支持流式，回退到普通调用
+                response = await self.primary.chat(
+                    messages=messages,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+                yield response
+                self.stats["primary_success"] += 1
+                return
+
+        except Exception as e:
+            primary_error = e
+            self.stats["primary_failed"] += 1
+            logger.warning(f"{self.primary_name} 流式调用失败: {e}")
+
+        # 如果没有备用 LLM，直接抛出错误
+        if not self.fallback:
+            logger.error(f"无备用 LLM，{self.primary_name} 失败后无法恢复")
+            raise primary_error
+
+        # 尝试备用 LLM
+        logger.info(f"切换到备用 LLM: {self.fallback_name}")
+        try:
+            if isinstance(self.fallback, LLMClient) and hasattr(self.fallback, 'chat_stream'):
+                async for chunk in self.fallback.chat_stream(
+                    messages=messages,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                ):
+                    yield chunk
+            else:
+                # 不支持流式，回退到普通调用
+                response = await self.fallback.chat(
+                    messages=messages,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+                yield response
+
+            self.stats["fallback_success"] += 1
+            logger.info(f"{self.fallback_name} 流式调用成功（作为 fallback）")
+
+        except Exception as fallback_error:
+            self.stats["fallback_failed"] += 1
+            logger.error(f"{self.fallback_name} 也失败了: {fallback_error}")
             raise Exception(
                 f"所有 LLM 都失败了。{self.primary_name}: {primary_error}; "
                 f"{self.fallback_name}: {fallback_error}"

@@ -616,8 +616,10 @@ async def update_task(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 验证用户权限
-    if USE_SUPABASE and task.user_id != user_id:
-        raise HTTPException(status_code=403, detail="无权访问此任务")
+    if USE_SUPABASE:
+        task_owner = task_manager.get_task_user_id(task_id)
+        if task_owner != user_id:
+            raise HTTPException(status_code=403, detail="无权访问此任务")
 
     # 构建更新数据
     update_data = {}
@@ -1072,17 +1074,28 @@ async def preprocess_document(
         raise HTTPException(status_code=403, detail="无权访问此任务")
 
     # 检查是否有文档
-    if not task.document_storage_name:
+    if not task.document_filename:
         raise HTTPException(status_code=400, detail="请先上传文档")
 
     # 读取文档内容
     try:
-        document_bytes = storage_manager.download_file(task.document_storage_name)
+        # 获取文档路径（会自动从 Supabase Storage 下载到本地临时目录）
+        if USE_SUPABASE:
+            doc_path = task_manager.get_document_path(task_id, user_id)
+        else:
+            doc_path = task_manager.get_document_path(task_id)
+
+        if not doc_path or not doc_path.exists():
+            raise HTTPException(status_code=400, detail="文档文件不存在")
+
+        # 读取文档内容
         document = await load_document_async(
-            document_bytes,
+            doc_path.read_bytes(),
             task.document_filename,
             get_ocr_service()
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"读取文档失败: {e}")
         raise HTTPException(status_code=500, detail=f"读取文档失败: {str(e)}")

@@ -7,7 +7,7 @@ LLM 客户端封装
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
@@ -49,6 +49,36 @@ class LLMClient:
             timeout=self.settings.request_timeout,
         )
         return response.choices[0].message.content or ""
+
+    async def chat_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        """
+        发送聊天请求并流式返回响应内容
+
+        Args:
+            messages: 消息列表，格式为 [{"role": "system/user/assistant", "content": "..."}]
+            temperature: 可选的温度参数，None 时使用配置默认值
+            max_output_tokens: 可选的最大输出 token 数
+
+        Yields:
+            LLM 响应的文本片段
+        """
+        stream = await self.client.chat.completions.create(
+            model=self.settings.model,
+            messages=messages,
+            temperature=self._resolve_temperature(temperature),
+            top_p=self.settings.top_p,
+            max_tokens=max_output_tokens or self.settings.max_output_tokens,
+            timeout=self.settings.request_timeout,
+            stream=True,
+        )
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     def _resolve_temperature(self, temperature: Optional[float]) -> float:
         """解析温度参数，None 时返回默认值"""
