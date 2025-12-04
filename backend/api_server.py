@@ -3721,132 +3721,100 @@ async def run_unified_review(
         task.review_mode = "interactive"  # 统一使用交互模式
         task_manager.update_task(task)
 
-        # 获取文档路径
-        doc_storage_name = task.document_storage_name
-        if not doc_storage_name:
-            raise ValueError("文档未上传")
+        # 获取文档路径（task_manager 会从 Supabase Storage 下载到本地临时目录）
+        doc_path = task_manager.get_document_path(task_id, user_id)
+        if not doc_path or not doc_path.exists():
+            raise ValueError("文档未上传或无法下载")
 
-        # 下载文档
-        doc_content = storage_manager.download_document(task_id, doc_storage_name)
-        if not doc_content:
-            raise ValueError("无法下载文档")
+        # 加载文档
+        ocr_service = get_ocr_service()
+        document = await load_document_async(doc_path, ocr_service=ocr_service)
 
-        # 保存临时文件
-        import tempfile
-        suffix = Path(doc_storage_name).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(doc_content)
-            tmp_path = tmp.name
+        # 加载审核标准（如果需要）
+        review_standards = None
+        if use_standards:
+            std_path = task_manager.get_standard_path(task_id, user_id)
+            if not std_path or not std_path.exists():
+                raise ValueError("使用标准模式但未上传审核标准")
 
-        try:
-            # 加载文档
-            ocr_service = get_ocr_service()
-            document = await load_document_async(tmp_path, ocr_service=ocr_service)
+            from src.contract_review.standard_parser import parse_standard_file
+            standard_set = parse_standard_file(str(std_path))
+            review_standards = standard_set.standards
+            logger.info(f"已加载 {len(review_standards)} 条审核标准")
 
-            # 加载审核标准（如果需要）
-            review_standards = None
-            if use_standards:
-                std_storage_name = task.standard_storage_name
-                if not std_storage_name:
-                    raise ValueError("使用标准模式但未上传审核标准")
-
-                std_content = storage_manager.download_standard(task_id, std_storage_name)
-                if not std_content:
-                    raise ValueError("无法下载审核标准文件")
-
-                # 保存临时标准文件
-                std_suffix = Path(std_storage_name).suffix
-                with tempfile.NamedTemporaryFile(delete=False, suffix=std_suffix) as std_tmp:
-                    std_tmp.write(std_content)
-                    std_tmp_path = std_tmp.name
-
-                try:
-                    from src.contract_review.standard_parser import parse_standard_file
-                    standard_set = parse_standard_file(std_tmp_path)
-                    review_standards = standard_set.standards
-                    logger.info(f"已加载 {len(review_standards)} 条审核标准")
-                finally:
-                    if os.path.exists(std_tmp_path):
-                        os.remove(std_tmp_path)
-
-            # 获取业务上下文（如果指定了业务条线）
-            business_context = None
-            if business_line_id:
-                business_line = business_library_manager.get_business_line(business_line_id)
-                if business_line:
-                    business_context = {
-                        "business_line_id": business_line.id,
-                        "business_line_name": business_line.name,
-                        "name": business_line.name,
-                        "industry": business_line.industry,
-                        "contexts": business_line.contexts,
-                    }
-                    logger.info(f"使用业务条线: {business_line.name}")
-
-            # 进度回调
-            def progress_callback(stage: str, percentage: int, message: str):
-                task.update_progress(stage, percentage, message)
-                task_manager.update_task(task)
-
-            # 创建交互审阅引擎并执行统一审阅
-            engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
-            result = await engine.unified_review(
-                document=document,
-                our_party=task.our_party,
-                material_type=task.material_type,
-                task_id=task_id,
-                language=getattr(task, 'language', 'zh-CN'),
-                review_standards=review_standards,
-                business_context=business_context,
-                special_requirements=special_requirements,
-                progress_callback=progress_callback,
-            )
-
-            # 保存结果
-            storage_manager.save_result(result)
-
-            # 为所有条目创建对话记录（支持后续对话打磨）
-            interactive_manager = get_interactive_manager()
-            modifications_data = [
-                {
-                    "id": mod.id,
-                    "original_text": mod.original_text,
-                    "suggested_text": mod.suggested_text,
-                    "modification_reason": mod.modification_reason,
-                    "priority": mod.priority,
+        # 获取业务上下文（如果指定了业务条线）
+        business_context = None
+        if business_line_id:
+            business_line = business_library_manager.get_business_line(business_line_id)
+            if business_line:
+                business_context = {
+                    "business_line_id": business_line.id,
+                    "business_line_name": business_line.name,
+                    "name": business_line.name,
+                    "industry": business_line.industry,
+                    "contexts": business_line.contexts,
                 }
-                for mod in result.modifications
-            ]
-            actions_data = [
-                {
-                    "id": action.id,
-                    "action_type": action.action_type,
-                    "description": action.description,
-                    "urgency": action.urgency,
-                }
-                for action in result.actions
-            ]
-            interactive_manager.initialize_chats_for_task(
-                task_id=task_id,
-                modifications=modifications_data,
-                actions=actions_data,
-            )
+                logger.info(f"使用业务条线: {business_line.name}")
 
-            # 更新任务
-            task.result = result
-            task.update_status("completed", "审阅完成")
+        # 进度回调
+        def progress_callback(stage: str, percentage: int, message: str):
+            task.update_progress(stage, percentage, message)
             task_manager.update_task(task)
 
-            # 扣除配额
-            quota_service = get_quota_service()
-            await quota_service.deduct_quota(user_id, task_id=task_id)
+        # 创建交互审阅引擎并执行统一审阅
+        engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
+        result = await engine.unified_review(
+            document=document,
+            our_party=task.our_party,
+            material_type=task.material_type,
+            task_id=task_id,
+            language=getattr(task, 'language', 'zh-CN'),
+            review_standards=review_standards,
+            business_context=business_context,
+            special_requirements=special_requirements,
+            progress_callback=progress_callback,
+        )
 
-            logger.info(f"任务 {task_id} 统一审阅完成，发现 {len(result.risks)} 个风险点")
+        # 保存结果
+        storage_manager.save_result(result)
 
-        finally:
-            # 清理临时文件
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        # 为所有条目创建对话记录（支持后续对话打磨）
+        interactive_manager = get_interactive_manager()
+        modifications_data = [
+            {
+                "id": mod.id,
+                "original_text": mod.original_text,
+                "suggested_text": mod.suggested_text,
+                "modification_reason": mod.modification_reason,
+                "priority": mod.priority,
+            }
+            for mod in result.modifications
+        ]
+        actions_data = [
+            {
+                "id": action.id,
+                "action_type": action.action_type,
+                "description": action.description,
+                "urgency": action.urgency,
+            }
+            for action in result.actions
+        ]
+        interactive_manager.initialize_chats_for_task(
+            task_id=task_id,
+            modifications=modifications_data,
+            actions=actions_data,
+        )
+
+        # 更新任务
+        task.result = result
+        task.update_status("completed", "审阅完成")
+        task_manager.update_task(task)
+
+        # 扣除配额
+        quota_service = get_quota_service()
+        await quota_service.deduct_quota(user_id, task_id=task_id)
+
+        logger.info(f"任务 {task_id} 统一审阅完成，发现 {len(result.risks)} 个风险点")
 
     except Exception as e:
         logger.error(f"任务 {task_id} 统一审阅失败: {e}")
@@ -3940,91 +3908,73 @@ async def run_quick_review(
         task.review_mode = "interactive"
         task_manager.update_task(task)
 
-        # 获取文档路径
-        doc_storage_name = task.document_storage_name
-        if not doc_storage_name:
-            raise ValueError("文档未上传")
+        # 获取文档路径（task_manager 会从 Supabase Storage 下载到本地临时目录）
+        doc_path = task_manager.get_document_path(task_id, user_id)
+        if not doc_path or not doc_path.exists():
+            raise ValueError("文档未上传或无法下载")
 
-        # 下载文档
-        doc_content = storage_manager.download_document(task_id, doc_storage_name)
-        if not doc_content:
-            raise ValueError("无法下载文档")
+        # 加载文档
+        ocr_service = get_ocr_service()
+        document = await load_document_async(doc_path, ocr_service=ocr_service)
 
-        # 保存临时文件
-        import tempfile
-        suffix = Path(doc_storage_name).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(doc_content)
-            tmp_path = tmp.name
-
-        try:
-            # 加载文档
-            ocr_service = get_ocr_service()
-            document = await load_document_async(tmp_path, ocr_service=ocr_service)
-
-            # 进度回调
-            def progress_callback(stage: str, percentage: int, message: str):
-                task.update_progress(stage, percentage, message)
-                task_manager.update_task(task)
-
-            # 创建交互审阅引擎
-            engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
-
-            # 执行快速初审
-            result = await engine.quick_review(
-                document=document,
-                our_party=task.our_party,
-                material_type=task.material_type,
-                task_id=task_id,
-                language=getattr(task, 'language', 'zh-CN'),
-                progress_callback=progress_callback,
-            )
-
-            # 保存结果
-            storage_manager.save_result(result)
-
-            # 为所有条目创建对话记录
-            interactive_manager = get_interactive_manager()
-            modifications_data = [
-                {
-                    "id": mod.id,
-                    "original_text": mod.original_text,
-                    "suggested_text": mod.suggested_text,
-                    "modification_reason": mod.modification_reason,
-                    "priority": mod.priority,
-                }
-                for mod in result.modifications
-            ]
-            actions_data = [
-                {
-                    "id": action.id,
-                    "action_type": action.action_type,
-                    "description": action.description,
-                    "urgency": action.urgency,
-                }
-                for action in result.actions
-            ]
-            interactive_manager.initialize_chats_for_task(
-                task_id=task_id,
-                modifications=modifications_data,
-                actions=actions_data,
-            )
-
-            # 更新任务
-            task.result = result
-            task.update_status("completed", "快速初审完成")
+        # 进度回调
+        def progress_callback(stage: str, percentage: int, message: str):
+            task.update_progress(stage, percentage, message)
             task_manager.update_task(task)
 
-            # 扣除配额
-            quota_service = get_quota_service()
-            await quota_service.deduct_quota(user_id, task_id=task_id)
+        # 创建交互审阅引擎
+        engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
 
-            logger.info(f"任务 {task_id} 快速初审完成")
+        # 执行快速初审
+        result = await engine.quick_review(
+            document=document,
+            our_party=task.our_party,
+            material_type=task.material_type,
+            task_id=task_id,
+            language=getattr(task, 'language', 'zh-CN'),
+            progress_callback=progress_callback,
+        )
 
-        finally:
-            # 清理临时文件
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        # 保存结果
+        storage_manager.save_result(result)
+
+        # 为所有条目创建对话记录
+        interactive_manager = get_interactive_manager()
+        modifications_data = [
+            {
+                "id": mod.id,
+                "original_text": mod.original_text,
+                "suggested_text": mod.suggested_text,
+                "modification_reason": mod.modification_reason,
+                "priority": mod.priority,
+            }
+            for mod in result.modifications
+        ]
+        actions_data = [
+            {
+                "id": action.id,
+                "action_type": action.action_type,
+                "description": action.description,
+                "urgency": action.urgency,
+            }
+            for action in result.actions
+        ]
+        interactive_manager.initialize_chats_for_task(
+            task_id=task_id,
+            modifications=modifications_data,
+            actions=actions_data,
+        )
+
+        # 更新任务
+        task.result = result
+        task.update_status("completed", "快速初审完成")
+        task_manager.update_task(task)
+
+        # 扣除配额
+        quota_service = get_quota_service()
+        await quota_service.deduct_quota(user_id, task_id=task_id)
+
+        logger.info(f"任务 {task_id} 快速初审完成")
 
     except Exception as e:
         logger.error(f"任务 {task_id} 快速初审失败: {e}")
