@@ -1,6 +1,6 @@
 # 十行合同 - 当前交互流程文档
 
-> 最后更新：2024年12月
+> 最后更新：2025年12月
 > 用于后续开发参考
 
 ---
@@ -89,10 +89,11 @@ AI辅助法务文本审阅系统，支持两种审阅模式：
 4. 开始审阅 ──────────────►  ReviewEngine.review_document()
                              │
                              ├─ 阶段1: 风险识别 ─────────►  进度: 33%
-                             │   └─ 生成 RiskPoint[]
+                             │   └─ 生成 RiskPoint[] (含深度分析)
                              │
                              ├─ 阶段2: 修改建议 ─────────►  进度: 66%
                              │   └─ 生成 ModificationSuggestion[]
+                             │   └─ (可通过 skip_modifications 跳过)
                              │
                              └─ 阶段3: 行动建议 ─────────►  进度: 100%
                                  └─ 生成 ActionRecommendation[]
@@ -115,6 +116,25 @@ AI辅助法务文本审阅系统，支持两种审阅模式：
 
 ## 四、交互模式详细流程
 
+### 4.0 设计理念：分析与修改分离
+
+交互模式采用"分析-讨论-修改"三阶段设计，核心理念：
+
+1. **分析阶段**：让AI充分发挥能力
+   - 移除输出限制，进行深度分析
+   - 生成详细的 `analysis` 字段
+   - 不生成修改建议，专注于问题发现
+
+2. **讨论阶段**：用户与AI充分交流
+   - 基于深度分析结果讨论
+   - 确认哪些风险需要处理
+   - 用户可以提出自己的见解
+
+3. **修改阶段**：应用最小改动原则
+   - 仅在用户确认后生成修改建议
+   - 遵循"奥卡姆剃刀"原则
+   - 保持原文风格，最小化改动
+
 ### 4.1 启动审阅
 
 ```
@@ -129,9 +149,9 @@ AI辅助法务文本审阅系统，支持两种审阅模式：
 
 3. 深度交互审阅 ───────────►  InteractiveReviewEngine       进入交互页面
                              └─ unified_review()
-                                 └─ 一次性生成完整结果
-                                    ├─ risks[]
-                                    ├─ modifications[]
+                                 └─ 生成风险分析结果
+                                    ├─ risks[] (含深度analysis)
+                                    ├─ modifications[] (可选跳过)
                                     └─ actions[]
 ```
 
@@ -184,6 +204,25 @@ AI辅助法务文本审阅系统，支持两种审阅模式：
 
 标记完成 ────────────────────►  completeItem()               status='completed'
                                └─ 保存最终建议
+```
+
+### 4.4 修改建议生成（新增）
+
+```
+用户操作                          后端处理                         数据变化
+─────────────────────────────────────────────────────────────────────────
+
+批量生成修改 ───────────────────►  generate_modifications_batch()
+(用户确认多个风险点后)              │
+                                 ├─ 调用 LLM 批量生成修改建议
+                                 ├─ 应用最小改动原则
+                                 └─ 返回 ModificationSuggestion[]
+
+单条生成修改 ───────────────────►  generate_single_modification()
+(讨论后针对单个风险)                │
+                                 ├─ 包含讨论摘要和用户决定
+                                 ├─ 调用 LLM 生成定制化修改
+                                 └─ 返回 ModificationSuggestion
 ```
 
 ---
@@ -248,6 +287,17 @@ POST   /api/interactive/{taskId}/items/{itemId}/chat 发送消息
 POST   /api/interactive/{taskId}/items/{itemId}/complete 标记完成
 ```
 
+### 6.5 修改建议生成（新增）
+```
+POST   /api/tasks/{taskId}/generate-modifications              批量生成修改建议
+       Body: { risk_ids: string[], user_notes?: string }
+       用于用户确认多个风险点后，批量生成修改建议
+
+POST   /api/tasks/{taskId}/risks/{riskId}/generate-modification 单条生成修改建议
+       Body: { discussion_summary: string, user_decision: string }
+       用于讨论后针对单个风险点生成定制化修改
+```
+
 ---
 
 ## 七、数据模型关系
@@ -263,10 +313,12 @@ ReviewTask (任务)
             │
             ├── RiskPoint[] (风险点)
             │       │
+            │       ├── analysis (深度分析，新字段)
             │       └──┐
             │          │
             ├── ModificationSuggestion[] (修改建议)
             │       │   关联 risk_id
+            │       │   可延迟生成（用户确认后）
             │       │
             │       └── InteractiveChat (对话，交互模式)
             │
@@ -343,6 +395,18 @@ ReviewTask (任务)
      - `suggestion`: 更新后的建议
      - `done`: 完成信号
      - `error`: 错误信息
+
+6. **分析与修改分离（重要）**
+   - 风险识别阶段：移除输出限制，充分发挥AI分析能力
+   - RiskPoint 新增 `analysis` 字段存储深度分析
+   - 初步审阅可通过 `skip_modifications=true` 跳过修改建议生成
+   - 修改建议可延迟到用户确认风险后再生成
+   - 修改生成阶段：严格遵循最小改动原则（奥卡姆剃刀）
+
+7. **修改建议生成时机**
+   - 批量生成：用户确认多个风险点后，调用 `/generate-modifications`
+   - 单条生成：讨论后针对单个风险，调用 `/risks/{riskId}/generate-modification`
+   - 两种方式都应用最小改动原则
 
 ---
 
