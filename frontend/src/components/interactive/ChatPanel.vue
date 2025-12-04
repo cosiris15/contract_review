@@ -1,38 +1,19 @@
 <template>
   <div class="chat-panel">
-    <!-- 对话历史 - 全屏聊天区域 -->
+    <!-- 对话历史 -->
     <div class="chat-history" ref="chatHistoryRef">
-      <!-- 系统消息：条目上下文 -->
-      <div v-if="activeItem" class="system-context-message">
-        <div class="context-avatar">
-          <el-icon :size="20"><Document /></el-icon>
-        </div>
-        <div class="context-content">
-          <div class="context-section">
-            <div class="context-label">原文</div>
-            <div class="context-text original">{{ activeItem.original_text }}</div>
-          </div>
-          <div class="context-section">
-            <div class="context-label">建议修改</div>
-            <div class="context-text suggestion">{{ currentSuggestion }}</div>
-          </div>
-          <div v-if="activeItem.risk_description || activeItem.modification_reason" class="context-section">
-            <div class="context-label">风险说明</div>
-            <div class="context-text risk">{{ activeItem.risk_description || activeItem.modification_reason }}</div>
-          </div>
-          <!-- 定位按钮放在条目信息区域 -->
-          <button class="locate-btn" @click="$emit('locate')">
-            <el-icon><Location /></el-icon>
-            在文档中定位
-          </button>
-        </div>
-      </div>
-
-      <!-- 空状态提示 -->
+      <!-- 空状态 -->
       <div v-if="!activeItem" class="empty-chat">
         <el-icon :size="48"><ChatDotRound /></el-icon>
         <span>请选择一个条目开始审阅</span>
       </div>
+
+      <!-- AI 的第一条消息：条目上下文 -->
+      <ChatMessage
+        v-if="activeItem"
+        :message="contextMessage"
+        @locate="$emit('locate')"
+      />
 
       <!-- 对话消息列表 -->
       <ChatMessage
@@ -80,12 +61,12 @@
             </button>
           </div>
           <button
-            class="confirm-btn"
+            class="next-btn"
             @click="$emit('complete', currentSuggestion)"
             :disabled="loading"
           >
-            <el-icon><Check /></el-icon>
-            确认
+            下一条
+            <el-icon><ArrowRight /></el-icon>
           </button>
         </div>
         <div class="input-hint">Enter 发送 · Shift+Enter 换行</div>
@@ -95,11 +76,8 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
-import {
-  Document, ChatDotRound, CircleCheck, Loading, Promotion,
-  Location, Check
-} from '@element-plus/icons-vue'
+import { ref, computed, watch, nextTick } from 'vue'
+import { ChatDotRound, CircleCheck, Loading, Promotion, ArrowRight } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 
 const props = defineProps({
@@ -134,6 +112,23 @@ const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate'])
 const inputText = ref('')
 const chatHistoryRef = ref(null)
 const inputRef = ref(null)
+
+// 构造 AI 的第一条消息（条目上下文）
+const contextMessage = computed(() => {
+  if (!props.activeItem) return null
+
+  let content = `**原文**\n${props.activeItem.original_text}\n\n**建议修改**\n${props.currentSuggestion}`
+
+  if (props.activeItem.risk_description || props.activeItem.modification_reason) {
+    content += `\n\n**风险说明**\n${props.activeItem.risk_description || props.activeItem.modification_reason}`
+  }
+
+  return {
+    role: 'assistant',
+    content,
+    isContext: true  // 标记为上下文消息，用于显示定位按钮
+  }
+})
 
 // 自动调整输入框高度
 function autoResize() {
@@ -178,7 +173,6 @@ function send() {
   if (!inputText.value.trim() || props.loading) return
   emit('send-message', inputText.value.trim())
   inputText.value = ''
-  // 重置输入框高度
   nextTick(() => {
     if (inputRef.value) {
       inputRef.value.style.height = 'auto'
@@ -200,91 +194,6 @@ function send() {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
-}
-
-/* 系统上下文消息 - 条目信息 */
-.system-context-message {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 20px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #eee;
-}
-
-.context-avatar {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #e8f4fd;
-  border-radius: 6px;
-  color: #1890ff;
-}
-
-.context-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.context-section {
-  margin-bottom: 12px;
-}
-
-.context-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #999;
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.context-text {
-  padding: 12px 14px;
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.context-text.original {
-  background: #fff;
-  border: 1px solid #e8e8e8;
-  color: #333;
-}
-
-.context-text.suggestion {
-  background: #f6ffed;
-  border: 1px solid #b7eb8f;
-  color: #135200;
-}
-
-.context-text.risk {
-  background: #fffbe6;
-  border: 1px solid #ffe58f;
-  color: #ad6800;
-}
-
-.locate-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: #1890ff;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.locate-btn:hover {
-  background: #e6f7ff;
 }
 
 /* 空状态 */
@@ -407,12 +316,12 @@ function send() {
   cursor: not-allowed;
 }
 
-/* 确认按钮 */
-.confirm-btn {
+/* 下一条按钮 */
+.next-btn {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 0 20px;
   height: 52px;
   border: none;
@@ -425,11 +334,11 @@ function send() {
   transition: background 0.2s;
 }
 
-.confirm-btn:hover:not(:disabled) {
+.next-btn:hover:not(:disabled) {
   background: #73d13d;
 }
 
-.confirm-btn:disabled {
+.next-btn:disabled {
   background: #d9d9d9;
   cursor: not-allowed;
 }
@@ -451,7 +360,7 @@ function send() {
     gap: 8px;
   }
 
-  .confirm-btn {
+  .next-btn {
     width: 100%;
     height: 44px;
     justify-content: center;

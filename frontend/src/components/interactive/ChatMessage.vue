@@ -18,6 +18,14 @@
       </div>
       <div class="message-text" v-html="renderContent(message.content)"></div>
 
+      <!-- 上下文消息的定位按钮 -->
+      <button v-if="message.isContext" class="locate-btn" @click="$emit('locate')">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+        </svg>
+        在文档中定位
+      </button>
+
       <!-- AI 消息中的建议更新 -->
       <div v-if="message.role === 'assistant' && message.suggestion_snapshot" class="suggestion-update">
         <div class="update-header">
@@ -25,26 +33,20 @@
           <span>建议已更新</span>
         </div>
         <div class="update-content">{{ message.suggestion_snapshot }}</div>
-        <button class="copy-btn" @click="$emit('copy-suggestion', message.suggestion_snapshot)">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-          </svg>
-          复制
-        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-const props = defineProps({
+defineProps({
   message: {
     type: Object,
     required: true
   }
 })
 
-defineEmits(['copy-suggestion'])
+defineEmits(['locate'])
 
 // 渲染消息内容（简单 Markdown 处理）
 function renderContent(content) {
@@ -140,6 +142,27 @@ function renderContent(content) {
   color: #111;
 }
 
+/* 定位按钮 */
+.locate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 14px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.locate-btn:hover {
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
 /* 建议更新卡片 */
 .suggestion-update {
   margin-top: 12px;
@@ -169,25 +192,6 @@ function renderContent(content) {
   color: #166534;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.copy-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 4px 10px;
-  border: 1px solid #86efac;
-  border-radius: 4px;
-  background: #fff;
-  color: #166534;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.copy-btn:hover {
-  background: #dcfce7;
 }
 
 /* 流式输出 - 打字光标 */
