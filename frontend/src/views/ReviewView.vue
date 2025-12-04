@@ -1347,6 +1347,11 @@ async function startUnifiedReview() {
 
 // 轮询审阅状态
 async function pollReviewStatus() {
+  // 用于模拟进度的变量
+  let lastServerProgress = 0
+  let simulatedProgress = 0
+  let stagnantCount = 0  // 服务器进度停滞的次数
+
   const pollInterval = setInterval(async () => {
     try {
       // 使用 getTaskStatus API 获取包含 progress 的完整状态
@@ -1361,9 +1366,9 @@ async function pollReviewStatus() {
         // 刷新任务详情
         await store.loadTask(taskId.value)
 
-        // 统一跳转到结果页面（交互视图）
+        // 跳转到交互审阅页面（深度交互对话界面）
         setTimeout(() => {
-          router.push(`/review-result/${taskId.value}`)
+          router.push(`/interactive/${taskId.value}`)
         }, 1000)
       } else if (taskStatus.status === 'failed') {
         clearInterval(pollInterval)
@@ -1371,11 +1376,27 @@ async function pollReviewStatus() {
         store.progress = { stage: 'idle', percentage: 0, message: '' }
         ElMessage.error(taskStatus.message || '审阅失败')
       } else if (taskStatus.status === 'reviewing') {
-        // 更新进度 - progress 是包含 stage, percentage, message 的对象
+        // 获取服务器返回的进度
         const progress = taskStatus.progress || {}
+        const serverProgress = progress.percentage || 0
+
+        // 模拟进度逻辑：当服务器进度停滞时，前端缓慢增加显示进度
+        if (serverProgress > lastServerProgress) {
+          // 服务器进度更新了，使用服务器进度
+          simulatedProgress = serverProgress
+          lastServerProgress = serverProgress
+          stagnantCount = 0
+        } else {
+          // 服务器进度没变，模拟缓慢增加（但不超过下一个阶段的上限）
+          stagnantCount++
+          // 每次停滞增加 2-3%，但不超过90%（留给完成阶段）
+          const maxSimulated = Math.min(serverProgress + stagnantCount * 2.5, 90)
+          simulatedProgress = Math.min(simulatedProgress + 2, maxSimulated)
+        }
+
         store.progress = {
           stage: progress.stage || 'analyzing',
-          percentage: progress.percentage || 0,
+          percentage: Math.round(simulatedProgress),
           message: progress.message || taskStatus.message || '正在分析文档...'
         }
       }
