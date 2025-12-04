@@ -4568,19 +4568,40 @@ async def chat_with_item(
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
-    # 查找条目
+    # 查找条目 - 支持 risk_id 或 modification_id
     modification = None
     risk = None
-    for mod in result.modifications:
-        if mod.id == item_id:
-            modification = mod
-            for r in result.risks:
-                if r.id == mod.risk_id:
-                    risk = r
+    original_text = ""
+
+    # 首先检查是否是 risk_id
+    for r in result.risks:
+        if r.id == item_id:
+            risk = r
+            # 获取原文
+            if risk.location and risk.location.original_text:
+                original_text = risk.location.original_text
+            elif hasattr(risk, 'original_text') and risk.original_text:
+                original_text = risk.original_text
+            # 查找对应的 modification
+            for mod in result.modifications:
+                if mod.risk_id == risk.id:
+                    modification = mod
                     break
             break
 
-    if not modification:
+    # 如果不是 risk_id，尝试作为 modification_id 查找
+    if not risk:
+        for mod in result.modifications:
+            if mod.id == item_id:
+                modification = mod
+                original_text = mod.original_text or ""
+                for r in result.risks:
+                    if r.id == mod.risk_id:
+                        risk = r
+                        break
+                break
+
+    if not risk:
         raise HTTPException(status_code=404, detail="条目不存在")
 
     # 获取或创建对话记录
@@ -4592,8 +4613,8 @@ async def chat_with_item(
         chat = interactive_manager.create_chat(
             task_id=task_id,
             item_id=item_id,
-            item_type="modification",
-            initial_suggestion=modification.suggested_text,
+            item_type="risk",
+            initial_suggestion=modification.suggested_text if modification else "",
         )
 
     # 准备对话历史
@@ -4686,19 +4707,40 @@ async def chat_with_item_stream(
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
-    # 查找条目
+    # 查找条目 - 支持 risk_id 或 modification_id
     modification = None
     risk = None
-    for mod in result.modifications:
-        if mod.id == item_id:
-            modification = mod
-            for r in result.risks:
-                if r.id == mod.risk_id:
-                    risk = r
+    original_text = ""
+
+    # 首先检查是否是 risk_id
+    for r in result.risks:
+        if r.id == item_id:
+            risk = r
+            # 获取原文
+            if risk.location and risk.location.original_text:
+                original_text = risk.location.original_text
+            elif hasattr(risk, 'original_text') and risk.original_text:
+                original_text = risk.original_text
+            # 查找对应的 modification
+            for mod in result.modifications:
+                if mod.risk_id == risk.id:
+                    modification = mod
                     break
             break
 
-    if not modification:
+    # 如果不是 risk_id，尝试作为 modification_id 查找
+    if not risk:
+        for mod in result.modifications:
+            if mod.id == item_id:
+                modification = mod
+                original_text = mod.original_text or ""
+                for r in result.risks:
+                    if r.id == mod.risk_id:
+                        risk = r
+                        break
+                break
+
+    if not risk:
         raise HTTPException(status_code=404, detail="条目不存在")
 
     # 获取或创建对话记录
@@ -4710,8 +4752,8 @@ async def chat_with_item_stream(
         chat = interactive_manager.create_chat(
             task_id=task_id,
             item_id=item_id,
-            item_type="modification",
-            initial_suggestion=modification.suggested_text,
+            item_type="risk",
+            initial_suggestion=modification.suggested_text if modification else "",
         )
 
     # 准备对话历史
@@ -4730,9 +4772,9 @@ async def chat_with_item_stream(
 
         try:
             async for event in engine.refine_item_stream(
-                original_clause=modification.original_text,
-                current_suggestion=chat.current_suggestion or modification.suggested_text,
-                risk_description=risk.description if risk else modification.modification_reason,
+                original_clause=original_text or (modification.original_text if modification else ""),
+                current_suggestion=chat.current_suggestion or (modification.suggested_text if modification else ""),
+                risk_description=risk.description if risk else (modification.modification_reason if modification else ""),
                 user_message=request.message,
                 chat_history=chat_history,
                 document_summary="",
