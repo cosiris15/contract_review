@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -154,22 +155,41 @@ class InteractiveReviewEngine:
 
         update_progress("analyzing", 20, "AI 正在分析文档...")
 
-        # 调用 LLM
+        # 调用 LLM（这是最耗时的步骤）
+        # 使用 asyncio 任务配合进度模拟，让用户感知到进度在变化
+        async def simulate_progress():
+            """在 LLM 调用期间模拟进度增长"""
+            current = 20
+            while current < 85:
+                await asyncio.sleep(2)  # 每2秒更新一次
+                current = min(current + 5, 85)  # 最高到85%，留空间给后续步骤
+                update_progress("analyzing", current, "AI 正在分析文档...")
+
+        # 创建进度模拟任务
+        progress_task = asyncio.create_task(simulate_progress())
+
         try:
             response = await self.llm.chat(messages, max_output_tokens=8000)
             logger.info(f"统一审阅 LLM 响应长度: {len(response)}")
         except Exception as e:
             logger.error(f"统一审阅 LLM 调用失败: {e}")
             raise
+        finally:
+            # 取消进度模拟任务
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
 
-        update_progress("generating", 50, "正在解析审阅结果...")
+        update_progress("generating", 90, "正在解析审阅结果...")
 
         # 解析响应（使用相同的解析逻辑）
         risks, modifications, actions, summary = self._parse_quick_review_response(
             response, language, skip_modifications=skip_modifications
         )
 
-        update_progress("generating", 80, "正在生成报告...")
+        update_progress("generating", 95, "正在生成报告...")
 
         # 构建审核标准描述
         if review_standards:

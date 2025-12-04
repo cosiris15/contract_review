@@ -8,18 +8,13 @@
         <span>请选择一个条目开始审阅</span>
       </div>
 
-      <!-- AI 的第一条消息：条目上下文 -->
-      <ChatMessage
-        v-if="activeItem"
-        :message="contextMessage"
-        @locate="$emit('locate')"
-      />
-
-      <!-- 对话消息列表 -->
+      <!-- 对话消息列表（第一条是后端初始化的上下文消息） -->
       <ChatMessage
         v-for="(msg, index) in messages"
         :key="index"
         :message="msg"
+        :show-locate-btn="index === 0"
+        @locate="$emit('locate')"
       />
 
       <!-- 流式输出时的打字指示器 -->
@@ -211,60 +206,6 @@ watch(() => props.activeItem?.id, () => {
     editableSuggestion.value = ''
   }
 })
-
-// 构造 AI 的第一条消息（条目上下文）- 根据阶段显示不同内容
-const contextMessage = computed(() => {
-  if (!props.activeItem) return null
-
-  // 阶段1: 风险分析（未生成修改建议时）
-  if (!props.activeItem.has_modification) {
-    let content = `**风险类型**：${props.activeItem.risk_type || '未分类'}\n`
-    content += `**风险等级**：${translateRiskLevel(props.activeItem.risk_level)}\n\n`
-    content += `**相关原文**\n${props.activeItem.original_text}\n\n`
-
-    // 显示深度分析或描述
-    if (props.activeItem.analysis) {
-      content += `**风险分析**\n${props.activeItem.analysis}\n\n`
-    } else if (props.activeItem.description) {
-      content += `**风险描述**\n${props.activeItem.description}\n\n`
-    }
-
-    if (props.activeItem.reason) {
-      content += `**判定理由**\n${props.activeItem.reason}`
-    }
-
-    return {
-      role: 'assistant',
-      content,
-      isContext: true,
-      phase: 'analysis'
-    }
-  }
-
-  // 阶段2: 已生成修改建议
-  let content = `**原文**\n${props.activeItem.original_text}\n\n`
-  content += `**修改建议**\n${props.activeItem.suggested_text || props.currentSuggestion}\n\n`
-  if (props.activeItem.modification_reason) {
-    content += `**修改理由**\n${props.activeItem.modification_reason}`
-  }
-
-  return {
-    role: 'assistant',
-    content,
-    isContext: true,
-    phase: 'modification'
-  }
-})
-
-// 翻译风险等级
-function translateRiskLevel(level) {
-  const mapping = {
-    'high': '高风险',
-    'medium': '中风险',
-    'low': '低风险'
-  }
-  return mapping[level] || level || '未知'
-}
 
 // 自动调整输入框高度
 function autoResize() {
