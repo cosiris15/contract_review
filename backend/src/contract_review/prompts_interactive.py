@@ -19,7 +19,7 @@ from .prompts import (
     JURISDICTION_INSTRUCTIONS,
 )
 
-INTERACTIVE_PROMPT_VERSION = "1.3"  # 升级：优先输出业务相关风险，通用法律条款风险后置
+INTERACTIVE_PROMPT_VERSION = "1.4"  # 升级：增加语言不确定性风险识别（关键名词未定义、引用外部文档）
 
 
 # ==================== 多语言文本映射 ====================
@@ -65,6 +65,20 @@ UNIFIED_REVIEW_SYSTEM_PROMPT_WITH_STANDARDS = {
 4. 关注利益失衡：识别明显偏向对方的条款，以及对我方权利的不合理限制
 5. 发现隐藏陷阱：注意那些看似合理但在特定情况下会对我方造成重大不利的条款
 
+【语言不确定性风险 - 重点关注】
+这是法务审阅的核心价值之一，但请注意**只识别真正关键的问题，避免过度打扰**：
+
+1. **核心业务名词未定义**（仅限最关键的）：
+   - 只关注直接影响交易核心的名词：交易标的物、服务范围、交付成果等
+   - 例如：合同反复使用 "Products"、"Deliverables"、"Services" 等词指代买卖标的，但全文未给出定义
+   - **不要**对常见的、含义明确的通用词汇提出定义要求
+   - 判断标准：如果这个词的含义不明确，是否会直接导致"买的是什么"、"卖的是什么"、"要做什么"不清楚
+
+2. **引用外部文档但内容不明**：
+   - 合同条款引用、链接或提及其他协议、附件、标准、政策（如 "as defined in the Master Agreement"、"pursuant to Schedule A"）
+   - 被引用的文档未附在本合同中，或内容不可知
+   - 这意味着我方可能在不知情的情况下承担未知的权利义务，风险极高
+
 【输出格式】
 请以 JSON 格式输出，包含以下结构：
 ```json
@@ -106,12 +120,13 @@ UNIFIED_REVIEW_SYSTEM_PROMPT_WITH_STANDARDS = {
 
 【风险排序要求 - 重要】
 请按以下优先级顺序输出风险（最重要的排在最前面）：
-1. **业务特有风险**（最优先）：与我方具体业务场景、交易模式、行业特点直接相关的风险
-2. **财务直接损失风险**：可能导致我方直接经济损失的条款（如付款条件、违约金计算等）
-3. **履约操作风险**：可能影响我方实际履行合同的条款（如验收标准、交付要求等）
-4. **通用法律风险**（最后）：常见的法律条款问题（如责任上限、管辖权、不可抗力等）
+1. **语言不确定性风险**（最优先）：关键名词未定义、引用外部文档内容不明等，这些问题必须在签约前解决
+2. **业务特有风险**：与我方具体业务场景、交易模式、行业特点直接相关的风险
+3. **财务直接损失风险**：可能导致我方直接经济损失的条款（如付款条件、违约金计算等）
+4. **履约操作风险**：可能影响我方实际履行合同的条款（如验收标准、交付要求等）
+5. **通用法律风险**（最后）：常见的法律条款问题（如责任上限、管辖权、不可抗力等）
 
-说明：用户最需要关注的是与其业务密切相关的风险，而不是每份合同都会出现的通用法律条款问题。通用法律问题虽然也重要，但应该放在后面处理。
+说明：语言不确定性风险（定义不明、引用外部文档）是业务纠纷的根源，必须优先处理。用户最需要关注的是与其业务密切相关的风险，而不是每份合同都会出现的通用法律条款问题。
 
 【质量要求】
 - 每个风险分析必须具体到我方业务，不要写"法律教科书"式的泛泛分析
@@ -142,6 +157,20 @@ The following are the review standards for this review:
 3. Avoid generic statements: Don't just say "this clause is unreasonable" - say "this clause will cause our party to bear XX losses in XX situations"
 4. Focus on imbalances: Identify clauses that clearly favor the other party and unreasonable restrictions on our rights
 5. Discover hidden traps: Watch for clauses that seem reasonable but could cause significant harm to us under certain circumstances
+
+【Language Uncertainty Risks - Focus on Critical Issues Only】
+This is one of the core values of legal review, but **only flag truly critical issues to avoid over-alerting**:
+
+1. **Core Business Terms Undefined** (only the most critical):
+   - Only focus on terms that directly affect the core transaction: subject matter, scope of services, deliverables
+   - Example: Contract repeatedly uses "Products", "Deliverables", "Services" to refer to what's being bought/sold, but provides no definition
+   - **DO NOT** flag common terms with clear general meanings
+   - Judgment criteria: If this term's meaning is unclear, would it directly cause confusion about "what is being bought", "what is being sold", or "what needs to be done"?
+
+2. **References to External Documents with Unknown Content**:
+   - Contract clauses reference, link to, or mention other agreements, attachments, standards, or policies (e.g., "as defined in the Master Agreement", "pursuant to Schedule A")
+   - Referenced documents are not attached to this contract or their content is unknown
+   - This means our party may unknowingly assume unknown rights and obligations - EXTREMELY HIGH RISK
 
 【Output Format】
 Please output in JSON format with the following structure:
@@ -184,12 +213,13 @@ Please output in JSON format with the following structure:
 
 【Risk Ordering Requirements - IMPORTANT】
 Please output risks in the following priority order (most important first):
-1. **Business-specific risks** (highest priority): Risks directly related to our party's specific business scenarios, transaction models, and industry characteristics
-2. **Direct financial loss risks**: Clauses that may cause direct financial losses to our party (e.g., payment terms, penalty calculations)
-3. **Performance/operational risks**: Clauses that may affect our party's actual contract performance (e.g., acceptance criteria, delivery requirements)
-4. **Generic legal risks** (last): Common legal clause issues (e.g., liability caps, jurisdiction, force majeure)
+1. **Language uncertainty risks** (highest priority): Undefined key terms, references to unknown external documents - these must be resolved before signing
+2. **Business-specific risks**: Risks directly related to our party's specific business scenarios, transaction models, and industry characteristics
+3. **Direct financial loss risks**: Clauses that may cause direct financial losses to our party (e.g., payment terms, penalty calculations)
+4. **Performance/operational risks**: Clauses that may affect our party's actual contract performance (e.g., acceptance criteria, delivery requirements)
+5. **Generic legal risks** (last): Common legal clause issues (e.g., liability caps, jurisdiction, force majeure)
 
-Note: Users need to focus on risks closely related to their business, not generic legal clause issues that appear in every contract. Generic legal issues are important but should be addressed later.
+Note: Language uncertainty risks (undefined terms, external document references) are the root cause of business disputes and must be prioritized. Users need to focus on risks closely related to their business, not generic legal clause issues that appear in every contract.
 
 【Quality Requirements】
 - Each risk analysis must be specific to our party's business, not generic "legal textbook" analysis
@@ -439,6 +469,20 @@ Note: These are special requirements from the user for this specific review. Ple
 5. 关注利益失衡：识别明显偏向对方的条款，以及对我方权利的不合理限制
 6. 发现隐藏陷阱：注意那些看似合理但在特定情况下会对我方造成重大不利的条款
 
+【语言不确定性风险 - 重点关注】
+这是法务审阅的核心价值之一，但请注意**只识别真正关键的问题，避免过度打扰**：
+
+1. **核心业务名词未定义**（仅限最关键的）：
+   - 只关注直接影响交易核心的名词：交易标的物、服务范围、交付成果等
+   - 例如：合同反复使用 "Products"、"Deliverables"、"Services" 等词指代买卖标的，但全文未给出定义
+   - **不要**对常见的、含义明确的通用词汇提出定义要求
+   - 判断标准：如果这个词的含义不明确，是否会直接导致"买的是什么"、"卖的是什么"、"要做什么"不清楚
+
+2. **引用外部文档但内容不明**：
+   - 合同条款引用、链接或提及其他协议、附件、标准、政策（如"见主协议"、"按附件A执行"）
+   - 被引用的文档未附在本合同中，或内容不可知
+   - 这意味着我方可能在不知情的情况下承担未知的权利义务，风险极高
+
 【输出格式】
 请以 JSON 格式输出，包含以下结构：
 ```json
@@ -446,7 +490,7 @@ Note: These are special requirements from the user for this specific review. Ple
   "risks": [
     {{
       "risk_level": "high|medium|low",
-      "risk_type": "风险类型（如：责任条款、违约条款等）",
+      "risk_type": "风险类型（如：责任条款、违约条款、定义不明、引用外部文档等）",
       "description": "风险描述（一句话概括：该条款会导致我方面临什么具体风险）",
       "reason": "判定理由（为什么这对我方不利）",
       "analysis": "深度分析（必须包含：1. 对我方的具体影响是什么；2. 在什么业务场景下会触发这个风险；3. 可能造成的损失或不利后果；4. 对方可能如何利用这个条款）",
@@ -456,7 +500,7 @@ Note: These are special requirements from the user for this specific review. Ple
   "actions": [
     {{
       "related_risk_indices": [0, 1],
-      "action_type": "沟通协商|补充材料|法务确认|内部审批",
+      "action_type": "沟通协商|补充材料|法务确认|内部审批|要求明确定义|索取引用文档",
       "description": "具体行动描述（针对我方情况的可操作建议）",
       "urgency": "immediate|soon|normal"
     }}
@@ -471,12 +515,13 @@ Note: These are special requirements from the user for this specific review. Ple
 
 【风险排序要求 - 重要】
 请按以下优先级顺序输出风险（最重要的排在最前面）：
-1. **业务特有风险**（最优先）：与我方具体业务场景、交易模式、行业特点直接相关的风险
-2. **财务直接损失风险**：可能导致我方直接经济损失的条款（如付款条件、违约金计算等）
-3. **履约操作风险**：可能影响我方实际履行合同的条款（如验收标准、交付要求等）
-4. **通用法律风险**（最后）：常见的法律条款问题（如责任上限、管辖权、不可抗力等）
+1. **语言不确定性风险**（最优先）：关键名词未定义、引用外部文档内容不明等，这些问题必须在签约前解决
+2. **业务特有风险**：与我方具体业务场景、交易模式、行业特点直接相关的风险
+3. **财务直接损失风险**：可能导致我方直接经济损失的条款（如付款条件、违约金计算等）
+4. **履约操作风险**：可能影响我方实际履行合同的条款（如验收标准、交付要求等）
+5. **通用法律风险**（最后）：常见的法律条款问题（如责任上限、管辖权、不可抗力等）
 
-说明：用户最需要关注的是与其业务密切相关的风险，而不是每份合同都会出现的通用法律条款问题。通用法律问题虽然也重要，但应该放在后面处理。
+说明：语言不确定性风险（定义不明、引用外部文档）是业务纠纷的根源，必须优先处理。用户最需要关注的是与其业务密切相关的风险，而不是每份合同都会出现的通用法律条款问题。
 
 【质量要求】
 - 每个风险分析必须具体到我方业务，不要写"法律教科书"式的泛泛分析
@@ -547,12 +592,13 @@ Note: These are special requirements from the user for this specific review. Ple
 
 【风险排序要求 - 重要】
 请按以下优先级顺序输出风险（最重要的排在最前面）：
-1. **业务特有风险**（最优先）：与我方具体业务场景、交易模式、行业特点直接相关的风险
-2. **财务直接损失风险**：可能导致我方直接经济损失的条款（如付款条件、违约金计算等）
-3. **履约操作风险**：可能影响我方实际履行合同的条款（如验收标准、交付要求等）
-4. **通用法律风险**（最后）：常见的法律条款问题（如责任上限、管辖权、不可抗力等）
+1. **语言不确定性风险**（最优先）：关键名词未定义、引用外部文档内容不明等，这些问题必须在签约前解决
+2. **业务特有风险**：与我方具体业务场景、交易模式、行业特点直接相关的风险
+3. **财务直接损失风险**：可能导致我方直接经济损失的条款（如付款条件、违约金计算等）
+4. **履约操作风险**：可能影响我方实际履行合同的条款（如验收标准、交付要求等）
+5. **通用法律风险**（最后）：常见的法律条款问题（如责任上限、管辖权、不可抗力等）
 
-说明：用户最需要关注的是与其业务密切相关的风险，而不是每份合同都会出现的通用法律条款问题。
+说明：语言不确定性风险（定义不明、引用外部文档）是业务纠纷的根源，必须优先处理。用户最需要关注的是与其业务密切相关的风险，而不是每份合同都会出现的通用法律条款问题。
 
 【注意事项】
 - risks 数组中的每个风险点都应有对应的 modifications 条目（如果需要修改文本的话）
@@ -587,6 +633,20 @@ Apply common law principles, including but not limited to:
 5. Focus on imbalances: Identify clauses that clearly favor the other party and unreasonable restrictions on our rights
 6. Discover hidden traps: Watch for clauses that seem reasonable but could cause significant harm to us under certain circumstances
 
+【Language Uncertainty Risks - Focus on Critical Issues Only】
+This is one of the core values of legal review, but **only flag truly critical issues to avoid over-alerting**:
+
+1. **Core Business Terms Undefined** (only the most critical):
+   - Only focus on terms that directly affect the core transaction: subject matter, scope of services, deliverables
+   - Example: Contract repeatedly uses "Products", "Deliverables", "Services" to refer to what's being bought/sold, but provides no definition
+   - **DO NOT** flag common terms with clear general meanings
+   - Judgment criteria: If this term's meaning is unclear, would it directly cause confusion about "what is being bought", "what is being sold", or "what needs to be done"?
+
+2. **References to External Documents with Unknown Content**:
+   - Contract clauses reference, link to, or mention other agreements, attachments, standards, or policies (e.g., "as defined in the Master Agreement", "pursuant to Schedule A")
+   - Referenced documents are not attached to this contract or their content is unknown
+   - This means our party may unknowingly assume unknown rights and obligations - EXTREMELY HIGH RISK
+
 【Output Format】
 Please output in JSON format with the following structure:
 ```json
@@ -594,7 +654,7 @@ Please output in JSON format with the following structure:
   "risks": [
     {{
       "risk_level": "high|medium|low",
-      "risk_type": "Risk type (e.g., Liability, Breach, etc.)",
+      "risk_type": "Risk type (e.g., Liability, Breach, Undefined Terms, External References, etc.)",
       "description": "Risk description (one sentence: what specific risk does this clause expose our party to)",
       "reason": "Reasoning (why this is unfavorable to our party)",
       "analysis": "In-depth analysis (MUST include: 1. What is the specific impact on our party; 2. In what business scenarios would this risk be triggered; 3. Potential losses or adverse consequences; 4. How the other party might exploit this clause)",
@@ -604,7 +664,7 @@ Please output in JSON format with the following structure:
   "actions": [
     {{
       "related_risk_indices": [0, 1],
-      "action_type": "Negotiation|Additional Documents|Legal Review|Internal Approval",
+      "action_type": "Negotiation|Additional Documents|Legal Review|Internal Approval|Request Definition|Obtain Referenced Documents",
       "description": "Specific action description (actionable advice for our party's situation)",
       "urgency": "immediate|soon|normal"
     }}
@@ -619,12 +679,13 @@ Please output in JSON format with the following structure:
 
 【Risk Ordering Requirements - IMPORTANT】
 Please output risks in the following priority order (most important first):
-1. **Business-specific risks** (highest priority): Risks directly related to our party's specific business scenarios, transaction models, and industry characteristics
-2. **Direct financial loss risks**: Clauses that may cause direct financial losses to our party (e.g., payment terms, penalty calculations)
-3. **Performance/operational risks**: Clauses that may affect our party's actual contract performance (e.g., acceptance criteria, delivery requirements)
-4. **Generic legal risks** (last): Common legal clause issues (e.g., liability caps, jurisdiction, force majeure)
+1. **Language uncertainty risks** (highest priority): Undefined key terms, references to unknown external documents - these must be resolved before signing
+2. **Business-specific risks**: Risks directly related to our party's specific business scenarios, transaction models, and industry characteristics
+3. **Direct financial loss risks**: Clauses that may cause direct financial losses to our party (e.g., payment terms, penalty calculations)
+4. **Performance/operational risks**: Clauses that may affect our party's actual contract performance (e.g., acceptance criteria, delivery requirements)
+5. **Generic legal risks** (last): Common legal clause issues (e.g., liability caps, jurisdiction, force majeure)
 
-Note: Users need to focus on risks closely related to their business, not generic legal clause issues that appear in every contract. Generic legal issues are important but should be addressed later.
+Note: Language uncertainty risks (undefined terms, external document references) are the root cause of business disputes and must be prioritized. Users need to focus on risks closely related to their business, not generic legal clause issues that appear in every contract.
 
 【Quality Requirements】
 - Each risk analysis must be specific to our party's business, not generic "legal textbook" analysis
@@ -696,12 +757,13 @@ Please output in JSON format with the following structure:
 
 【Risk Ordering Requirements - IMPORTANT】
 Please output risks in the following priority order (most important first):
-1. **Business-specific risks** (highest priority): Risks directly related to our party's specific business scenarios, transaction models, and industry characteristics
-2. **Direct financial loss risks**: Clauses that may cause direct financial losses to our party (e.g., payment terms, penalty calculations)
-3. **Performance/operational risks**: Clauses that may affect our party's actual contract performance (e.g., acceptance criteria, delivery requirements)
-4. **Generic legal risks** (last): Common legal clause issues (e.g., liability caps, jurisdiction, force majeure)
+1. **Language uncertainty risks** (highest priority): Undefined key terms, references to unknown external documents - these must be resolved before signing
+2. **Business-specific risks**: Risks directly related to our party's specific business scenarios, transaction models, and industry characteristics
+3. **Direct financial loss risks**: Clauses that may cause direct financial losses to our party (e.g., payment terms, penalty calculations)
+4. **Performance/operational risks**: Clauses that may affect our party's actual contract performance (e.g., acceptance criteria, delivery requirements)
+5. **Generic legal risks** (last): Common legal clause issues (e.g., liability caps, jurisdiction, force majeure)
 
-Note: Users need to focus on risks closely related to their business, not generic legal clause issues that appear in every contract.
+Note: Language uncertainty risks (undefined terms, external document references) are the root cause of business disputes and must be prioritized. Users need to focus on risks closely related to their business, not generic legal clause issues that appear in every contract.
 
 【Important Notes】
 - Each risk in the risks array should have a corresponding modifications entry (if text modification is needed)
