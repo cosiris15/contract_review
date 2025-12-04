@@ -448,77 +448,139 @@ class SupabaseInteractiveManager:
             return 0
 
     def _build_initial_message(self, item: Dict[str, Any], item_type: str) -> str:
-        """构建初始 AI 消息"""
+        """
+        构建初始 AI 消息（对话式风格）
+
+        设计原则：
+        1. 用自然语言串联信息，而非字段罗列
+        2. 展示推理过程，让用户理解判断逻辑
+        3. 用口语化的方式引导互动
+        4. 项目符号用于列举理由，而非展示字段
+        """
         if item_type == "risk":
-            # 新模式：基于风险点的初始消息
-            risk_level = item.get("risk_level", "medium")
-            risk_type = item.get("risk_type", "")
-            description = item.get("description", "")
-            analysis = item.get("analysis", "")
-            reason = item.get("reason", "")
-            original_text = item.get("original_text", "")[:200]
-
-            return f"""根据初步审阅，发现以下风险点：
-
-**风险类型**：{risk_type}
-**风险等级**：{self._translate_risk_level(risk_level)}
-
-**相关原文**：
-{original_text}{"..." if len(item.get("original_text", "")) > 200 else ""}
-
-**风险描述**：
-{description}
-
-**判定理由**：
-{reason}
-
-**深度分析**：
-{analysis if analysis else "暂无深度分析"}
-
-请您仔细查看这个风险点。您可以：
-- 提问以了解更多细节
-- 讨论这个风险是否需要处理
-- 确认后我会为您生成修改建议
-"""
+            return self._build_risk_message(item)
         elif item_type == "modification":
-            risk_level = item.get("priority", "should")
-            original_text = item.get("original_text", "")[:100]
-            suggested_text = item.get("suggested_text", "")
-            reason = item.get("modification_reason", "")
-
-            return f"""根据初步审阅，发现以下需要修改的条款：
-
-**原文摘录**：
-{original_text}{"..." if len(item.get("original_text", "")) > 100 else ""}
-
-**修改优先级**：{self._translate_priority(risk_level)}
-
-**当前修改建议**：
-{suggested_text}
-
-**修改理由**：
-{reason}
-
-如果您对这个建议有任何意见，请告诉我您希望如何调整。例如：
-- "同意这个建议"
-- "赔偿限额太低了，建议改成XX万"
-- "为什么要这样修改？请解释"
-"""
+            return self._build_modification_message(item)
         else:  # action
-            action_type = item.get("action_type", "")
-            description = item.get("description", "")
-            urgency = item.get("urgency", "normal")
+            return self._build_action_message(item)
 
-            return f"""根据初步审阅，建议采取以下行动：
+    def _build_risk_message(self, item: Dict[str, Any]) -> str:
+        """构建风险点的对话式消息"""
+        risk_level = item.get("risk_level", "medium")
+        risk_type = item.get("risk_type", "")
+        description = item.get("description", "")
+        analysis = item.get("analysis", "")
+        reason = item.get("reason", "")
+        original_text = item.get("original_text", "")
 
-**行动类型**：{action_type}
-**紧急程度**：{self._translate_urgency(urgency)}
+        # 根据风险等级选择开场语气
+        if risk_level == "high":
+            opener = "我在审阅时发现了一个**需要重点关注**的问题。"
+        elif risk_level == "medium":
+            opener = "我注意到合同中有一处**值得关注**的条款。"
+        else:
+            opener = "这里有一个**可以优化**的地方，供您参考。"
 
-**具体建议**：
-{description}
+        # 构建原文引用（截取关键部分）
+        text_preview = original_text[:150] if len(original_text) > 150 else original_text
+        text_suffix = "..." if len(original_text) > 150 else ""
 
-如果您对这个建议有任何意见，请告诉我您希望如何调整。
-"""
+        # 构建消息主体
+        message = f"{opener}\n\n"
+
+        # 引用原文
+        if text_preview:
+            message += f"**相关条款：**\n> {text_preview}{text_suffix}\n\n"
+
+        # 风险说明（融入自然语言）
+        if risk_type:
+            message += f"这属于「{risk_type}」类型的风险"
+            if risk_level == "high":
+                message += "，风险等级较高。"
+            elif risk_level == "medium":
+                message += "，建议予以关注。"
+            else:
+                message += "，影响相对有限。"
+            message += "\n\n"
+
+        # 问题描述
+        if description:
+            message += f"**问题在于：**{description}\n\n"
+
+        # 推理过程（展示为什么这样判断）
+        if reason or analysis:
+            message += "**我的分析：**\n"
+            if analysis:
+                message += f"{analysis}\n"
+            elif reason:
+                message += f"{reason}\n"
+            message += "\n"
+
+        # 自然的交互引导
+        message += "您觉得这个问题需要处理吗？如果有任何疑问，我可以进一步解释。"
+
+        return message
+
+    def _build_modification_message(self, item: Dict[str, Any]) -> str:
+        """构建修改建议的对话式消息"""
+        priority = item.get("priority", "should")
+        original_text = item.get("original_text", "")
+        suggested_text = item.get("suggested_text", "")
+        reason = item.get("modification_reason", "")
+
+        # 根据优先级选择语气
+        if priority == "must":
+            opener = "这个条款**必须修改**，否则可能带来较大风险。"
+        elif priority == "should":
+            opener = "这个条款**建议修改**，可以更好地保护您的权益。"
+        else:
+            opener = "这个条款**可以考虑优化**，让表述更加严谨。"
+
+        message = f"{opener}\n\n"
+
+        # 原文
+        text_preview = original_text[:120] if len(original_text) > 120 else original_text
+        text_suffix = "..." if len(original_text) > 120 else ""
+        if text_preview:
+            message += f"**原文：**\n> {text_preview}{text_suffix}\n\n"
+
+        # 建议修改
+        if suggested_text:
+            message += f"**建议改为：**\n> {suggested_text}\n\n"
+
+        # 修改理由
+        if reason:
+            message += f"**理由：**{reason}\n\n"
+
+        message += "您可以直接采纳这个建议，也可以告诉我您希望如何调整。"
+
+        return message
+
+    def _build_action_message(self, item: Dict[str, Any]) -> str:
+        """构建行动建议的对话式消息"""
+        action_type = item.get("action_type", "")
+        description = item.get("description", "")
+        urgency = item.get("urgency", "normal")
+
+        # 根据紧急程度选择语气
+        if urgency == "immediate":
+            opener = "有一项**需要立即处理**的事项提醒您："
+        elif urgency == "soon":
+            opener = "建议您**尽快**关注以下事项："
+        else:
+            opener = "另外，有一个事项供您参考："
+
+        message = f"{opener}\n\n"
+
+        if action_type:
+            message += f"**类型：**{action_type}\n\n"
+
+        if description:
+            message += f"{description}\n\n"
+
+        message += "如果您对这个建议有疑问，可以告诉我。"
+
+        return message
 
     def _translate_priority(self, priority: str) -> str:
         """翻译优先级"""

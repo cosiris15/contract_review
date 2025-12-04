@@ -52,16 +52,42 @@ defineProps({
 
 defineEmits(['locate'])
 
-// 渲染消息内容（简单 Markdown 处理）
+// 渲染消息内容（Markdown 处理）
 function renderContent(content) {
   if (!content) return ''
 
-  let html = content
-    // 转义 HTML
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    // 换行
+  // 先处理引用块（在转义之前，因为需要识别 > 符号）
+  // 将连续的引用行合并为一个引用块
+  const lines = content.split('\n')
+  const processedLines = []
+  let inQuote = false
+  let quoteContent = []
+
+  for (const line of lines) {
+    if (line.startsWith('> ')) {
+      inQuote = true
+      quoteContent.push(line.slice(2))
+    } else {
+      if (inQuote) {
+        // 结束引用块
+        processedLines.push(`<blockquote>${quoteContent.join('<br>')}</blockquote>`)
+        quoteContent = []
+        inQuote = false
+      }
+      processedLines.push(line)
+    }
+  }
+  // 处理末尾的引用块
+  if (inQuote) {
+    processedLines.push(`<blockquote>${quoteContent.join('<br>')}</blockquote>`)
+  }
+
+  let html = processedLines.join('\n')
+    // 转义 HTML（但保留已处理的 blockquote）
+    .replace(/&(?!amp;|lt;|gt;)/g, '&amp;')
+    .replace(/<(?!\/?blockquote>|br>)/g, '&lt;')
+    .replace(/(?<!blockquote|br)>/g, '&gt;')
+    // 换行（但不处理 blockquote 内的）
     .replace(/\n/g, '<br>')
     // 粗体
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -69,6 +95,8 @@ function renderContent(content) {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     // 代码
     .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // 中文书名号样式
+    .replace(/「(.+?)」/g, '<span class="cn-quote">$1</span>')
 
   return html
 }
@@ -144,6 +172,24 @@ function renderContent(content) {
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   color: #111;
+}
+
+/* 引用块 */
+.message-text :deep(blockquote) {
+  margin: 8px 0;
+  padding: 10px 16px;
+  background: #f8f9fa;
+  border-left: 3px solid #667eea;
+  border-radius: 0 6px 6px 0;
+  color: #555;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 中文引号强调 */
+.message-text :deep(.cn-quote) {
+  color: #667eea;
+  font-weight: 500;
 }
 
 /* 定位按钮 */
