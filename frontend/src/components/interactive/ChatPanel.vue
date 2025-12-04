@@ -87,6 +87,13 @@
 
         <!-- 阶段2: 修改确认阶段（已生成修改建议） -->
         <template v-else>
+          <!-- Diff 对比视图 -->
+          <DiffView
+            v-if="activeItem?.original_text && editableSuggestion"
+            :original="activeItem.original_text"
+            :modified="editableSuggestion"
+          />
+
           <!-- 可编辑的修改建议 -->
           <div class="modification-editor">
             <div class="editor-label">
@@ -152,6 +159,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { ChatDotRound, CircleCheck, Close, Loading, Promotion, Check } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
+import DiffView from './DiffView.vue'
 
 const props = defineProps({
   items: {
