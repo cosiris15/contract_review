@@ -1322,19 +1322,110 @@ async function startUnifiedReview() {
   const progressMessage = hasStandards ? '正在基于审核标准进行审阅...' : '正在进行 AI 自主审阅...'
   store.progress = { stage: 'analyzing', percentage: 10, message: progressMessage }
 
-  try {
-    // 如果使用"直接传递"模式且有特殊要求，传递给后端
-    const directRequirements = (specialReqMode.value === 'direct' && specialRequirements.value.trim())
-      ? specialRequirements.value.trim()
-      : null
+  // 如果使用"直接传递"模式且有特殊要求，传递给后端
+  const directRequirements = (specialReqMode.value === 'direct' && specialRequirements.value.trim())
+    ? specialRequirements.value.trim()
+    : null
 
-    // 调用统一审阅 API
-    await interactiveApi.startUnifiedReview(taskId.value, {
-      llmProvider: 'deepseek',
-      useStandards: hasStandards,
-      businessLineId: selectedBusinessLineId.value,
-      specialRequirements: directRequirements
+  const reviewOptions = {
+    llmProvider: 'deepseek',
+    useStandards: hasStandards,
+    businessLineId: selectedBusinessLineId.value,
+    specialRequirements: directRequirements
+  }
+
+  // 优先使用流式审阅（SSE），失败时降级为普通轮询模式
+  try {
+    await startStreamReview(reviewOptions)
+  } catch (streamError) {
+    console.warn('流式审阅失败，降级为普通模式:', streamError)
+    await startFallbackReview(reviewOptions)
+  }
+}
+
+// 流式审阅（SSE 模式）- 边审边看
+async function startStreamReview(options) {
+  let firstRiskReceived = false
+  let riskCount = 0
+
+  try {
+    await interactiveApi.startUnifiedReviewStream(taskId.value, options, {
+      onStart: (data) => {
+        console.log('流式审阅开始:', data)
+        store.progress = { stage: 'analyzing', percentage: 15, message: 'AI 正在分析文档...' }
+      },
+
+      onProgress: (data) => {
+        store.progress = {
+          stage: 'analyzing',
+          percentage: data.percentage || 20,
+          message: data.message || '正在分析...'
+        }
+      },
+
+      onRisk: (data) => {
+        riskCount++
+        const riskData = data.data || {}
+        console.log(`收到风险点 #${riskCount}:`, riskData.risk_type)
+
+        // 第一条风险点到达时，立即跳转到交互界面
+        if (!firstRiskReceived) {
+          firstRiskReceived = true
+          store.progress = {
+            stage: 'partial_ready',
+            percentage: 85,
+            message: `第1条风险点已识别，可以开始处理...`
+          }
+
+          // 立即跳转（后台继续接收剩余风险）
+          setTimeout(async () => {
+            await store.loadTask(taskId.value)
+            router.push(`/interactive/${taskId.value}`)
+          }, 300)
+        } else {
+          // 后续风险更新进度
+          store.progress = {
+            stage: 'partial_ready',
+            percentage: Math.min(85 + riskCount, 95),
+            message: `已识别 ${riskCount} 个风险点...`
+          }
+        }
+      },
+
+      onComplete: async (data) => {
+        console.log('流式审阅完成:', data)
+        store.isReviewing = false
+        store.progress = { stage: 'completed', percentage: 100, message: '审阅完成' }
+
+        // 如果还没跳转（可能是 0 个风险的情况），现在跳转
+        if (!firstRiskReceived) {
+          await store.loadTask(taskId.value)
+          router.push(`/interactive/${taskId.value}`)
+        }
+      },
+
+      onError: (error) => {
+        console.error('流式审阅错误:', error)
+        // 抛出错误触发降级
+        throw error
+      }
     })
+  } catch (error) {
+    // 如果已经收到了第一条风险，说明部分成功，不需要降级
+    if (firstRiskReceived) {
+      console.log('流式审阅中断，但已有部分结果，继续使用')
+      return
+    }
+    // 否则抛出错误触发降级
+    throw error
+  }
+}
+
+// 降级模式 - 传统轮询
+async function startFallbackReview(options) {
+  try {
+    // 调用普通审阅 API
+    await interactiveApi.startUnifiedReview(taskId.value, options)
 
     // 开始轮询任务状态
     pollReviewStatus()
@@ -1358,7 +1449,20 @@ async function pollReviewStatus() {
       const response = await api.getTaskStatus(taskId.value)
       const taskStatus = response.data
 
-      if (taskStatus.status === 'completed') {
+      // partial_ready: 第一条风险已就绪，可以立即跳转让用户开始工作
+      if (taskStatus.status === 'partial_ready') {
+        clearInterval(pollInterval)
+        store.isReviewing = false
+        store.progress = { stage: 'partial_ready', percentage: 95, message: '第一条已就绪，正在准备更多...' }
+
+        // 刷新任务详情
+        await store.loadTask(taskId.value)
+
+        // 立即跳转到交互审阅页面（后台继续处理剩余风险）
+        setTimeout(() => {
+          router.push(`/interactive/${taskId.value}`)
+        }, 500)  // 缩短等待时间，让用户更快进入
+      } else if (taskStatus.status === 'completed') {
         clearInterval(pollInterval)
         store.isReviewing = false
         store.progress = { stage: 'completed', percentage: 100, message: '审阅完成' }
@@ -1369,7 +1473,7 @@ async function pollReviewStatus() {
         // 跳转到交互审阅页面（深度交互对话界面）
         setTimeout(() => {
           router.push(`/interactive/${taskId.value}`)
-        }, 1000)
+        }, 500)  // 缩短等待时间
       } else if (taskStatus.status === 'failed') {
         clearInterval(pollInterval)
         store.isReviewing = false

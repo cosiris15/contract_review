@@ -3789,40 +3789,110 @@ async def run_unified_review(
             progress_callback=progress_callback,
         )
 
-        # 保存结果
-        storage_manager.save_result(result)
+        # ==================== 增量保存优化 ====================
+        # 目的：让用户在 LLM 返回后立即进入讨论界面，无需等待所有风险点处理完毕
+        # 流程：
+        # 1. 立即保存第一条风险 → 状态改为 partial_ready → 用户可以跳转
+        # 2. 后台逐条追加剩余风险
+        # 3. 全部完成 → 状态改为 completed
 
-        # 为所有风险点创建对话记录（改造后基于 risks 而非 modifications）
         interactive_manager = get_interactive_manager()
-        risks_data = [
-            {
-                "id": risk.id,
-                "risk_level": risk.risk_level,
-                "risk_type": risk.risk_type,
-                "description": risk.description,
-                "analysis": risk.analysis,
-                "reason": risk.reason,
-                "original_text": risk.location.original_text if risk.location else "",
-            }
-            for risk in result.risks
-        ]
-        actions_data = [
-            {
-                "id": action.id,
-                "action_type": action.action_type,
-                "description": action.description,
-                "urgency": action.urgency,
-            }
-            for action in result.actions
-        ]
-        interactive_manager.initialize_chats_for_task(
-            task_id=task_id,
-            risks=risks_data,
-            actions=actions_data,
-        )
+        total_risks = len(result.risks)
 
-        # 更新任务
-        task.result = result
+        if total_risks > 0:
+            # === 阶段1：立即处理第一条风险 ===
+            first_risk = result.risks[0]
+            first_risk_data = {
+                "id": first_risk.id,
+                "risk_level": first_risk.risk_level,
+                "risk_type": first_risk.risk_type,
+                "description": first_risk.description,
+                "analysis": first_risk.analysis,
+                "reason": first_risk.reason,
+                "original_text": first_risk.location.original_text if first_risk.location else "",
+            }
+
+            # 创建只包含第一条风险的初始结果
+            from src.contract_review.models import ReviewResult, ReviewSummary
+            initial_result = ReviewResult(
+                task_id=task_id,
+                document_name=result.document_name,
+                document_path=result.document_path,
+                material_type=result.material_type,
+                our_party=result.our_party,
+                review_standards_used=result.review_standards_used,
+                language=result.language,
+                business_line_id=result.business_line_id,
+                business_line_name=result.business_line_name,
+                risks=[first_risk],  # 只包含第一条
+                modifications=[],
+                actions=[],
+                reviewed_at=result.reviewed_at,
+                llm_model=result.llm_model,
+                prompt_version=result.prompt_version,
+            )
+            initial_result.calculate_summary()
+
+            # 保存初始结果
+            storage_manager.save_result(initial_result)
+
+            # 为第一条风险创建对话记录
+            interactive_manager.initialize_single_chat(task_id, first_risk_data)
+
+            # 更新状态为 partial_ready（前端可以跳转了）
+            task.result = initial_result
+            task.update_status("partial_ready", f"第1条风险点已就绪（共{total_risks}条）")
+            task_manager.update_task(task)
+            logger.info(f"任务 {task_id} 第1条风险点已就绪，状态更新为 partial_ready")
+
+            # === 阶段2：后台逐条追加剩余风险 ===
+            for i, risk in enumerate(result.risks[1:], start=2):
+                risk_data = {
+                    "id": risk.id,
+                    "risk_level": risk.risk_level,
+                    "risk_type": risk.risk_type,
+                    "description": risk.description,
+                    "analysis": risk.analysis,
+                    "reason": risk.reason,
+                    "original_text": risk.location.original_text if risk.location else "",
+                }
+
+                # 追加风险到结果
+                storage_manager.append_risk_to_result(task_id, risk_data)
+
+                # 为该风险创建对话记录
+                interactive_manager.initialize_single_chat(task_id, risk_data)
+
+                # 更新进度（保持 partial_ready 状态）
+                task.update_progress("partial_ready", 95, f"已处理 {i}/{total_risks} 条风险点")
+                task_manager.update_task(task)
+                logger.debug(f"任务 {task_id} 追加第 {i} 条风险点")
+
+            # === 阶段3：处理行动建议并完成 ===
+            # 批量添加行动建议（不需要增量）
+            actions_data = [
+                {
+                    "id": action.id,
+                    "action_type": action.action_type,
+                    "description": action.description,
+                    "urgency": action.urgency,
+                }
+                for action in result.actions
+            ]
+            if actions_data:
+                interactive_manager.initialize_chats_for_task(
+                    task_id=task_id,
+                    risks=None,  # 风险已经单独处理
+                    actions=actions_data,
+                )
+
+        else:
+            # 没有风险点的情况（边界情况）
+            storage_manager.save_result(result)
+
+        # 重新加载完整结果并更新任务
+        final_result = storage_manager.load_result(task_id)
+        task.result = final_result
         task.update_status("completed", "审阅完成")
         task_manager.update_task(task)
 
@@ -3905,6 +3975,279 @@ async def start_unified_review(
         "task_id": task_id,
         "mode": "with_standards" if request.use_standards else "ai_autonomous"
     }
+
+
+# ==================== 流式审阅 SSE 端点 ====================
+
+
+async def stream_review_generator(
+    task_id: str,
+    user_id: str,
+    llm_provider: str = "deepseek",
+    use_standards: bool = False,
+    business_line_id: Optional[str] = None,
+    special_requirements: Optional[str] = None,
+):
+    """
+    流式审阅事件生成器
+
+    产出 SSE 格式的事件:
+    - event: start
+    - event: risk (每个风险点)
+    - event: progress
+    - event: complete
+    - event: error
+    """
+    import json as json_module
+
+    task = task_manager.get_task(task_id)
+    if not task:
+        yield f"event: error\ndata: {json_module.dumps({'message': '任务不存在'})}\n\n"
+        return
+
+    try:
+        # 更新状态为审阅中
+        if use_standards:
+            task.update_status("reviewing", "正在基于审核标准进行流式审阅...")
+        else:
+            task.update_status("reviewing", "正在进行 AI 流式审阅...")
+        task.review_mode = "interactive"
+        task_manager.update_task(task)
+
+        # 获取文档路径
+        doc_path = task_manager.get_document_path(task_id, user_id)
+        if not doc_path or not doc_path.exists():
+            yield f"event: error\ndata: {json_module.dumps({'message': '文档未上传或无法下载'})}\n\n"
+            task.update_status("failed", "文档未上传或无法下载")
+            task_manager.update_task(task)
+            return
+
+        # 加载文档
+        ocr_service = get_ocr_service()
+        document = await load_document_async(doc_path, ocr_service=ocr_service)
+
+        # 加载审核标准（如果需要）
+        review_standards = None
+        if use_standards:
+            std_path = task_manager.get_standard_path(task_id, user_id)
+            if not std_path or not std_path.exists():
+                yield f"event: error\ndata: {json_module.dumps({'message': '使用标准模式但未上传审核标准'})}\n\n"
+                task.update_status("failed", "使用标准模式但未上传审核标准")
+                task_manager.update_task(task)
+                return
+
+            from src.contract_review.standard_parser import parse_standard_file
+            standard_set = parse_standard_file(str(std_path))
+            review_standards = standard_set.standards
+            logger.info(f"流式审阅：已加载 {len(review_standards)} 条审核标准")
+
+        # 获取业务上下文
+        business_context = None
+        if business_line_id:
+            business_line = business_library_manager.get_business_line(business_line_id)
+            if business_line:
+                business_context = {
+                    "business_line_id": business_line.id,
+                    "business_line_name": business_line.name,
+                    "name": business_line.name,
+                    "industry": business_line.industry,
+                    "contexts": business_line.contexts,
+                }
+
+        # 创建交互审阅引擎
+        engine = InteractiveReviewEngine(settings, llm_provider=llm_provider)
+        interactive_manager = get_interactive_manager()
+
+        # 用于收集所有风险
+        all_risks = []
+        all_actions = []
+        final_summary = {}
+
+        # 调用流式审阅
+        async for event in engine.unified_review_stream(
+            document=document,
+            our_party=task.our_party,
+            material_type=task.material_type,
+            task_id=task_id,
+            language=getattr(task, 'language', 'zh-CN'),
+            review_standards=review_standards,
+            business_context=business_context,
+            special_requirements=special_requirements,
+        ):
+            event_type = event.get("event")
+
+            if event_type == "start":
+                yield f"event: start\ndata: {json_module.dumps({'task_id': task_id})}\n\n"
+
+            elif event_type == "progress":
+                yield f"event: progress\ndata: {json_module.dumps(event)}\n\n"
+                task.update_progress("reviewing", event.get("percentage", 0), event.get("message", ""))
+                task_manager.update_task(task)
+
+            elif event_type == "risk":
+                risk_data = event.get("data", {})
+                risk_index = event.get("index", 0)
+                all_risks.append(risk_data)
+
+                # 立即保存风险并创建对话记录
+                if risk_index == 0:
+                    # 第一条风险：创建初始结果并更新状态为 partial_ready
+                    from src.contract_review.models import ReviewResult, RiskPoint, TextLocation
+
+                    # 创建 RiskPoint 对象
+                    risk_point = RiskPoint(
+                        id=risk_data.get("id"),
+                        risk_level=risk_data.get("risk_level", "medium"),
+                        risk_type=risk_data.get("risk_type", "未分类"),
+                        description=risk_data.get("description", ""),
+                        analysis=risk_data.get("analysis", ""),
+                        reason=risk_data.get("reason", ""),
+                        location=TextLocation(
+                            original_text=risk_data.get("original_text", ""),
+                            context="",
+                        ) if risk_data.get("original_text") else None,
+                    )
+
+                    initial_result = ReviewResult(
+                        task_id=task_id,
+                        document_name=document.filename,
+                        document_path=str(doc_path),
+                        material_type=task.material_type,
+                        our_party=task.our_party,
+                        review_standards_used=[],
+                        language=getattr(task, 'language', 'zh-CN'),
+                        business_line_id=business_line_id,
+                        business_line_name=business_context.get("name") if business_context else None,
+                        risks=[risk_point],
+                        modifications=[],
+                        actions=[],
+                        llm_model=llm_provider,
+                        prompt_version="unified_stream_v1",
+                    )
+                    initial_result.calculate_summary()
+                    storage_manager.save_result(initial_result)
+
+                    # 创建第一条风险的对话记录
+                    interactive_manager.initialize_single_chat(task_id, risk_data)
+
+                    # 更新状态为 partial_ready
+                    task.result = initial_result
+                    task.update_status("partial_ready", "第1条风险点已就绪")
+                    task_manager.update_task(task)
+                    logger.info(f"流式审阅：任务 {task_id} 第1条风险点已就绪")
+                else:
+                    # 后续风险：追加保存
+                    storage_manager.append_risk_to_result(task_id, risk_data)
+                    interactive_manager.initialize_single_chat(task_id, risk_data)
+                    logger.debug(f"流式审阅：任务 {task_id} 追加第 {risk_index + 1} 条风险点")
+
+                # 发送风险事件到前端
+                yield f"event: risk\ndata: {json_module.dumps({'data': risk_data, 'index': risk_index})}\n\n"
+
+            elif event_type == "complete":
+                final_summary = event.get("summary", {})
+                all_actions = event.get("actions", [])
+
+                # 保存行动建议
+                if all_actions:
+                    interactive_manager.initialize_chats_for_task(
+                        task_id=task_id,
+                        risks=None,
+                        actions=all_actions,
+                    )
+
+                # 更新最终结果
+                final_result = storage_manager.load_result(task_id)
+                if final_result:
+                    task.result = final_result
+                task.update_status("completed", "审阅完成")
+                task_manager.update_task(task)
+
+                # 扣除配额
+                quota_service = get_quota_service()
+                await quota_service.deduct_quota(user_id, task_id=task_id)
+
+                logger.info(f"流式审阅：任务 {task_id} 完成，发现 {len(all_risks)} 个风险点")
+
+                yield f"event: complete\ndata: {json_module.dumps({'summary': final_summary, 'actions': all_actions, 'total_risks': len(all_risks)})}\n\n"
+
+            elif event_type == "error":
+                error_msg = event.get("message", "未知错误")
+                task.update_status("failed", error_msg)
+                task_manager.update_task(task)
+                yield f"event: error\ndata: {json_module.dumps({'message': error_msg})}\n\n"
+
+    except Exception as e:
+        logger.error(f"流式审阅失败: {e}", exc_info=True)
+        task.update_status("failed", str(e))
+        task_manager.update_task(task)
+        yield f"event: error\ndata: {json_module.dumps({'message': str(e)})}\n\n"
+
+
+@app.post("/api/tasks/{task_id}/unified-review-stream")
+async def start_unified_review_stream(
+    task_id: str,
+    request: UnifiedReviewRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    启动流式统一审阅（SSE）
+
+    与 unified-review 不同，此端点返回 SSE 流，实时推送审阅进度和风险点。
+    前端可以在审阅过程中就开始显示已识别的风险。
+
+    事件类型:
+    - start: 审阅开始 {"task_id": "..."}
+    - progress: 进度更新 {"percentage": 20, "message": "..."}
+    - risk: 新风险点 {"data": {...}, "index": 0}
+    - complete: 审阅完成 {"summary": {...}, "actions": [...], "total_risks": 5}
+    - error: 错误 {"message": "..."}
+    """
+    # 检查配额
+    quota_service = get_quota_service()
+    try:
+        await quota_service.check_quota(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if task.status == "reviewing":
+        raise HTTPException(status_code=400, detail="任务正在审阅中")
+
+    if not task.document_filename:
+        raise HTTPException(status_code=400, detail="请先上传待审阅文档")
+
+    # 如果使用标准模式，检查是否已上传标准
+    if request.use_standards and not task.standard_filename:
+        raise HTTPException(status_code=400, detail="使用标准模式需要先上传审核标准")
+
+    # 验证业务条线
+    if request.business_line_id:
+        business_line = business_library_manager.get_business_line(request.business_line_id)
+        if not business_line:
+            raise HTTPException(status_code=400, detail="指定的业务条线不存在")
+
+    # 返回 SSE 流
+    return StreamingResponse(
+        stream_review_generator(
+            task_id=task_id,
+            user_id=user_id,
+            llm_provider=request.llm_provider,
+            use_standards=request.use_standards,
+            business_line_id=request.business_line_id,
+            special_requirements=request.special_requirements,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
+    )
 
 
 async def run_quick_review(

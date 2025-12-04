@@ -86,6 +86,115 @@ export default {
   },
 
   /**
+   * 启动流式统一审阅（SSE）- 边审边返回风险点
+   * @param {string} taskId - 任务 ID
+   * @param {Object} options - 审阅选项
+   * @param {string} options.llmProvider - LLM 提供者（'deepseek' | 'gemini'）
+   * @param {boolean} options.useStandards - 是否使用审核标准（默认 false）
+   * @param {string} options.businessLineId - 业务条线 ID（可选）
+   * @param {string} options.specialRequirements - 本次特殊要求（可选）
+   * @param {Object} callbacks - 回调函数
+   * @param {Function} callbacks.onStart - 审阅开始 {task_id}
+   * @param {Function} callbacks.onProgress - 进度更新 {percentage, message}
+   * @param {Function} callbacks.onRisk - 收到新风险点 {data, index}
+   * @param {Function} callbacks.onComplete - 审阅完成 {summary, actions, total_risks}
+   * @param {Function} callbacks.onError - 错误 {message}
+   * @returns {Promise<void>}
+   */
+  async startUnifiedReviewStream(taskId, options = {}, callbacks = {}) {
+    const {
+      llmProvider = 'deepseek',
+      useStandards = false,
+      businessLineId = null,
+      specialRequirements = null
+    } = options
+    const { onStart, onProgress, onRisk, onComplete, onError } = callbacks
+
+    // 获取 token
+    let token = ''
+    if (getTokenFn) {
+      try {
+        token = await getTokenFn()
+      } catch (error) {
+        console.error('获取 token 失败:', error)
+      }
+    }
+
+    // 使用 fetch API 进行 SSE 请求
+    try {
+      const response = await fetch(`${API_BASE_URL}/tasks/${taskId}/unified-review-stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          llm_provider: llmProvider,
+          use_standards: useStandards,
+          business_line_id: businessLineId,
+          special_requirements: specialRequirements
+        })
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: '请求失败' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // 解析 SSE 事件
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // 保留未完成的行
+
+        let currentEvent = null
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ') && currentEvent) {
+            try {
+              const data = JSON.parse(line.slice(6))
+
+              switch (currentEvent) {
+                case 'start':
+                  if (onStart) onStart(data)
+                  break
+                case 'progress':
+                  if (onProgress) onProgress(data)
+                  break
+                case 'risk':
+                  if (onRisk) onRisk(data)
+                  break
+                case 'complete':
+                  if (onComplete) onComplete(data)
+                  break
+                case 'error':
+                  if (onError) onError(new Error(data.message))
+                  break
+              }
+            } catch (e) {
+              // 忽略无法解析的行
+              console.warn('SSE 解析失败:', line, e)
+            }
+            currentEvent = null
+          }
+        }
+      }
+    } catch (error) {
+      if (onError) onError(error)
+      throw error
+    }
+  },
+
+  /**
    * 启动快速初审（无标准审阅）- 保留向后兼容
    * @deprecated 请使用 startUnifiedReview 方法
    * @param {string} taskId - 任务 ID

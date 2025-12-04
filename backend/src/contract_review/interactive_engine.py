@@ -44,6 +44,7 @@ from .prompts import (
     build_batch_modification_messages,
     build_post_discussion_modification_messages,
 )
+from .stream_parser import IncrementalRiskParser
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +262,128 @@ class InteractiveReviewEngine:
             special_requirements=None,
             progress_callback=progress_callback,
         )
+
+    async def unified_review_stream(
+        self,
+        document: LoadedDocument,
+        our_party: str,
+        material_type: MaterialType,
+        task_id: str,
+        language: Language = "zh-CN",
+        review_standards: Optional[List[ReviewStandard]] = None,
+        business_context: Optional[Dict[str, Any]] = None,
+        special_requirements: Optional[str] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        流式统一审阅 - 边审边返回风险点
+
+        与 unified_review 不同，此方法使用流式输出，每解析出一个风险点就立即 yield，
+        让用户可以在 LLM 生成过程中就开始查看和处理风险。
+
+        Args:
+            document: 待审阅文档
+            our_party: 我方身份
+            material_type: 材料类型
+            task_id: 任务 ID
+            language: 语言
+            review_standards: 审核标准列表（可选）
+            business_context: 业务上下文（可选）
+            special_requirements: 特殊要求（可选）
+
+        Yields:
+            字典格式的事件:
+            - {"event": "start", "task_id": "..."}
+            - {"event": "risk", "data": {...风险数据...}, "index": 0}
+            - {"event": "progress", "percentage": 50, "message": "..."}
+            - {"event": "complete", "summary": {...}, "actions": [...]}
+            - {"event": "error", "message": "..."}
+        """
+        try:
+            yield {"event": "start", "task_id": task_id}
+
+            # 构建 Prompt
+            messages = build_unified_review_messages(
+                document_text=document.text,
+                our_party=our_party,
+                material_type=material_type,
+                language=language,
+                review_standards=review_standards,
+                business_context=business_context,
+                special_requirements=special_requirements,
+                skip_modifications=True,  # 流式模式只生成风险分析
+            )
+
+            yield {"event": "progress", "percentage": 10, "message": "开始分析文档..."}
+
+            # 创建增量解析器
+            parser = IncrementalRiskParser()
+            risk_index = 0
+
+            # 流式调用 LLM
+            # 注意：需要使用底层 LLM 客户端的流式方法
+            llm_client = self.llm.primary if hasattr(self.llm, 'primary') else self.llm
+
+            yield {"event": "progress", "percentage": 20, "message": "AI 正在分析文档..."}
+
+            async for chunk in llm_client.chat_stream(messages, max_output_tokens=8000):
+                # 喂入增量解析器
+                new_risks = parser.feed(chunk)
+
+                # 如果有新的风险被解析出来，立即 yield
+                for risk_data in new_risks:
+                    # 转换为标准格式
+                    risk = {
+                        "id": f"risk_{generate_id()}",
+                        "risk_level": risk_data.get("risk_level", "medium"),
+                        "risk_type": risk_data.get("risk_type", "未分类"),
+                        "description": risk_data.get("description", ""),
+                        "reason": risk_data.get("reason", ""),
+                        "analysis": risk_data.get("analysis", ""),
+                        "original_text": risk_data.get("original_text", ""),
+                    }
+
+                    yield {
+                        "event": "risk",
+                        "data": risk,
+                        "index": risk_index,
+                    }
+                    risk_index += 1
+
+                    # 更新进度（基于已解析的风险数量估算）
+                    progress = min(20 + risk_index * 10, 85)
+                    yield {
+                        "event": "progress",
+                        "percentage": progress,
+                        "message": f"已识别 {risk_index} 个风险点...",
+                    }
+
+            # 流式输出结束，解析最终结果
+            yield {"event": "progress", "percentage": 90, "message": "正在生成总结..."}
+
+            risks, actions, summary = parser.parse_final_result()
+
+            # 转换 actions 格式
+            actions_data = []
+            for i, action_data in enumerate(actions):
+                action = {
+                    "id": f"action_{generate_id()}",
+                    "action_type": action_data.get("action_type", ""),
+                    "description": action_data.get("description", ""),
+                    "urgency": action_data.get("urgency", "normal"),
+                    "related_risk_indices": action_data.get("related_risk_indices", []),
+                }
+                actions_data.append(action)
+
+            yield {
+                "event": "complete",
+                "summary": summary,
+                "actions": actions_data,
+                "total_risks": risk_index,
+            }
+
+        except Exception as e:
+            logger.error(f"流式审阅失败: {e}")
+            yield {"event": "error", "message": str(e)}
 
     def _parse_quick_review_response(
         self,

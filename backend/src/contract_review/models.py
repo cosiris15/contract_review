@@ -20,7 +20,7 @@ MaterialType = Literal["contract", "marketing"]
 RiskLevel = Literal["high", "medium", "low"]
 ModificationPriority = Literal["must", "should", "may"]
 ActionUrgency = Literal["immediate", "soon", "normal"]
-TaskStatus = Literal["created", "uploading", "reviewing", "completed", "failed"]
+TaskStatus = Literal["created", "uploading", "reviewing", "partial_ready", "completed", "failed"]
 
 # 支持的语言（简化为两种：中文-中国法律体系，英文-普通法体系）
 Language = Literal["zh-CN", "en"]

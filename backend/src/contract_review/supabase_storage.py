@@ -165,6 +165,57 @@ class SupabaseStorageManager:
             print(f"更新结果失败: {e}")
             return False
 
+    def append_risk_to_result(self, task_id: str, risk_data: dict) -> bool:
+        """
+        向已有结果追加一条风险点（增量模式）
+
+        用于增量保存场景：在第一条风险保存后，逐条追加后续风险点。
+
+        Args:
+            task_id: 任务 ID
+            risk_data: 风险点数据字典
+
+        Returns:
+            是否追加成功
+        """
+        from .models import RiskPoint, TextLocation
+
+        try:
+            # 加载现有结果
+            result = self.load_result(task_id)
+            if not result:
+                print(f"追加风险点失败：找不到任务 {task_id} 的结果")
+                return False
+
+            # 创建 RiskPoint 对象
+            location = None
+            if risk_data.get("original_text"):
+                location = TextLocation(original_text=risk_data.get("original_text", ""))
+
+            risk = RiskPoint(
+                id=risk_data.get("id", ""),
+                risk_level=risk_data.get("risk_level", "medium"),
+                risk_type=risk_data.get("risk_type", "未分类"),
+                description=risk_data.get("description", ""),
+                reason=risk_data.get("reason", ""),
+                analysis=risk_data.get("analysis"),
+                location=location,
+            )
+
+            # 追加到结果
+            result.risks.append(risk)
+
+            # 重新计算统计
+            result.calculate_summary()
+
+            # 保存更新
+            self.save_result(result)
+            return True
+
+        except Exception as e:
+            print(f"追加风险点失败: {e}")
+            return False
+
     def export_to_excel(self, task_dir_or_task_id) -> Optional[bytes]:
         """导出为 Excel"""
         result = self.load_result(task_dir_or_task_id)

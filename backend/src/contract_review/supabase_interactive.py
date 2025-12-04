@@ -447,6 +447,44 @@ class SupabaseInteractiveManager:
             logger.error(f"批量创建对话记录失败: {e}")
             return 0
 
+    def initialize_single_chat(self, task_id: str, risk: Dict[str, Any]) -> bool:
+        """
+        为单个风险点创建对话记录（增量模式）
+
+        用于增量保存场景：LLM 返回后立即保存第一条风险，让用户可以提前进入讨论界面。
+
+        Args:
+            task_id: 任务 ID
+            risk: 风险点数据字典，包含 id, risk_level, risk_type, description, analysis, reason, original_text
+
+        Returns:
+            是否创建成功
+        """
+        chat = InteractiveChat(
+            id=generate_id(),
+            task_id=task_id,
+            item_id=risk.get("id", ""),
+            item_type="risk",
+            current_suggestion=None,  # 风险阶段没有修改建议
+            status="pending",
+        )
+
+        # 添加初始 AI 消息（风险分析）
+        initial_content = self._build_initial_message(risk, "risk")
+        chat.messages.append(ChatMessage(
+            role="assistant",
+            content=initial_content,
+            suggestion_snapshot=None,
+        ))
+
+        try:
+            self.client.table(self.table_name).insert(self._chat_to_row(chat)).execute()
+            logger.info(f"创建单条对话记录成功: task={task_id}, risk={risk.get('id', '')}")
+            return True
+        except Exception as e:
+            logger.error(f"创建单条对话记录失败: {e}")
+            return False
+
     def _build_initial_message(self, item: Dict[str, Any], item_type: str) -> str:
         """
         构建初始 AI 消息（对话式风格）

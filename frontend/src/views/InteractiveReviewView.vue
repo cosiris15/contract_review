@@ -23,6 +23,10 @@
           <span class="current-index">{{ currentItemIndex + 1 }}</span>
           <span class="separator">/</span>
           <span class="total-count">{{ items.length }}</span>
+          <!-- 增量加载提示 -->
+          <span v-if="isLoadingMore" class="loading-more-hint">
+            <el-icon class="is-loading"><Loading /></el-icon>
+          </span>
         </div>
         <button
           class="switch-btn"
@@ -97,10 +101,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowRight, ArrowDown, Download, Document, Files } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, ArrowDown, Download, Document, Files, Loading } from '@element-plus/icons-vue'
 import DocumentViewer from '@/components/interactive/DocumentViewer.vue'
 import ChatPanel from '@/components/interactive/ChatPanel.vue'
 import interactiveApi from '@/api/interactive'
@@ -171,9 +175,23 @@ const isStreaming = computed(() => {
   return activeMessages.value.some(msg => msg.isStreaming)
 })
 
+// 增量加载状态
+const isLoadingMore = ref(false)
+let incrementalPollInterval = null
+
 // 加载数据
 onMounted(async () => {
   await loadData()
+
+  // 如果任务状态是 partial_ready，启动增量轮询获取新条目
+  if (task.value?.status === 'partial_ready') {
+    startIncrementalPolling()
+  }
+})
+
+// 组件卸载时清理轮询
+onUnmounted(() => {
+  stopIncrementalPolling()
 })
 
 async function loadData() {
@@ -219,6 +237,58 @@ async function loadDocumentText() {
   } finally {
     documentLoading.value = false
   }
+}
+
+// 增量轮询：当任务处于 partial_ready 状态时，持续获取新条目
+function startIncrementalPolling() {
+  isLoadingMore.value = true
+
+  incrementalPollInterval = setInterval(async () => {
+    try {
+      // 获取最新的条目列表
+      const itemsResponse = await interactiveApi.getInteractiveItems(taskId.value)
+      const newItems = itemsResponse.data?.items || []
+
+      // 检查是否有新条目（保持当前选中状态）
+      if (newItems.length > items.value.length) {
+        const currentActiveId = activeItemId.value
+        items.value = newItems
+
+        // 恢复选中状态
+        if (currentActiveId) {
+          const stillExists = newItems.find(i => i.id === currentActiveId)
+          if (!stillExists && newItems.length > 0) {
+            // 如果当前选中的条目不存在了，选择第一个
+            await selectItem(newItems[0])
+          }
+        }
+      }
+
+      // 检查任务是否已完成
+      const taskResponse = await api.getTaskStatus(taskId.value)
+      if (taskResponse.data.status === 'completed') {
+        stopIncrementalPolling()
+        // 更新本地任务状态
+        task.value.status = 'completed'
+      }
+    } catch (error) {
+      console.error('增量轮询失败:', error)
+    }
+  }, 3000)  // 每3秒检查一次
+
+  // 2分钟超时（防止无限轮询）
+  setTimeout(() => {
+    stopIncrementalPolling()
+  }, 2 * 60 * 1000)
+}
+
+// 停止增量轮询
+function stopIncrementalPolling() {
+  if (incrementalPollInterval) {
+    clearInterval(incrementalPollInterval)
+    incrementalPollInterval = null
+  }
+  isLoadingMore.value = false
 }
 
 // 选择条目
@@ -636,6 +706,12 @@ function goBack() {
 
 .total-count {
   color: #666;
+}
+
+.loading-more-hint {
+  margin-left: 6px;
+  color: #1890ff;
+  font-size: 12px;
 }
 
 .header-right {
