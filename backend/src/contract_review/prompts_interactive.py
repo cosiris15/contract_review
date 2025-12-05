@@ -359,15 +359,17 @@ Note: These are special requirements from the user for this specific review. The
     if language == "zh-CN":
         user_prompt = f"""请审阅以下文档并根据审核标准识别所有潜在风险：
 
-【待审阅文档】
+<<<DOCUMENT_START>>>
 {document_text}
+<<<DOCUMENT_END>>>
 
 请以 JSON 格式输出审阅结果。"""
     else:
         user_prompt = f"""Please review the following document and identify all potential risks based on the review standards:
 
-【Document to Review】
+<<<DOCUMENT_START>>>
 {document_text}
+<<<DOCUMENT_END>>>
 
 Please output the review results in JSON format."""
 
@@ -776,15 +778,17 @@ Note: Language uncertainty risks (undefined terms, external document references)
     if language == "zh-CN":
         user_prompt = f"""请审阅以下文档并识别所有潜在风险：
 
-【待审阅文档】
+<<<DOCUMENT_START>>>
 {document_text}
+<<<DOCUMENT_END>>>
 
 请以 JSON 格式输出审阅结果。"""
     else:
         user_prompt = f"""Please review the following document and identify all potential risks:
 
-【Document to Review】
+<<<DOCUMENT_START>>>
 {document_text}
+<<<DOCUMENT_END>>>
 
 Please output the review results in JSON format."""
 
@@ -948,15 +952,17 @@ def build_quick_review_messages(
     if language == "zh-CN":
         user_prompt = f"""请审阅以下文档并识别所有潜在风险：
 
-【待审阅文档】
+<<<DOCUMENT_START>>>
 {document_text}
+<<<DOCUMENT_END>>>
 
 请以 JSON 格式输出审阅结果。"""
     else:
         user_prompt = f"""Please review the following document and identify all potential risks:
 
-【Document to Review】
+<<<DOCUMENT_START>>>
 {document_text}
+<<<DOCUMENT_END>>>
 
 Please output the review results in JSON format."""
 
