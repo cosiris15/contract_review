@@ -85,7 +85,7 @@
     </div>
 
     <!-- 对话历史 -->
-    <div class="chat-history" ref="chatHistoryRef">
+    <div class="chat-history" ref="chatHistoryRef" @click="collapseNav">
       <!-- 空状态 -->
       <div v-if="!activeItem" class="empty-chat">
         <el-icon :size="48"><ChatDotRound /></el-icon>
@@ -108,7 +108,7 @@
     </div>
 
     <!-- 底部输入区 -->
-    <div v-if="activeItem" class="input-area">
+    <div v-if="activeItem" class="input-area" @click="collapseNav">
       <!-- 已完成提示 -->
       <div v-if="activeItem.chat_status === 'completed'" class="completed-banner">
         <el-icon><CircleCheck /></el-icon>
@@ -280,6 +280,13 @@ const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate', '
 
 // 导航折叠状态
 const navCollapsed = ref(false)
+
+// 点击聊天区域时收起条目列表
+function collapseNav() {
+  if (!navCollapsed.value) {
+    navCollapsed.value = true
+  }
+}
 
 // 已完成条目数
 const completedItemsCount = computed(() => {
@@ -505,10 +512,12 @@ onUnmounted(() => {
 
 /* 导航条目 */
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px;
+  padding-right: 12px;
   margin-bottom: 4px;
   border-radius: 8px;
   transition: all 0.2s;
@@ -570,9 +579,12 @@ onUnmounted(() => {
   -webkit-box-orient: vertical;
 }
 
-/* 快速采纳按钮 */
+/* 快速采纳按钮 - 默认隐藏不占用空间，悬停时显示 */
 .quick-accept-btn {
-  flex-shrink: 0;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 28px;
   height: 28px;
   display: flex;
@@ -584,11 +596,13 @@ onUnmounted(() => {
   color: #52c41a;
   cursor: pointer;
   opacity: 0;
+  visibility: hidden;
   transition: all 0.2s;
 }
 
 .nav-item:hover .quick-accept-btn {
   opacity: 1;
+  visibility: visible;
 }
 
 .quick-accept-btn:hover {
