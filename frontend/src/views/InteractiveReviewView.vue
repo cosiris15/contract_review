@@ -109,6 +109,8 @@
           @confirm-risk="confirmRisk"
           @skip="skipItem"
           @locate="scrollToHighlight"
+          @quick-accept="quickAcceptItem"
+          @batch-accept="batchAcceptByPriority"
         />
       </div>
     </div>
@@ -533,6 +535,101 @@ async function skipItem() {
   }
 }
 
+// 快速采纳单个条目（一键接受 AI 建议）
+async function quickAcceptItem(item) {
+  if (!item.suggested_text || !item.item_id) return
+
+  try {
+    // 直接使用 AI 的初始建议完成条目
+    await interactiveApi.completeItem(taskId.value, item.item_id, item.suggested_text)
+
+    // 更新本地状态
+    const localItem = items.value.find(i => i.id === item.id)
+    if (localItem) {
+      localItem.chat_status = 'completed'
+      localItem.status = 'completed'
+      localItem.current_suggestion = item.suggested_text
+      localItem.has_modification = true
+    }
+
+    ElMessage.success('已快速采纳')
+  } catch (error) {
+    console.error('快速采纳失败:', error)
+    ElMessage.error('快速采纳失败: ' + (error.message || '请重试'))
+  }
+}
+
+// 按优先级批量采纳
+async function batchAcceptByPriority(priority) {
+  // 找出所有符合条件的条目
+  const targetItems = items.value.filter(item =>
+    item.priority === priority &&
+    item.suggested_text &&
+    item.status !== 'completed' && item.chat_status !== 'completed' &&
+    !item.is_skipped && item.chat_status !== 'skipped'
+  )
+
+  if (targetItems.length === 0) {
+    ElMessage.info('没有可采纳的条目')
+    return
+  }
+
+  const priorityLabel = priority === 'should' ? '建议' : '可选'
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要批量采纳 ${targetItems.length} 个「${priorityLabel}」级别的条目吗？`,
+      '批量采纳确认',
+      {
+        confirmButtonText: '确定采纳',
+        cancelButtonText: '取消',
+        type: 'info'
+      }
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  // 显示加载状态
+  const loadingMsg = ElMessage({
+    message: `正在批量采纳 ${targetItems.length} 个条目...`,
+    type: 'info',
+    duration: 0
+  })
+
+  let successCount = 0
+  let failCount = 0
+
+  // 依次处理每个条目
+  for (const item of targetItems) {
+    try {
+      await interactiveApi.completeItem(taskId.value, item.item_id, item.suggested_text)
+
+      // 更新本地状态
+      const localItem = items.value.find(i => i.id === item.id)
+      if (localItem) {
+        localItem.chat_status = 'completed'
+        localItem.status = 'completed'
+        localItem.current_suggestion = item.suggested_text
+        localItem.has_modification = true
+      }
+
+      successCount++
+    } catch (error) {
+      console.error(`批量采纳失败 (${item.id}):`, error)
+      failCount++
+    }
+  }
+
+  loadingMsg.close()
+
+  if (failCount === 0) {
+    ElMessage.success(`已批量采纳 ${successCount} 个「${priorityLabel}」级别条目`)
+  } else {
+    ElMessage.warning(`批量采纳完成：成功 ${successCount} 个，失败 ${failCount} 个`)
+  }
+}
+
 // 构建讨论摘要
 function buildDiscussionSummary(messages) {
   if (!messages || messages.length === 0) return ''
@@ -569,6 +666,20 @@ async function goToNextPendingItem() {
   }
 }
 
+// 统计未处理条目
+function getPendingItemsStats() {
+  const pending = items.value.filter(item =>
+    item.status !== 'completed' && item.chat_status !== 'completed' &&
+    !item.is_skipped && item.chat_status !== 'skipped'
+  )
+
+  const mustCount = pending.filter(i => i.priority === 'must').length
+  const shouldCount = pending.filter(i => i.priority === 'should').length
+  const mayCount = pending.filter(i => i.priority === 'may').length
+
+  return { total: pending.length, mustCount, shouldCount, mayCount }
+}
+
 // 导出
 async function handleExport(format) {
   if (format === 'word') {
@@ -579,6 +690,37 @@ async function handleExport(format) {
     if (confirmedItems.length === 0) {
       ElMessage.warning('请先完成至少一个条目的修改建议后再导出')
       return
+    }
+
+    // 检查是否有未处理的条目
+    const stats = getPendingItemsStats()
+    if (stats.total > 0) {
+      // 构建提示信息
+      let detailMsg = `还有 ${stats.total} 个条目未处理：`
+      const parts = []
+      if (stats.mustCount > 0) parts.push(`${stats.mustCount} 个「必须」`)
+      if (stats.shouldCount > 0) parts.push(`${stats.shouldCount} 个「建议」`)
+      if (stats.mayCount > 0) parts.push(`${stats.mayCount} 个「可选」`)
+      detailMsg += parts.join('、')
+
+      // 如果有「必须」级别的未处理条目，给出更强的警告
+      const msgType = stats.mustCount > 0 ? 'warning' : 'info'
+      const confirmText = stats.mustCount > 0 ? '仍然导出' : '忽略并导出'
+
+      try {
+        await ElMessageBox.confirm(
+          detailMsg,
+          '存在未处理条目',
+          {
+            confirmButtonText: confirmText,
+            cancelButtonText: '返回处理',
+            type: msgType,
+            dangerouslyUseHTMLString: false
+          }
+        )
+      } catch {
+        return // 用户选择返回处理
+      }
     }
 
     // 调用现有的导出 Word 功能（带重试）

@@ -1,5 +1,89 @@
 <template>
   <div class="chat-panel">
+    <!-- 条目导航列表（可折叠） -->
+    <div class="item-nav-section" :class="{ collapsed: navCollapsed }">
+      <div class="nav-header" @click="navCollapsed = !navCollapsed">
+        <div class="nav-title">
+          <el-icon><List /></el-icon>
+          <span>条目列表</span>
+          <el-tag size="small" type="success">{{ completedItemsCount }}/{{ items.length }}</el-tag>
+        </div>
+        <el-icon class="collapse-icon" :class="{ rotated: !navCollapsed }">
+          <ArrowDown />
+        </el-icon>
+      </div>
+
+      <transition name="slide">
+        <div v-show="!navCollapsed" class="nav-list">
+          <!-- 批量操作栏 -->
+          <div v-if="hasPendingLowPriority" class="batch-actions">
+            <button
+              class="batch-btn"
+              @click="$emit('batch-accept', 'should')"
+              :disabled="loading"
+            >
+              <el-icon><Check /></el-icon>
+              采纳全部「建议」
+            </button>
+            <button
+              class="batch-btn"
+              @click="$emit('batch-accept', 'may')"
+              :disabled="loading"
+            >
+              <el-icon><Check /></el-icon>
+              采纳全部「可选」
+            </button>
+          </div>
+
+          <!-- 条目列表 -->
+          <div
+            v-for="item in items"
+            :key="item.id"
+            class="nav-item"
+            :class="{
+              active: activeItem?.id === item.id,
+              completed: item.status === 'completed' || item.chat_status === 'completed',
+              skipped: item.is_skipped || item.chat_status === 'skipped'
+            }"
+          >
+            <div class="nav-item-main" @click="$emit('select-item', item)">
+              <div class="nav-item-status">
+                <el-icon v-if="item.status === 'completed' || item.chat_status === 'completed'" color="#52c41a">
+                  <CircleCheck />
+                </el-icon>
+                <el-icon v-else-if="item.is_skipped || item.chat_status === 'skipped'" color="#999">
+                  <Remove />
+                </el-icon>
+                <el-icon v-else-if="item.status === 'in_progress'" color="#1890ff">
+                  <Loading class="is-loading" />
+                </el-icon>
+                <el-icon v-else color="#d9d9d9">
+                  <CirclePlus />
+                </el-icon>
+              </div>
+              <div class="nav-item-content">
+                <div class="nav-item-header">
+                  <el-tag :type="getPriorityType(item.priority)" size="small">
+                    {{ getPriorityLabel(item.priority) }}
+                  </el-tag>
+                </div>
+                <p class="nav-item-text">{{ truncateText(item.original_text || item.description, 40) }}</p>
+              </div>
+            </div>
+            <!-- 快速采纳按钮（仅对未处理且有建议的条目显示） -->
+            <button
+              v-if="canQuickAccept(item)"
+              class="quick-accept-btn"
+              @click.stop="$emit('quick-accept', item)"
+              :title="'直接采纳: ' + truncateText(item.suggested_text, 30)"
+            >
+              <el-icon><Check /></el-icon>
+            </button>
+          </div>
+        </div>
+      </transition>
+    </div>
+
     <!-- 对话历史 -->
     <div class="chat-history" ref="chatHistoryRef">
       <!-- 空状态 -->
@@ -156,8 +240,8 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onUnmounted } from 'vue'
-import { ChatDotRound, CircleCheck, Close, Loading, Promotion, Check, EditPen } from '@element-plus/icons-vue'
+import { ref, watch, nextTick, onUnmounted, computed } from 'vue'
+import { ChatDotRound, CircleCheck, CirclePlus, Close, Loading, Promotion, Check, EditPen, List, ArrowDown, Remove } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 import DiffView from './DiffView.vue'
 
@@ -192,7 +276,55 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate', 'confirm-risk', 'skip'])
+const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate', 'confirm-risk', 'skip', 'quick-accept', 'batch-accept'])
+
+// 导航折叠状态
+const navCollapsed = ref(false)
+
+// 已完成条目数
+const completedItemsCount = computed(() => {
+  return props.items.filter(item =>
+    item.status === 'completed' || item.chat_status === 'completed' ||
+    item.is_skipped || item.chat_status === 'skipped'
+  ).length
+})
+
+// 是否有未处理的低优先级条目（用于显示批量操作按钮）
+const hasPendingLowPriority = computed(() => {
+  return props.items.some(item =>
+    (item.priority === 'should' || item.priority === 'may') &&
+    item.status !== 'completed' && item.chat_status !== 'completed' &&
+    !item.is_skipped && item.chat_status !== 'skipped' &&
+    item.suggested_text
+  )
+})
+
+// 判断条目是否可以快速采纳
+function canQuickAccept(item) {
+  return (
+    item.suggested_text &&
+    item.status !== 'completed' && item.chat_status !== 'completed' &&
+    !item.is_skipped && item.chat_status !== 'skipped'
+  )
+}
+
+// 获取优先级标签类型
+function getPriorityType(priority) {
+  const types = { must: 'danger', should: 'warning', may: 'info' }
+  return types[priority] || 'info'
+}
+
+// 获取优先级标签文本
+function getPriorityLabel(priority) {
+  const labels = { must: '必须', should: '建议', may: '可选' }
+  return labels[priority] || priority
+}
+
+// 截断文本
+function truncateText(text, maxLength) {
+  if (!text) return ''
+  return text.length > maxLength ? text.slice(0, maxLength) + '...' : text
+}
 
 const inputText = ref('')
 const chatHistoryRef = ref(null)
@@ -290,6 +422,199 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: #fafafa;
+}
+
+/* 条目导航区域 */
+.item-nav-section {
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.nav-header:hover {
+  background: #fafafa;
+}
+
+.nav-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.collapse-icon {
+  color: #999;
+  transition: transform 0.3s;
+}
+
+.collapse-icon.rotated {
+  transform: rotate(180deg);
+}
+
+.nav-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+
+/* 批量操作栏 */
+.batch-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed #e5e5e5;
+}
+
+.batch-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.batch-btn:hover:not(:disabled) {
+  border-color: #52c41a;
+  color: #52c41a;
+  background: #f6ffed;
+}
+
+.batch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 导航条目 */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.nav-item:hover {
+  background: #f5f5f5;
+}
+
+.nav-item.active {
+  background: #e6f7ff;
+}
+
+.nav-item.completed {
+  opacity: 0.6;
+}
+
+.nav-item.skipped {
+  opacity: 0.5;
+}
+
+.nav-item.completed .nav-item-text {
+  text-decoration: line-through;
+  color: #999;
+}
+
+.nav-item-main {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.nav-item-status {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.nav-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-item-header {
+  margin-bottom: 4px;
+}
+
+.nav-item-text {
+  margin: 0;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 快速采纳按钮 */
+.quick-accept-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #52c41a;
+  border-radius: 6px;
+  background: #fff;
+  color: #52c41a;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.nav-item:hover .quick-accept-btn {
+  opacity: 1;
+}
+
+.quick-accept-btn:hover {
+  background: #52c41a;
+  color: #fff;
+}
+
+/* 过渡动画 */
+.slide-enter-active,
+.slide-leave-active {
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.slide-enter-from,
+.slide-leave-to {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.slide-enter-to,
+.slide-leave-from {
+  max-height: 300px;
+  opacity: 1;
 }
 
 /* 对话历史区域 */
