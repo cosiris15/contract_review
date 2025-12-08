@@ -7,6 +7,7 @@ Contract 业务数据库客户端
 import os
 from functools import lru_cache
 
+import httpx
 from supabase import create_client, Client
 
 
@@ -32,7 +33,14 @@ def get_supabase_client() -> Client:
             "Contract 数据库配置缺失。请设置环境变量 CONTRACT_DB_URL 和 CONTRACT_DB_KEY"
         )
 
-    return create_client(url, key)
+    # Supabase 默认 HTTPX 超时时间较短（读超时约 5s），在上传较大文件或
+    # 首次冷启动时容易触发超时，导致 500 错误。这里创建一个带较长超时的
+    # HTTP 客户端供 Supabase 使用。
+    http_client = httpx.Client(
+        timeout=httpx.Timeout(connect=10.0, read=120.0, write=120.0, pool=None)
+    )
+
+    return create_client(url, key, http_client=http_client)
 
 
 def get_storage_bucket():

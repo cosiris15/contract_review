@@ -3908,7 +3908,7 @@ async def run_unified_review(
                 raise ValueError("使用标准模式但未上传审核标准")
 
             from src.contract_review.standard_parser import parse_standard_file
-            standard_set = parse_standard_file(str(std_path))
+            standard_set = parse_standard_file(std_path)
             review_standards = standard_set.standards
             logger.info(f"已加载 {len(review_standards)} 条审核标准")
 
@@ -4196,7 +4196,7 @@ async def stream_review_generator(
                 return
 
             from src.contract_review.standard_parser import parse_standard_file
-            standard_set = parse_standard_file(str(std_path))
+            standard_set = parse_standard_file(std_path)
             review_standards = standard_set.standards
             logger.info(f"流式审阅：已加载 {len(review_standards)} 条审核标准")
 
