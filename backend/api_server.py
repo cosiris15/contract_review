@@ -2880,7 +2880,10 @@ async def preview_standards(file: UploadFile = File(...)):
 
 
 @app.post("/api/standards/save-to-library")
-async def save_standards_to_library(request: SaveToLibraryRequest):
+async def save_standards_to_library(
+    request: SaveToLibraryRequest,
+    user_id: str = Depends(get_current_user),
+):
     """将预览的标准保存到标准库（创建新集合）"""
     if not request.collection_name or not request.collection_name.strip():
         raise HTTPException(status_code=400, detail="集合名称不能为空")
@@ -2895,6 +2898,7 @@ async def save_standards_to_library(request: SaveToLibraryRequest):
         material_type=request.material_type,
         is_preset=False,
         language=request.language,
+        user_id=user_id,
     )
 
     # 2. 创建标准并关联到集合
@@ -2914,7 +2918,7 @@ async def save_standards_to_library(request: SaveToLibraryRequest):
     # 3. 批量添加到集合
     standard_ids = standard_library_manager.add_standards_to_collection(collection.id, standards)
 
-    logger.info(f"保存到标准库: 集合 {collection.name}，共 {len(standard_ids)} 条标准")
+    logger.info(f"保存到标准库: 集合 {collection.name}，共 {len(standard_ids)} 条标准，用户 {user_id}")
 
     return {
         "message": f"成功创建标准集「{collection.name}」，包含 {len(standard_ids)} 条标准",
