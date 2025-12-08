@@ -1270,8 +1270,8 @@ async function startReview() {
 async function startUnifiedReview() {
   store.isReviewing = true
 
-  // 判断是否使用标准
-  const hasStandards = selectedStandards.value.length > 0 && currentTask.value?.standard_filename
+  // 判断是否使用标准（确保是布尔值）
+  const hasStandards = !!(selectedStandards.value.length > 0 && currentTask.value?.standard_filename)
   const progressMessage = hasStandards ? '正在基于审核标准进行审阅...' : '正在进行 AI 自主审阅...'
   store.progress = { stage: 'analyzing', percentage: 10, message: progressMessage }
 
@@ -1282,7 +1282,7 @@ async function startUnifiedReview() {
 
   const reviewOptions = {
     llmProvider: 'deepseek',
-    useStandards: hasStandards,
+    useStandards: hasStandards,  // 现在确保是 true 或 false
     businessLineId: selectedBusinessLineId.value,
     specialRequirements: directRequirements
   }

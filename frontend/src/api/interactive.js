@@ -72,14 +72,17 @@ export default {
   startUnifiedReview(taskId, options = {}) {
     const {
       llmProvider = 'deepseek',
-      useStandards = false,
+      useStandards,
       businessLineId = null,
       specialRequirements = null
     } = options
 
+    // 确保 useStandards 是布尔值（防止 null/undefined 传递给后端）
+    const safeUseStandards = Boolean(useStandards)
+
     return api.post(`/tasks/${taskId}/unified-review`, {
       llm_provider: llmProvider,
-      use_standards: useStandards,
+      use_standards: safeUseStandards,
       business_line_id: businessLineId,
       special_requirements: specialRequirements
     })
@@ -104,11 +107,14 @@ export default {
   async startUnifiedReviewStream(taskId, options = {}, callbacks = {}) {
     const {
       llmProvider = 'deepseek',
-      useStandards = false,
+      useStandards,
       businessLineId = null,
       specialRequirements = null
     } = options
     const { onStart, onProgress, onRisk, onComplete, onError } = callbacks
+
+    // 确保 useStandards 是布尔值（防止 null/undefined 传递给后端）
+    const safeUseStandards = Boolean(useStandards)
 
     // 获取 token
     let token = ''
@@ -130,7 +136,7 @@ export default {
         },
         body: JSON.stringify({
           llm_provider: llmProvider,
-          use_standards: useStandards,
+          use_standards: safeUseStandards,
           business_line_id: businessLineId,
           special_requirements: specialRequirements
         })
