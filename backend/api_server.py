@@ -110,6 +110,39 @@ async def http_exception_handler(request, exc):
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """处理请求验证错误，返回更友好的错误信息"""
+    errors = exc.errors()
+    # 提取第一个错误的详细信息
+    if errors:
+        first_error = errors[0]
+        loc = " -> ".join(str(x) for x in first_error.get("loc", []))
+        msg = first_error.get("msg", "验证失败")
+        detail = f"参数验证失败 ({loc}): {msg}"
+    else:
+        detail = "请求参数验证失败"
+
+    # 记录详细的验证错误信息和请求内容
+    try:
+        body = await request.body()
+        body_str = body.decode('utf-8')[:500] if body else "(empty)"
+    except Exception:
+        body_str = "(unable to read body)"
+
+    logger.warning(f"请求验证失败 [{request.method} {request.url.path}]: {errors}")
+    logger.warning(f"请求体内容: {body_str}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": detail},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     logger.error(f"未捕获的异常: {exc}", exc_info=True)

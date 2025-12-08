@@ -138,7 +138,23 @@ export default {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: '请求失败' }))
-        throw new Error(error.detail || `HTTP ${response.status}`)
+        // 处理 detail 可能是对象或数组的情况（FastAPI 422 错误格式）
+        let errorMessage = `HTTP ${response.status}`
+        if (error.detail) {
+          if (typeof error.detail === 'string') {
+            errorMessage = error.detail
+          } else if (Array.isArray(error.detail)) {
+            // FastAPI 默认的 422 格式: [{loc: [...], msg: "...", type: "..."}]
+            const firstError = error.detail[0]
+            if (firstError && firstError.msg) {
+              const loc = (firstError.loc || []).join(' -> ')
+              errorMessage = `参数验证失败 (${loc}): ${firstError.msg}`
+            }
+          } else if (typeof error.detail === 'object') {
+            errorMessage = JSON.stringify(error.detail)
+          }
+        }
+        throw new Error(errorMessage)
       }
 
       const reader = response.body.getReader()
@@ -279,7 +295,22 @@ export default {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: '请求失败' }))
-        throw new Error(error.detail || `HTTP ${response.status}`)
+        // 处理 detail 可能是对象或数组的情况（FastAPI 422 错误格式）
+        let errorMessage = `HTTP ${response.status}`
+        if (error.detail) {
+          if (typeof error.detail === 'string') {
+            errorMessage = error.detail
+          } else if (Array.isArray(error.detail)) {
+            const firstError = error.detail[0]
+            if (firstError && firstError.msg) {
+              const loc = (firstError.loc || []).join(' -> ')
+              errorMessage = `参数验证失败 (${loc}): ${firstError.msg}`
+            }
+          } else if (typeof error.detail === 'object') {
+            errorMessage = JSON.stringify(error.detail)
+          }
+        }
+        throw new Error(errorMessage)
       }
 
       const reader = response.body.getReader()
