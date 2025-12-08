@@ -393,20 +393,42 @@ class SupabaseStandardLibraryManager:
 
     # ==================== 集合管理 ====================
 
-    def list_collections(self, language: Optional[str] = None) -> List[StandardCollection]:
+    def list_collections(
+        self,
+        user_id: Optional[str] = None,
+        language: Optional[str] = None,
+        include_preset: bool = True,
+    ) -> List[StandardCollection]:
         """
-        获取所有集合
+        获取集合列表（支持用户隔离）
 
         Args:
+            user_id: 用户ID，用于过滤用户自己的集合
             language: 按语言过滤 ("zh-CN" 或 "en")，None 表示返回所有
+            include_preset: 是否包含系统预设集合
 
         Returns:
-            集合列表
+            集合列表（预设集合 + 用户自己的集合）
         """
         query = self.client.table("standard_collections").select("*")
 
         if language:
             query = query.eq("language", language)
+
+        # 用户过滤：返回预设集合 + 用户自己的集合
+        if user_id:
+            if include_preset:
+                # is_preset=true OR user_id=当前用户
+                query = query.or_(f"is_preset.eq.true,user_id.eq.{user_id}")
+            else:
+                # 仅返回用户自己的集合
+                query = query.eq("user_id", user_id)
+        elif include_preset:
+            # 未登录时只返回预设集合
+            query = query.eq("is_preset", True)
+        else:
+            # 未登录且不包含预设，返回空
+            return []
 
         response = query.order("created_at", desc=True).execute()
 

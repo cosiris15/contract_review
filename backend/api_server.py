@@ -2167,17 +2167,26 @@ async def batch_create_library_standards(request: BatchCreateStandardsRequest):
 
 
 @app.get("/api/standard-library/standards/{standard_id}", response_model=StandardResponse)
-async def get_library_standard(standard_id: str):
-    """获取单条标准详情"""
+async def get_library_standard(
+    standard_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """获取单条标准详情（需要登录）"""
     standard = standard_library_manager.get_standard(standard_id)
-    if not standard:
-        raise HTTPException(status_code=404, detail="标准不存在")
+    _check_standard_access(standard, user_id, require_ownership=False)
     return _standard_to_response(standard)
 
 
 @app.put("/api/standard-library/standards/{standard_id}", response_model=StandardResponse)
-async def update_library_standard(standard_id: str, request: UpdateStandardRequest):
-    """更新标准"""
+async def update_library_standard(
+    standard_id: str,
+    request: UpdateStandardRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """更新标准（需要登录，只能更新自己集合内的标准）"""
+    standard = standard_library_manager.get_standard(standard_id)
+    _check_standard_access(standard, user_id, require_ownership=True)
+
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
 
     success = standard_library_manager.update_standard(standard_id, updates)
@@ -2190,8 +2199,14 @@ async def update_library_standard(standard_id: str, request: UpdateStandardReque
 
 
 @app.delete("/api/standard-library/standards/{standard_id}")
-async def delete_library_standard(standard_id: str):
-    """删除标准"""
+async def delete_library_standard(
+    standard_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """删除标准（需要登录，只能删除自己集合内的标准）"""
+    standard = standard_library_manager.get_standard(standard_id)
+    _check_standard_access(standard, user_id, require_ownership=True)
+
     success = standard_library_manager.delete_standard(standard_id)
     if not success:
         raise HTTPException(status_code=404, detail="标准不存在")
@@ -2319,13 +2334,76 @@ def _collection_to_response(collection, standards: list = None) -> CollectionRes
     return response
 
 
+def _check_collection_access(collection, user_id: str, require_ownership: bool = False):
+    """
+    检查用户是否有权限访问集合
+
+    Args:
+        collection: 集合对象
+        user_id: 当前用户 ID
+        require_ownership: 是否要求所有权（用于修改/删除操作）
+
+    Raises:
+        HTTPException: 如果无权限访问
+    """
+    if collection is None:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    # 预设集合所有人可读，但不可修改
+    if collection.is_preset:
+        if require_ownership:
+            raise HTTPException(status_code=403, detail="系统预设集合不可修改")
+        return  # 允许读取
+
+    # 用户只能访问自己的集合
+    if collection.user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权访问此集合")
+
+
+def _check_standard_access(standard, user_id: str, require_ownership: bool = False):
+    """
+    检查用户是否有权限访问标准
+
+    通过标准所属的集合来判断权限
+
+    Args:
+        standard: 标准对象
+        user_id: 当前用户 ID
+        require_ownership: 是否要求所有权（用于修改/删除操作）
+
+    Raises:
+        HTTPException: 如果无权限访问
+    """
+    if standard is None:
+        raise HTTPException(status_code=404, detail="标准不存在")
+
+    # 如果标准属于某个集合，检查集合权限
+    if standard.collection_id:
+        collection = standard_library_manager.get_collection(standard.collection_id)
+        if collection:
+            _check_collection_access(collection, user_id, require_ownership)
+            return
+
+    # 无归属标准：只读访问允许，修改需要管理员权限（暂时禁止）
+    if require_ownership:
+        raise HTTPException(status_code=403, detail="无法修改无归属的标准")
+
+
 @app.get("/api/standard-library/collections", response_model=List[CollectionResponse])
 async def list_collections(
     material_type: Optional[str] = None,
-    language: Optional[str] = Query(default=None, description="按语言筛选 (zh-CN 或 en)")
+    language: Optional[str] = Query(default=None, description="按语言筛选 (zh-CN 或 en)"),
+    user_id: str = Depends(get_current_user),
 ):
-    """获取所有标准集合"""
-    collections = standard_library_manager.list_collections(language=language)
+    """获取标准集合列表（需要登录）
+
+    返回系统预设集合 + 用户自己创建的集合
+    """
+    collections = standard_library_manager.list_collections(
+        user_id=user_id,
+        language=language,
+        include_preset=True,
+    )
 
     # 按材料类型筛选
     if material_type:
@@ -2335,17 +2413,24 @@ async def list_collections(
 
 
 @app.post("/api/standard-library/collections/recommend", response_model=List[CollectionRecommendationItem])
-async def recommend_collections(request: RecommendCollectionsRequest):
+async def recommend_collections(
+    request: RecommendCollectionsRequest,
+    user_id: str = Depends(get_current_user),
+):
     """
-    根据文档内容推荐标准集合（使用 LLM）
+    根据文档内容推荐标准集合（使用 LLM，需要登录）
 
     分析文档内容，根据各集合的 usage_instruction 推荐最适合的审核标准集合。
+    只推荐预设集合和用户自己的集合。
     """
     import json
     import re
 
-    # 获取所有可用集合
-    collections = standard_library_manager.list_collections()
+    # 获取用户可访问的集合（预设 + 自己的）
+    collections = standard_library_manager.list_collections(
+        user_id=user_id,
+        include_preset=True,
+    )
 
     # 按材料类型筛选
     if request.material_type:
@@ -2430,14 +2515,20 @@ async def recommend_collections(request: RecommendCollectionsRequest):
 
 
 @app.get("/api/standard-library/collections/{collection_id}", response_model=CollectionWithStandardsResponse)
-async def get_collection(collection_id: str):
-    """获取单个集合（包含标准列表）"""
+async def get_collection(
+    collection_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """获取单个集合（包含标准列表，需要登录）"""
     result = standard_library_manager.get_collection_with_standards(collection_id)
     if result is None:
         raise HTTPException(status_code=404, detail="集合不存在")
 
     collection = result["collection"]
     standards = result["standards"]
+
+    # 检查访问权限（预设集合可读，用户集合只能访问自己的）
+    _check_collection_access(collection, user_id, require_ownership=False)
 
     return CollectionWithStandardsResponse(
         id=collection.id,
@@ -2471,22 +2562,34 @@ class UpdateCollectionRequest(BaseModel):
 
 
 @app.post("/api/standard-library/collections", response_model=CollectionResponse)
-async def create_collection(request: CreateCollectionRequest):
-    """创建新的标准集合"""
+async def create_collection(
+    request: CreateCollectionRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """创建新的标准集合（需要登录）"""
     collection = standard_library_manager.add_collection(
         name=request.name,
         description=request.description,
         material_type=request.material_type,
         is_preset=False,
         language=request.language,
+        user_id=user_id,  # 关联到当前用户
     )
-    logger.info(f"创建标准集合: {collection.id} - {collection.name} (language={request.language})")
+    logger.info(f"创建标准集合: {collection.id} - {collection.name} (language={request.language}, user={user_id})")
     return _collection_to_response(collection)
 
 
 @app.put("/api/standard-library/collections/{collection_id}", response_model=CollectionResponse)
-async def update_collection(collection_id: str, request: UpdateCollectionRequest):
-    """更新集合信息"""
+async def update_collection(
+    collection_id: str,
+    request: UpdateCollectionRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """更新集合信息（需要登录，只能更新自己的集合）"""
+    # 先检查权限
+    collection = standard_library_manager.get_collection(collection_id)
+    _check_collection_access(collection, user_id, require_ownership=True)
+
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="没有提供要更新的字段")
@@ -2500,8 +2603,11 @@ async def update_collection(collection_id: str, request: UpdateCollectionRequest
 
 
 @app.post("/api/standard-library/collections/{collection_id}/generate-usage-instruction")
-async def generate_collection_usage_instruction(collection_id: str):
-    """为集合生成适用说明（使用 LLM）"""
+async def generate_collection_usage_instruction(
+    collection_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """为集合生成适用说明（使用 LLM，需要登录）"""
     # 获取集合信息
     result = standard_library_manager.get_collection_with_standards(collection_id)
     if result is None:
@@ -2509,6 +2615,9 @@ async def generate_collection_usage_instruction(collection_id: str):
 
     collection = result["collection"]
     standards = result["standards"]
+
+    # 检查权限（只有自己的集合才能生成适用说明）
+    _check_collection_access(collection, user_id, require_ownership=True)
 
     try:
         # 构建标准列表摘要
@@ -2552,8 +2661,16 @@ async def generate_collection_usage_instruction(collection_id: str):
 
 
 @app.delete("/api/standard-library/collections/{collection_id}")
-async def delete_collection(collection_id: str, force: bool = False):
-    """删除集合（连同删除所有风险点）"""
+async def delete_collection(
+    collection_id: str,
+    force: bool = False,
+    user_id: str = Depends(get_current_user),
+):
+    """删除集合（连同删除所有标准，需要登录）"""
+    # 检查权限
+    collection = standard_library_manager.get_collection(collection_id)
+    _check_collection_access(collection, user_id, require_ownership=True)
+
     success = standard_library_manager.delete_collection(collection_id, force=force)
     if not success:
         raise HTTPException(status_code=400, detail="集合不存在或为系统预设不可删除")
@@ -2568,11 +2685,11 @@ async def list_collection_standards(
     category: Optional[str] = None,
     risk_level: Optional[str] = None,
     keyword: Optional[str] = None,
+    user_id: str = Depends(get_current_user),
 ):
-    """获取集合内的标准列表（支持筛选）"""
+    """获取集合内的标准列表（支持筛选，需要登录）"""
     collection = standard_library_manager.get_collection(collection_id)
-    if not collection:
-        raise HTTPException(status_code=404, detail="集合不存在")
+    _check_collection_access(collection, user_id, require_ownership=False)
 
     standards = standard_library_manager.list_collection_standards(
         collection_id=collection_id,
@@ -2584,11 +2701,14 @@ async def list_collection_standards(
 
 
 @app.post("/api/standard-library/collections/{collection_id}/standards", response_model=StandardResponse)
-async def add_standard_to_collection(collection_id: str, request: CreateStandardRequest):
-    """向集合中添加单条标准"""
+async def add_standard_to_collection(
+    collection_id: str,
+    request: CreateStandardRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """向集合中添加单条标准（需要登录，只能添加到自己的集合）"""
     collection = standard_library_manager.get_collection(collection_id)
-    if not collection:
-        raise HTTPException(status_code=404, detail="集合不存在")
+    _check_collection_access(collection, user_id, require_ownership=True)
 
     standard = ReviewStandard(
         category=request.category,
@@ -2606,11 +2726,13 @@ async def add_standard_to_collection(collection_id: str, request: CreateStandard
 
 
 @app.get("/api/standard-library/collections/{collection_id}/categories", response_model=List[str])
-async def get_collection_categories(collection_id: str):
-    """获取集合内的所有分类"""
+async def get_collection_categories(
+    collection_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """获取集合内的所有分类（需要登录）"""
     collection = standard_library_manager.get_collection(collection_id)
-    if not collection:
-        raise HTTPException(status_code=404, detail="集合不存在")
+    _check_collection_access(collection, user_id, require_ownership=False)
 
     return standard_library_manager.get_collection_categories(collection_id)
 
