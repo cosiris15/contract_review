@@ -8,7 +8,7 @@ import os
 from functools import lru_cache
 
 import httpx
-from supabase import create_client, Client
+from supabase import Client, ClientOptions, create_client
 
 
 @lru_cache(maxsize=1)
@@ -40,7 +40,10 @@ def get_supabase_client() -> Client:
         timeout=httpx.Timeout(connect=10.0, read=120.0, write=120.0, pool=None)
     )
 
-    return create_client(url, key, http_client=http_client)
+    # Supabase 2.25+ 不再接受 http_client 位置参数，需通过 ClientOptions 传入
+    options = ClientOptions(httpx_client=http_client)
+
+    return create_client(url, key, options=options)
 
 
 def get_storage_bucket():
