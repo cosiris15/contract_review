@@ -3821,19 +3821,23 @@ class InteractiveItemResponse(BaseModel):
     risk_type: str = ""  # 风险类型
     description: str = ""  # 风险描述
     analysis: Optional[str] = None  # 深度分析
-    original_text: str  # 相关原文
+    original_text: str  # 相关原文（缺失条款类型可能为空）
     reason: str = ""  # 判定理由
     # 修改建议相关（用户确认后才有值）
     has_modification: bool = False
     modification_id: Optional[str] = None
     suggested_text: Optional[str] = None
     modification_reason: Optional[str] = None
+    is_addition: bool = False  # 是否为补充条款（True=新增条款，False=修改现有条款）
+    insertion_point: Optional[str] = None  # 补充条款的插入位置说明
     # 对话状态
     chat_status: str
     message_count: int
     last_updated: Optional[str] = None
     # 跳过状态
     is_skipped: bool = False
+    # 是否为缺失条款类型（没有原文的风险点）
+    is_missing_clause: bool = False
 
 
 class InteractiveItemsResponse(BaseModel):
@@ -4606,12 +4610,16 @@ async def get_interactive_items(
             modification_id=modification.id if modification else None,
             suggested_text=modification.suggested_text if modification else None,
             modification_reason=modification.modification_reason if modification else None,
+            is_addition=modification.is_addition if modification else False,
+            insertion_point=modification.insertion_point if modification else None,
             # 对话状态
             chat_status=chat.status if chat else "pending",
             message_count=len(chat.messages) if chat else 0,
             last_updated=chat.updated_at.isoformat() if chat else None,
             # 跳过状态（从 chat 元数据获取）
             is_skipped=getattr(chat, 'is_skipped', False) if chat else False,
+            # 是否为缺失条款类型（没有原文）
+            is_missing_clause=not original_text,
         ))
 
     # 获取统计
@@ -5309,27 +5317,42 @@ async def generate_single_modification(
     if risk.location and risk.location.original_text:
         original_text = risk.location.original_text
 
-    if not original_text:
-        raise HTTPException(status_code=400, detail="风险点没有可修改的原文")
+    # 根据是否有原文，选择生成修改建议或补充条款
+    engine = InteractiveReviewEngine(settings, llm_provider="deepseek")
 
-    # 生成修改建议
-    try:
-        engine = InteractiveReviewEngine(settings, llm_provider="deepseek")
-        modification = await engine.generate_single_modification(
-            risk_point=risk,
-            original_text=original_text,
-            our_party=result.our_party,
-            material_type=result.material_type,
-            discussion_summary=request.discussion_summary,
-            user_decision=request.user_decision,
-            language=result.language,
-        )
-    except Exception as e:
-        logger.error(f"生成单条修改建议失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"生成修改建议失败: {str(e)}")
+    if original_text:
+        # 有原文：生成修改建议
+        try:
+            modification = await engine.generate_single_modification(
+                risk_point=risk,
+                original_text=original_text,
+                our_party=result.our_party,
+                material_type=result.material_type,
+                discussion_summary=request.discussion_summary,
+                user_decision=request.user_decision,
+                language=result.language,
+            )
+        except Exception as e:
+            logger.error(f"生成单条修改建议失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"生成修改建议失败: {str(e)}")
+    else:
+        # 没有原文：生成补充条款建议（缺失条款类型）
+        logger.info(f"风险点 {risk_id} 没有原文，将生成补充条款建议")
+        try:
+            modification = await engine.generate_addition_clause(
+                risk_point=risk,
+                our_party=result.our_party,
+                material_type=result.material_type,
+                discussion_summary=request.discussion_summary,
+                user_decision=request.user_decision,
+                language=result.language,
+            )
+        except Exception as e:
+            logger.error(f"生成补充条款失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"生成补充条款失败: {str(e)}")
 
     if not modification:
-        raise HTTPException(status_code=500, detail="生成修改建议失败")
+        raise HTTPException(status_code=500, detail="生成建议失败")
 
     # 将修改建议添加到结果中
     existing = next((m for m in result.modifications if m.risk_id == risk_id), None)
@@ -5337,6 +5360,8 @@ async def generate_single_modification(
         existing.suggested_text = modification.suggested_text
         existing.modification_reason = modification.modification_reason
         existing.priority = modification.priority
+        existing.is_addition = modification.is_addition
+        existing.insertion_point = modification.insertion_point
     else:
         result.modifications.append(modification)
 
@@ -5351,6 +5376,8 @@ async def generate_single_modification(
         "suggested_text": modification.suggested_text,
         "modification_reason": modification.modification_reason,
         "priority": modification.priority,
+        "is_addition": modification.is_addition,
+        "insertion_point": modification.insertion_point,
     }
 
 

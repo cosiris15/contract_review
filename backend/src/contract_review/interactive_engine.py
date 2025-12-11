@@ -43,6 +43,7 @@ from .prompts_interactive import (
 from .prompts import (
     build_batch_modification_messages,
     build_post_discussion_modification_messages,
+    build_addition_clause_messages,
 )
 from .stream_parser import IncrementalRiskParser
 
@@ -868,4 +869,89 @@ class InteractiveReviewEngine:
             )
         except Exception as e:
             logger.error(f"创建 ModificationSuggestion 失败: {e}")
+            return None
+
+    async def generate_addition_clause(
+        self,
+        risk_point: RiskPoint,
+        our_party: str,
+        material_type: MaterialType,
+        discussion_summary: str,
+        user_decision: str,
+        language: Language = "zh-CN",
+    ) -> Optional[ModificationSuggestion]:
+        """
+        为缺失条款类型的风险点生成补充条款建议
+
+        当风险点指出合同缺少某些必要条款时（而不是现有条款有问题），
+        使用此方法生成建议添加的新条款。
+
+        Args:
+            risk_point: 风险点（描述缺失了什么条款）
+            our_party: 我方身份
+            material_type: 材料类型
+            discussion_summary: 与用户的讨论摘要
+            user_decision: 用户的最终决定
+            language: 审阅语言
+
+        Returns:
+            补充条款建议（is_addition=True），如果生成失败返回 None
+        """
+        logger.info(f"为风险点 {risk_point.id} 生成补充条款建议")
+
+        messages = build_addition_clause_messages(
+            risk_point=risk_point,
+            our_party=our_party,
+            material_type=material_type,
+            discussion_summary=discussion_summary,
+            user_decision=user_decision,
+            language=language,
+        )
+
+        try:
+            response = await self.llm.chat(messages, max_output_tokens=3000)
+            logger.info(f"补充条款 LLM 响应长度: {len(response)}")
+        except Exception as e:
+            logger.error(f"生成补充条款失败: {e}")
+            return None
+
+        # 解析响应
+        return self._parse_addition_clause_response(response, risk_point.id)
+
+    def _parse_addition_clause_response(
+        self,
+        response: str,
+        risk_id: str,
+    ) -> Optional[ModificationSuggestion]:
+        """解析补充条款的响应"""
+        # 清理响应
+        json_str = response
+        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            start = json_str.find('{')
+            end = json_str.rfind('}')
+            if start != -1 and end != -1:
+                json_str = json_str[start:end+1]
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"补充条款 JSON 解析失败: {e}")
+            return None
+
+        try:
+            return ModificationSuggestion(
+                id=f"add_{generate_id()}",
+                risk_id=risk_id,
+                original_text="",  # 补充条款没有原文
+                suggested_text=data.get("suggested_text", ""),
+                modification_reason=data.get("modification_reason", ""),
+                priority=data.get("priority", "should"),
+                is_addition=True,  # 标记为补充条款
+                insertion_point=data.get("insertion_point", "建议作为附加条款添加到合同末尾"),
+            )
+        except Exception as e:
+            logger.error(f"创建补充条款 ModificationSuggestion 失败: {e}")
             return None

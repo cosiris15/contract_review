@@ -1845,3 +1845,129 @@ Please generate modification suggestions for the above {len(confirmed_risks)} ri
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+def build_addition_clause_messages(
+    risk_point: RiskPoint,
+    our_party: str,
+    material_type: MaterialType,
+    discussion_summary: str,
+    user_decision: str,
+    document_context: str = "",
+    language: Language = "zh-CN",
+) -> List[Dict[str, Any]]:
+    """
+    构建生成补充条款的 Prompt
+
+    用于处理"缺失条款"类型的风险点，生成建议添加的新条款。
+
+    Args:
+        risk_point: 风险点（描述缺失了什么条款）
+        our_party: 我方身份
+        material_type: 材料类型
+        discussion_summary: 与用户的讨论摘要
+        user_decision: 用户的最终决定
+        document_context: 文档上下文（帮助理解应该在哪里插入）
+        language: 审阅语言
+
+    Returns:
+        消息列表
+    """
+    texts = TEXTS[language]
+    material_type_label = texts["material_type"][material_type]
+    risk_level_label = texts["risk_level"].get(risk_point.risk_level, texts["risk_level"]["medium"])
+
+    if language == "zh-CN":
+        system = f"""你是一位资深法务文本起草专家。
+你需要为合同中缺失的重要条款起草补充约定。
+
+【任务说明】
+用户发现合同中缺少某些必要的条款或约定，需要你根据风险描述和用户讨论，起草一条新的补充条款。
+
+【起草原则】
+1. 严格站在"{our_party}"的立场，起草的条款应充分保护我方利益
+2. 条款内容应直接针对识别出的风险，填补合同漏洞
+3. 使用规范的法律术语和表述
+4. 条款应具有可操作性，避免模糊不清的表述
+5. 与合同其他条款保持一致的风格和格式
+6. 参考用户在讨论中表达的具体需求
+
+【输出格式】
+输出纯 JSON 对象，不要添加 markdown 代码块标记，包含以下字段：
+- suggested_text: 建议补充的条款全文（可包含条款标题，如"第X条 XXXX"）
+- modification_reason: 补充理由（说明为什么需要补充此条款、如何保护我方利益）
+- priority: "must"（必须补充）| "should"（应该补充）| "may"（可以补充）
+- insertion_point: 建议的插入位置（如"建议作为附加条款添加到合同末尾"或"建议插入到第X条之后"）
+- alignment_note: 与用户意图的对齐说明
+
+只输出 JSON 对象，不要添加任何额外的解释或说明文字。"""
+
+        user = f"""【风险信息】
+- 风险类型: {risk_point.risk_type}
+- 风险等级: {risk_level_label}
+- 风险描述（说明缺失了什么）: {risk_point.description}
+- 判定理由: {risk_point.reason}
+
+【我方身份】
+{our_party}
+
+【文档类型】
+{material_type_label}
+
+【与用户的讨论摘要】
+{discussion_summary if discussion_summary else "（用户未进行详细讨论，请根据风险描述直接起草）"}
+
+【用户的最终决定】
+{user_decision if user_decision else "用户确认需要补充此条款"}
+
+请根据以上信息，起草一条补充条款。以纯 JSON 对象格式输出。"""
+
+    else:  # English
+        system = f"""You are a senior legal text drafting expert.
+You need to draft supplementary clauses for missing important provisions in the contract.
+
+【Task Description】
+The user has found that the contract lacks certain necessary clauses or provisions. You need to draft a new supplementary clause based on the risk description and user discussion.
+
+【Drafting Principles】
+1. Strictly protect the interests of "{our_party}" in the drafted clause
+2. The clause should directly address the identified risk and fill contract gaps
+3. Use standardized legal terminology and expressions
+4. The clause should be actionable, avoiding vague expressions
+5. Maintain consistent style and format with other contract clauses
+6. Reference specific needs expressed by the user in the discussion
+
+【Output Format】
+Output a pure JSON object without markdown code block markers, containing:
+- suggested_text: Full text of the suggested supplementary clause (may include clause title, e.g., "Article X: XXXX")
+- modification_reason: Reason for addition (explain why this clause is needed and how it protects our interests)
+- priority: "must" | "should" | "may"
+- insertion_point: Suggested insertion location (e.g., "Suggest adding as supplementary clause at the end of contract")
+- alignment_note: Alignment note with user intent
+
+Output only the JSON object, do not add any extra explanation."""
+
+        user = f"""【Risk Information】
+- Risk Type: {risk_point.risk_type}
+- Risk Level: {risk_level_label}
+- Risk Description (what is missing): {risk_point.description}
+- Judgment Reason: {risk_point.reason}
+
+【Our Party】
+{our_party}
+
+【Document Type】
+{material_type_label}
+
+【Discussion Summary with User】
+{discussion_summary if discussion_summary else "(User did not have detailed discussion, please draft based on risk description)"}
+
+【User's Final Decision】
+{user_decision if user_decision else "User confirms this clause needs to be added"}
+
+Please draft a supplementary clause based on the above information. Output in pure JSON object format."""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]

@@ -245,12 +245,14 @@ class ModificationSuggestion(BaseModel):
     """修改建议"""
     id: str = Field(default_factory=generate_id)
     risk_id: str  # 关联的风险点 ID
-    original_text: str  # 当前文本
-    suggested_text: str  # 建议修改为
+    original_text: str  # 当前文本（对于补充条款可为空）
+    suggested_text: str  # 建议修改为 / 建议补充的条款
     modification_reason: str  # 修改理由
     priority: ModificationPriority = "should"  # 优先级：必须/应该/可以
     user_confirmed: bool = False  # 用户是否确认
     user_modified_text: Optional[str] = None  # 用户修改后的文本
+    is_addition: bool = False  # 是否为补充条款（True=新增条款，False=修改现有条款）
+    insertion_point: Optional[str] = None  # 补充条款的插入位置说明（如"建议插入到合同末尾"）
 
 
 # ==================== 行动建议模型 ====================

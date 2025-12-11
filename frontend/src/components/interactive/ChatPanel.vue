@@ -67,7 +67,10 @@
                     {{ getPriorityLabel(item.priority) }}
                   </el-tag>
                 </div>
-                <p class="nav-item-text">{{ truncateText(item.original_text || item.description, 40) }}</p>
+                <p class="nav-item-text">
+                  <el-tag v-if="item.is_missing_clause" size="small" type="warning" class="missing-tag">缺失</el-tag>
+                  {{ truncateText(item.original_text || item.description, item.is_missing_clause ? 30 : 40) }}
+                </p>
               </div>
             </div>
             <!-- 快速采纳按钮（仅对未处理且有建议的条目显示） -->
@@ -147,7 +150,11 @@
             </button>
           </div>
           <div class="input-footer">
-            <span class="phase-hint">讨论完成后，点击右侧按钮生成修改方案</span>
+            <span class="phase-hint">
+              {{ activeItem?.is_missing_clause
+                ? '讨论完成后，点击右侧按钮生成补充条款'
+                : '讨论完成后，点击右侧按钮生成修改方案' }}
+            </span>
             <div class="action-buttons">
               <button
                 class="skip-btn"
@@ -163,31 +170,39 @@
               >
                 <el-icon v-if="confirmingRisk" class="is-loading"><Loading /></el-icon>
                 <el-icon v-else><EditPen /></el-icon>
-                {{ confirmingRisk ? '生成中...' : '修改' }}
+                {{ confirmingRisk ? '生成中...' : (activeItem?.is_missing_clause ? '补充' : '修改') }}
               </button>
             </div>
           </div>
         </template>
 
-        <!-- 阶段2: 修改确认阶段（已生成修改建议） -->
+        <!-- 阶段2: 修改确认阶段（已生成修改建议或补充条款） -->
         <template v-else>
-          <!-- Diff 对比视图 -->
+          <!-- Diff 对比视图（仅对修改类型显示） -->
           <DiffView
-            v-if="activeItem?.original_text && editableSuggestion"
+            v-if="activeItem?.original_text && editableSuggestion && !activeItem?.is_addition"
             :original="activeItem.original_text"
             :modified="editableSuggestion"
           />
 
-          <!-- 可编辑的修改建议 -->
+          <!-- 补充条款插入位置提示 -->
+          <div v-if="activeItem?.is_addition && activeItem?.insertion_point" class="insertion-hint">
+            <el-icon><Location /></el-icon>
+            <span>{{ activeItem.insertion_point }}</span>
+          </div>
+
+          <!-- 可编辑的修改建议/补充条款 -->
           <div class="modification-editor">
             <div class="editor-label">
-              <span>修改建议（可编辑）</span>
-              <el-tag size="small" type="success">已生成</el-tag>
+              <span>{{ activeItem?.is_addition ? '补充条款（可编辑）' : '修改建议（可编辑）' }}</span>
+              <el-tag size="small" :type="activeItem?.is_addition ? 'warning' : 'success'">
+                {{ activeItem?.is_addition ? '新增条款' : '已生成' }}
+              </el-tag>
             </div>
             <textarea
               v-model="editableSuggestion"
               class="suggestion-textarea"
-              rows="4"
+              :rows="activeItem?.is_addition ? 6 : 4"
               :disabled="loading"
             ></textarea>
           </div>
@@ -214,7 +229,9 @@
             </button>
           </div>
           <div class="input-footer">
-            <span class="phase-hint">修改阶段 - 确认建议后提交</span>
+            <span class="phase-hint">
+              {{ activeItem?.is_addition ? '补充阶段 - 确认条款后提交' : '修改阶段 - 确认建议后提交' }}
+            </span>
             <div class="action-buttons">
               <button
                 class="skip-btn"
@@ -229,7 +246,7 @@
                 :disabled="loading"
               >
                 <el-icon><Check /></el-icon>
-                提交修改
+                {{ activeItem?.is_addition ? '提交补充' : '提交修改' }}
               </button>
             </div>
           </div>
@@ -241,7 +258,7 @@
 
 <script setup>
 import { ref, watch, nextTick, onUnmounted, computed } from 'vue'
-import { ChatDotRound, CircleCheck, CirclePlus, Close, Loading, Promotion, Check, EditPen, List, ArrowDown, Remove } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheck, CirclePlus, Close, Loading, Promotion, Check, EditPen, List, ArrowDown, Remove, Location } from '@element-plus/icons-vue'
 import ChatMessage from './ChatMessage.vue'
 import DiffView from './DiffView.vue'
 
@@ -579,6 +596,11 @@ onUnmounted(() => {
   -webkit-box-orient: vertical;
 }
 
+.nav-item-text .missing-tag {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
 /* 快速采纳按钮 - 默认隐藏不占用空间，悬停时显示 */
 .quick-accept-btn {
   position: absolute;
@@ -768,6 +790,25 @@ onUnmounted(() => {
 .send-btn:disabled {
   background: #d9d9d9;
   cursor: not-allowed;
+}
+
+/* 插入位置提示 */
+.insertion-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #fff7e6 0%, #fffbe6 100%);
+  border: 1px solid #ffd591;
+  border-radius: 8px;
+  color: #d46b08;
+  font-size: 13px;
+}
+
+.insertion-hint .el-icon {
+  color: #fa8c16;
+  font-size: 16px;
 }
 
 /* 修改建议编辑器 */
