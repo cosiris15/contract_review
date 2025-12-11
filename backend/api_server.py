@@ -5035,7 +5035,8 @@ async def complete_item(
                 break
 
         # 如果没有找到对应的 modification，可能需要创建一个新的
-        if not found and item_id.startswith("risk_"):
+        # 注意：RiskPoint.id 是一个简短的 UUID（如 a1b2c3d4），不是以 risk_ 开头
+        if not found:
             # 查找对应的风险点
             risk = next((r for r in result.risks if r.id == item_id), None)
             if risk:

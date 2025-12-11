@@ -102,6 +102,17 @@ api.interceptors.request.use(
   }
 )
 
+// 辅助函数：从 Blob 中提取错误详情
+async function extractErrorFromBlob(blob) {
+  try {
+    const text = await blob.text()
+    const json = JSON.parse(text)
+    return json.detail || null
+  } catch {
+    return null
+  }
+}
+
 // 响应拦截器 - 详细错误处理
 api.interceptors.response.use(
   response => {
@@ -112,7 +123,7 @@ api.interceptors.response.use(
     console.log(`[API] 响应成功: ${response.config.url}`)
     return response
   },
-  error => {
+  async error => {
     connectionState.setConnecting(false)
 
     let errorInfo = {
@@ -138,7 +149,11 @@ api.interceptors.response.use(
       }
     } else if (error.response) {
       const status = error.response.status
-      const detail = error.response.data?.detail
+      // 当 responseType 为 blob 时，错误响应的 data 也是 Blob，需要特殊处理
+      let detail = error.response.data?.detail
+      if (!detail && error.response.data instanceof Blob) {
+        detail = await extractErrorFromBlob(error.response.data)
+      }
 
       // 识别配额不足错误 (403 + 特定消息)
       if (status === 403 && detail && (detail.includes('配额') || detail.includes('quota') || detail.includes('Quota'))) {
