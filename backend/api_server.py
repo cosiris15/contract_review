@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # 加载 .env 文件（本地开发用）
@@ -95,6 +96,9 @@ app.add_middleware(
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from postgrest.exceptions import APIError as PostgrestAPIError
+import ast
+import json as json_module
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -143,6 +147,46 @@ async def validation_exception_handler(request, exc):
     )
 
 
+def _extract_supabase_detail_message(details: str) -> Optional[str]:
+    if not details:
+        return None
+    try:
+        if details.startswith("b'") or details.startswith('b"'):
+            details_bytes = ast.literal_eval(details)
+            if isinstance(details_bytes, (bytes, bytearray)):
+                details = details_bytes.decode("utf-8", errors="replace")
+        payload = json_module.loads(details)
+        if isinstance(payload, dict):
+            return payload.get("message")
+    except Exception:
+        return None
+    return None
+
+
+@app.exception_handler(PostgrestAPIError)
+async def postgrest_exception_handler(request, exc):
+    detail_message = _extract_supabase_detail_message(exc.details or "")
+    combined = " ".join(
+        text for text in [detail_message, exc.message, exc.hint, exc.details] if text
+    )
+    if "exceed_storage_size_quota" in combined:
+        detail = "Supabase 项目存储已超限，服务被限制。请清理存储或联系 Supabase 支持（https://supabase.help）。"
+        status_code = 503
+    else:
+        detail = detail_message or exc.message or "Supabase 请求失败"
+        status_code = int(exc.code) if exc.code and exc.code.isdigit() else 502
+    logger.error(f"Supabase 请求失败: {combined}")
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": detail},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     logger.error(f"未捕获的异常: {exc}", exc_info=True)
@@ -169,6 +213,56 @@ else:
     logger.info("使用本地文件存储后端")
     task_manager = TaskManager(settings.review.tasks_dir)
     storage_manager = StorageManager(settings.review.tasks_dir)
+
+# ==================== Storage 清理任务 ====================
+
+_storage_cleanup_task = None
+
+
+async def _scheduled_storage_cleanup():
+    from src.contract_review.storage_cleanup import cleanup_old_files_async, get_retention_days
+
+    while True:
+        try:
+            now = datetime.utcnow()
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target = target + timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            logger.info(
+                f"📅 下次 Storage 清理任务: {target.isoformat()} UTC "
+                f"(等待 {wait_seconds/3600:.1f} 小时)"
+            )
+            await asyncio.sleep(wait_seconds)
+            retention_days = get_retention_days()
+            logger.info(f"🧹 开始执行 Storage 清理任务 (保留 {retention_days} 天)...")
+            result = await cleanup_old_files_async(retention_days)
+            logger.info(
+                f"🧹 清理完成: 删除 {result['files_deleted']} 文件, "
+                f"失败 {result['files_failed']} 文件"
+            )
+        except asyncio.CancelledError:
+            logger.info("📅 Storage 清理任务已取消")
+            break
+        except Exception as exc:
+            logger.error(f"📅 Storage 清理任务异常: {exc}")
+            await asyncio.sleep(3600)
+
+
+@app.on_event("startup")
+async def _start_storage_cleanup_task():
+    global _storage_cleanup_task
+    if USE_SUPABASE:
+        _storage_cleanup_task = asyncio.create_task(_scheduled_storage_cleanup())
+        logger.info("📅 Storage 清理任务已启动 (每日 03:00 UTC 执行)")
+
+
+@app.on_event("shutdown")
+async def _stop_storage_cleanup_task():
+    global _storage_cleanup_task
+    if _storage_cleanup_task:
+        _storage_cleanup_task.cancel()
+        _storage_cleanup_task = None
 
 formatter = ResultFormatter()
 
