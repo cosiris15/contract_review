@@ -336,6 +336,7 @@ export default {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
+      let currentEvent = null // 当前事件类型
 
       while (true) {
         const { done, value } = await reader.read()
@@ -348,49 +349,52 @@ export default {
         buffer = lines.pop() || '' // 保留未完成的行
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          if (line.startsWith('event: ')) {
+            // 捕获事件类型
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ') && currentEvent) {
+            // 解析事件数据
             try {
               const data = JSON.parse(line.slice(6))
-              const { type, content, data: eventData } = data
 
-              switch (type) {
+              switch (currentEvent) {
                 case 'chunk':
-                  if (onChunk) onChunk(content)
+                  if (onChunk) onChunk(data.content || data)
                   break
                 case 'suggestion':
-                  if (onSuggestion) onSuggestion(content)
+                  if (onSuggestion) onSuggestion(data.content || data)
                   break
                 case 'done':
-                  if (onDone) onDone(content)
+                  if (onDone) onDone(data.content || data)
                   break
                 case 'error':
-                  if (onError) onError(new Error(content))
+                  if (onError) onError(new Error(data.message || data.content))
                   break
 
-                // 新增：工具调用相关事件
+                // 工具调用相关事件
                 case 'tool_thinking':
-                  if (onToolThinking) onToolThinking(content)
+                  if (onToolThinking) onToolThinking(data.content || data.thinking)
                   break
                 case 'tool_call':
-                  if (onToolCall) onToolCall(eventData)
+                  if (onToolCall) onToolCall(data)
                   break
                 case 'tool_result':
-                  if (onToolResult) onToolResult(eventData)
+                  if (onToolResult) onToolResult(data)
                   break
                 case 'tool_error':
-                  if (onToolError) onToolError(eventData)
+                  if (onToolError) onToolError(data)
                   break
                 case 'doc_update':
-                  if (onDocUpdate) onDocUpdate(eventData)
+                  if (onDocUpdate) onDocUpdate(data)
                   break
                 case 'message_delta':
-                  if (onMessageDelta) onMessageDelta(content)
+                  if (onMessageDelta) onMessageDelta(data.content || data)
                   break
               }
             } catch (e) {
-              console.error('解析 SSE 事件失败:', e)
-              // 忽略无法解析的行
+              console.error('解析 SSE 事件失败:', e, '行内容:', line)
             }
+            currentEvent = null // 重置事件类型
           }
         }
       }
