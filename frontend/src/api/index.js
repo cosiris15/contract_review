@@ -685,5 +685,36 @@ export default {
       discussion_summary: discussionSummary,
       user_decision: userDecision
     })
+  },
+
+  // ==================== 文档变更管理 ====================
+
+  /**
+   * 获取任务的所有文档变更记录
+   * @param {string} taskId - 任务 ID
+   * @returns {Promise<{changes: Array}>} 变更列表
+   */
+  getDocumentChanges(taskId) {
+    return api.get(`/tasks/${taskId}/changes`)
+  },
+
+  /**
+   * 应用一个文档变更
+   * @param {string} taskId - 任务 ID
+   * @param {string} changeId - 变更 ID
+   * @returns {Promise<{status: string}>}
+   */
+  applyDocumentChange(taskId, changeId) {
+    return api.post(`/tasks/${taskId}/changes/${changeId}/apply`)
+  },
+
+  /**
+   * 回滚一个已应用的文档变更
+   * @param {string} taskId - 任务 ID
+   * @param {string} changeId - 变更 ID
+   * @returns {Promise<{status: string}>}
+   */
+  revertDocumentChange(taskId, changeId) {
+    return api.post(`/tasks/${taskId}/changes/${changeId}/revert`)
   }
 }

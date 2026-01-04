@@ -87,7 +87,7 @@ export const useDocumentStore = defineStore('document', {
 
       try {
         this.loading = true
-        const response = await api.get(`/api/tasks/${this.taskId}/changes`)
+        const response = await api.getDocumentChanges(this.taskId)
 
         // 按状态分类
         this.pendingChanges = response.data.changes.filter(c => c.status === 'pending')
@@ -126,7 +126,7 @@ export const useDocumentStore = defineStore('document', {
      */
     async applyChange(changeId) {
       try {
-        const response = await api.post(`/api/tasks/${this.taskId}/changes/${changeId}/apply`)
+        const response = await api.applyDocumentChange(this.taskId, changeId)
 
         if (response.data.status === 'applied') {
           // 从pending移到applied
@@ -153,7 +153,7 @@ export const useDocumentStore = defineStore('document', {
      */
     async revertChange(changeId) {
       try {
-        const response = await api.post(`/api/tasks/${this.taskId}/changes/${changeId}/revert`)
+        const response = await api.revertDocumentChange(this.taskId, changeId)
 
         if (response.data.status === 'reverted') {
           // 从applied移到reverted
