@@ -251,6 +251,11 @@ async function loadDocumentText() {
   try {
     const response = await interactiveApi.getDocumentText(taskId.value)
     documentParagraphs.value = response.data.paragraphs || []
+
+    // 初始化document store（用于跟踪AI工具调用产生的文档变更）
+    if (response.data.text) {
+      await documentStore.initDocument(taskId.value, response.data.text)
+    }
   } catch (error) {
     console.error('加载文档内容失败:', error)
     // 不显示错误消息，因为这不是关键功能
