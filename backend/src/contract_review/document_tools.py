@@ -362,7 +362,7 @@ class DocumentToolExecutor:
         change_id = generate_id()
 
         try:
-            await self.supabase.table("document_changes").insert({
+            self.supabase.table("document_changes").insert({
                 "id": change_id,
                 "task_id": task_id,
                 "tool_name": tool_name,
