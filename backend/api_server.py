@@ -4988,16 +4988,22 @@ async def chat_with_item_stream(
     # 获取文档段落结构（用于工具调用验证）
     doc_paragraphs = []
     try:
-        # 从任务中获取文档文本
-        doc_text = getattr(task, 'document', '') or ''
-        if doc_text:
-            # 简单按双换行分段（实际应该用更复杂的逻辑）
-            paragraphs = doc_text.split('\n\n')
-            doc_paragraphs = [
-                {"id": i+1, "content": para.strip()}
-                for i, para in enumerate(paragraphs)
-                if para.strip()
-            ]
+        # 从Storage中获取文档内容
+        if USE_SUPABASE:
+            doc_path = task_manager.get_document_path(task_id, user_id)
+        else:
+            doc_path = storage_manager.get_document_path(task_id)
+
+        if doc_path and doc_path.exists():
+            document = await load_document_async(doc_path)
+            if document and document.text:
+                # 按双换行分段
+                paragraphs = document.text.split('\n\n')
+                doc_paragraphs = [
+                    {"id": i+1, "content": para.strip()}
+                    for i, para in enumerate(paragraphs)
+                    if para.strip()
+                ]
         logger.info(f"文档包含 {len(doc_paragraphs)} 个段落")
     except Exception as e:
         logger.warning(f"无法解析文档段落: {e}")

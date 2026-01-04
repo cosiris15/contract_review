@@ -181,6 +181,11 @@ class DocumentToolExecutor:
         # 验证paragraph_id是否存在（如果参数中包含）
         if "paragraph_id" in arguments:
             valid_ids = [p["id"] for p in document_paragraphs]
+            if len(valid_ids) == 0:
+                return {
+                    "success": False,
+                    "message": "文档内容为空，无法修改段落。请检查文档是否正确加载。"
+                }
             if arguments["paragraph_id"] not in valid_ids:
                 return {
                     "success": False,
