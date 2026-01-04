@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -340,6 +340,168 @@ class GeminiClient:
         except httpx.RequestError as e:
             logger.error(f"Gemini API 流式请求错误: {e}")
             raise Exception(f"Gemini API 请求错误: {str(e)}")
+
+    async def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> Tuple[str, Optional[List[Dict]]]:
+        """
+        支持工具调用的聊天（Gemini Function Calling）
+
+        将 OpenAI 格式的 messages 和 tools 转换为 Gemini 格式进行调用。
+
+        Args:
+            messages: 消息列表，格式为 [{"role": "system/user/assistant", "content": "..."}]
+            tools: 工具定义列表，OpenAI Function Calling格式
+            temperature: 可选的温度参数
+            max_output_tokens: 可选的最大输出 token 数
+
+        Returns:
+            (response_text, tool_calls)
+            - response_text: AI的文本回复
+            - tool_calls: 工具调用列表，格式为OpenAI tool_calls格式，如果没有调用则为None
+        """
+        # 提取 system message 作为 system_instruction
+        system_instruction = None
+        conversation_parts = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            if role == "system":
+                system_instruction = content
+            elif role == "user":
+                conversation_parts.append(f"User: {content}")
+            elif role == "assistant":
+                conversation_parts.append(f"Assistant: {content}")
+
+        # 组合非系统消息为 prompt
+        prompt = "\n\n".join(conversation_parts)
+
+        # 转换工具定义为Gemini格式
+        gemini_tools = self._convert_tools_to_gemini_format(tools)
+
+        url = f"{self.BASE_URL}/models/{self.model}:generateContent"
+
+        # 构建请求体
+        request_body: Dict[str, Any] = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "tools": gemini_tools,
+            "generationConfig": {
+                "temperature": temperature if temperature is not None else 0.1,
+                "maxOutputTokens": max_output_tokens or 4000,
+            },
+        }
+
+        # 添加系统指令
+        if system_instruction:
+            request_body["systemInstruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    params={"key": self.api_key},
+                    json=request_body,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                if response.status_code != 200:
+                    error_detail = response.text
+                    logger.error(f"Gemini API 错误: {response.status_code} - {error_detail}")
+                    raise Exception(f"Gemini API 请求失败: {response.status_code}")
+
+                result = response.json()
+
+                # 提取生成的内容
+                candidates = result.get("candidates", [])
+                if not candidates:
+                    raise Exception("Gemini API 返回空结果")
+
+                content = candidates[0].get("content", {})
+                parts = content.get("parts", [])
+
+                # 提取文本和工具调用
+                response_text = ""
+                tool_calls = None
+
+                for part in parts:
+                    # 文本内容
+                    if "text" in part:
+                        response_text += part["text"]
+
+                    # 工具调用
+                    if "functionCall" in part:
+                        if tool_calls is None:
+                            tool_calls = []
+
+                        func_call = part["functionCall"]
+                        # 转换为OpenAI格式
+                        tool_calls.append({
+                            "id": f"call_{len(tool_calls) + 1}",  # Gemini不提供ID，自己生成
+                            "type": "function",
+                            "function": {
+                                "name": func_call.get("name", ""),
+                                "arguments": json.dumps(func_call.get("args", {}))
+                            }
+                        })
+
+                return response_text, tool_calls
+
+        except httpx.TimeoutException:
+            logger.error("Gemini API 请求超时")
+            raise Exception("Gemini API 请求超时，请稍后重试")
+        except httpx.RequestError as e:
+            logger.error(f"Gemini API 请求错误: {e}")
+            raise Exception(f"Gemini API 请求错误: {str(e)}")
+
+    def _convert_tools_to_gemini_format(self, openai_tools: List[Dict]) -> List[Dict]:
+        """
+        将OpenAI格式的工具定义转换为Gemini格式
+
+        OpenAI格式:
+        {
+            "type": "function",
+            "function": {
+                "name": "modify_paragraph",
+                "description": "...",
+                "parameters": {"type": "object", "properties": {...}}
+            }
+        }
+
+        Gemini格式:
+        {
+            "functionDeclarations": [
+                {
+                    "name": "modify_paragraph",
+                    "description": "...",
+                    "parameters": {"type": "object", "properties": {...}}
+                }
+            ]
+        }
+        """
+        function_declarations = []
+
+        for tool in openai_tools:
+            if tool.get("type") == "function":
+                func = tool.get("function", {})
+                function_declarations.append({
+                    "name": func.get("name"),
+                    "description": func.get("description"),
+                    "parameters": func.get("parameters", {})
+                })
+
+        return [{"functionDeclarations": function_declarations}]
 
     async def generate_standards(
         self,

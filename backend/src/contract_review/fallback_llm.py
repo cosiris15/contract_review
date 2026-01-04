@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from .llm_client import LLMClient
 from .gemini_client import GeminiClient
@@ -267,6 +267,99 @@ class FallbackLLMClient:
 
             self.stats["fallback_success"] += 1
             logger.info(f"{self.fallback_name} 流式调用成功（作为 fallback）")
+
+        except Exception as fallback_error:
+            self.stats["fallback_failed"] += 1
+            logger.error(f"{self.fallback_name} 也失败了: {fallback_error}")
+            raise Exception(
+                f"所有 LLM 都失败了。{self.primary_name}: {primary_error}; "
+                f"{self.fallback_name}: {fallback_error}"
+            )
+
+    async def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> Tuple[str, Optional[List[Dict]]]:
+        """
+        支持工具调用的聊天，支持自动 fallback
+
+        先尝试主 LLM，失败后自动切换到备用 LLM。
+
+        Args:
+            messages: 消息列表
+            tools: 工具定义列表，OpenAI Function Calling格式
+            temperature: 温度参数
+            max_output_tokens: 最大输出 token 数
+
+        Returns:
+            (response_text, tool_calls)
+            - response_text: AI的文本回复
+            - tool_calls: 工具调用列表，如果没有调用则为None
+
+        Raises:
+            Exception: 所有 LLM 都失败时抛出错误
+        """
+        primary_error = None
+
+        # 尝试主 LLM
+        try:
+            # 检查是否支持工具调用
+            if hasattr(self.primary, 'chat_with_tools'):
+                response_text, tool_calls = await self.primary.chat_with_tools(
+                    messages=messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+                self.stats["primary_success"] += 1
+                return response_text, tool_calls
+            else:
+                # 不支持工具调用，回退到普通chat（但不会有工具调用）
+                logger.warning(f"{self.primary_name} 不支持工具调用，回退到普通chat")
+                response = await self.primary.chat(
+                    messages=messages,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+                self.stats["primary_success"] += 1
+                return response, None
+
+        except Exception as e:
+            primary_error = e
+            self.stats["primary_failed"] += 1
+            logger.warning(f"{self.primary_name} 工具调用失败: {e}")
+
+        # 如果没有备用 LLM，直接抛出错误
+        if not self.fallback:
+            logger.error(f"无备用 LLM，{self.primary_name} 失败后无法恢复")
+            raise primary_error
+
+        # 尝试备用 LLM
+        logger.info(f"切换到备用 LLM: {self.fallback_name}")
+        try:
+            if hasattr(self.fallback, 'chat_with_tools'):
+                response_text, tool_calls = await self.fallback.chat_with_tools(
+                    messages=messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+                self.stats["fallback_success"] += 1
+                logger.info(f"{self.fallback_name} 工具调用成功（作为 fallback）")
+                return response_text, tool_calls
+            else:
+                # 不支持工具调用，回退到普通chat
+                logger.warning(f"{self.fallback_name} 不支持工具调用，回退到普通chat")
+                response = await self.fallback.chat(
+                    messages=messages,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+                self.stats["fallback_success"] += 1
+                return response, None
 
         except Exception as fallback_error:
             self.stats["fallback_failed"] += 1

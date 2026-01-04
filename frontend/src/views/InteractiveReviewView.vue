@@ -126,9 +126,11 @@ import DocumentViewer from '@/components/interactive/DocumentViewer.vue'
 import ChatPanel from '@/components/interactive/ChatPanel.vue'
 import interactiveApi from '@/api/interactive'
 import api from '@/api'
+import { useDocumentStore } from '@/store/document'
 
 const route = useRoute()
 const router = useRouter()
+const documentStore = useDocumentStore()
 
 const taskId = computed(() => route.params.taskId)
 
@@ -364,7 +366,9 @@ async function sendMessage(message) {
     content: '',
     timestamp: new Date().toISOString(),
     suggestion_snapshot: null,
-    isStreaming: true // 标记为正在流式输出
+    isStreaming: true, // 标记为正在流式输出
+    toolCalls: [], // 工具调用记录
+    thinking: '' // AI思考过程
   })
 
   chatLoading.value = true
@@ -405,6 +409,58 @@ async function sendMessage(message) {
           activeMessages.value[aiMessageIndex].content = '抱歉，对话出错了：' + error.message
           activeMessages.value[aiMessageIndex].isStreaming = false
           activeMessages.value[aiMessageIndex].isError = true
+        },
+
+        // 新增：工具调用相关回调
+        onToolThinking: (thinking) => {
+          // AI思考过程
+          activeMessages.value[aiMessageIndex].thinking = thinking
+        },
+        onToolCall: (toolCallData) => {
+          // 记录工具调用
+          const { tool_id, tool_name, arguments: toolArgs } = toolCallData
+          activeMessages.value[aiMessageIndex].toolCalls.push({
+            tool_id,
+            tool_name,
+            arguments: toolArgs,
+            status: 'calling',
+            result: null
+          })
+          console.log('Tool called:', tool_name, toolArgs)
+        },
+        onToolResult: (toolResultData) => {
+          // 更新工具调用结果
+          const { tool_id, success, message: resultMessage, data } = toolResultData
+          const toolCall = activeMessages.value[aiMessageIndex].toolCalls.find(tc => tc.tool_id === tool_id)
+          if (toolCall) {
+            toolCall.status = success ? 'success' : 'error'
+            toolCall.result = { success, message: resultMessage, data }
+          }
+          console.log('Tool result:', tool_id, resultMessage)
+        },
+        onToolError: (toolErrorData) => {
+          // 处理工具错误
+          const { tool_id, error: errorMessage } = toolErrorData
+          const toolCall = activeMessages.value[aiMessageIndex].toolCalls.find(tc => tc.tool_id === tool_id)
+          if (toolCall) {
+            toolCall.status = 'error'
+            toolCall.result = { success: false, message: errorMessage }
+          }
+          ElMessage.warning(`工具调用失败: ${errorMessage}`)
+        },
+        onDocUpdate: (docUpdateData) => {
+          // 处理文档更新事件
+          const { change_id, tool_name, data } = docUpdateData
+
+          // 添加到文档store的待处理变更列表
+          documentStore.addPendingChange(change_id, tool_name, data)
+
+          ElMessage.success(`AI已执行操作: ${tool_name}`)
+        },
+        onMessageDelta: (delta) => {
+          // 流式文本增量（如果使用message_delta而不是chunk）
+          streamedContent += delta
+          activeMessages.value[aiMessageIndex].content = streamedContent
         }
       }
     )

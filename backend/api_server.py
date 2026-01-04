@@ -49,6 +49,7 @@ from src.contract_review.supabase_tasks import SupabaseTaskManager
 from src.contract_review.supabase_storage import SupabaseStorageManager
 from src.contract_review.supabase_business import SupabaseBusinessManager
 from src.contract_review.supabase_standards import SupabaseStandardLibraryManager
+from src.contract_review.supabase_client import get_supabase_client
 from src.contract_review.prompts import (
     build_usage_instruction_messages,
     build_standard_recommendation_messages,
@@ -57,12 +58,28 @@ from src.contract_review.prompts import (
     build_collection_recommendation_messages,
     build_collection_usage_instruction_messages,
 )
+from src.contract_review.prompts_interactive import (
+    build_item_chat_messages,
+    format_document_structure,
+)
 from src.contract_review.llm_client import LLMClient
 from src.contract_review.fallback_llm import FallbackLLMClient, create_fallback_client
 from src.contract_review.quota_service import get_quota_service, QuotaInfo
 from src.contract_review.interactive_engine import InteractiveReviewEngine
 from src.contract_review.supabase_interactive import get_interactive_manager, InteractiveChat, ChatMessage
 from src.contract_review.document_preprocessor import DocumentPreprocessor
+from src.contract_review.document_tools import DOCUMENT_TOOLS, DocumentToolExecutor
+from src.contract_review.sse_protocol import (
+    SSEEventType,
+    create_tool_thinking_event,
+    create_tool_call_event,
+    create_tool_result_event,
+    create_tool_error_event,
+    create_doc_update_event,
+    create_message_delta_event,
+    create_done_event,
+    create_error_event,
+)
 
 # 配置日志
 logging.basicConfig(
@@ -4968,6 +4985,23 @@ async def chat_with_item_stream(
     if not result:
         raise HTTPException(status_code=404, detail="审阅结果不存在")
 
+    # 获取文档段落结构（用于工具调用验证）
+    doc_paragraphs = []
+    try:
+        # 从任务中获取文档文本
+        doc_text = getattr(task, 'document', '') or ''
+        if doc_text:
+            # 简单按双换行分段（实际应该用更复杂的逻辑）
+            paragraphs = doc_text.split('\n\n')
+            doc_paragraphs = [
+                {"id": i+1, "content": para.strip()}
+                for i, para in enumerate(paragraphs)
+                if para.strip()
+            ]
+        logger.info(f"文档包含 {len(doc_paragraphs)} 个段落")
+    except Exception as e:
+        logger.warning(f"无法解析文档段落: {e}")
+
     # 查找条目 - 支持 risk_id 或 modification_id
     modification = None
     risk = None
@@ -5027,35 +5061,90 @@ async def chat_with_item_stream(
     engine = InteractiveReviewEngine(settings, llm_provider=request.llm_provider)
 
     async def event_generator():
-        """生成 SSE 事件流"""
+        """生成 SSE 事件流（支持工具调用）"""
         full_response = ""
         updated_suggestion = ""
 
         try:
-            async for event in engine.refine_item_stream(
+            # 推送思考事件
+            yield create_tool_thinking_event("正在分析您的请求...")
+
+            # 构建消息（使用prompts_interactive的函数）
+            messages = build_item_chat_messages(
                 original_clause=original_text or (modification.original_text if modification else ""),
                 current_suggestion=chat.current_suggestion or (modification.suggested_text if modification else ""),
-                risk_description=risk.description if risk else (modification.modification_reason if modification else ""),
+                risk_description=risk.description if risk else "",
                 user_message=request.message,
                 chat_history=chat_history,
                 document_summary="",
                 language=getattr(task, 'language', 'zh-CN'),
-            ):
-                event_type = event.get("type", "chunk")
-                content = event.get("content", "")
+            )
 
-                if event_type == "done":
-                    full_response = content
-                elif event_type == "suggestion":
-                    updated_suggestion = content
-                elif event_type == "error":
-                    yield f"data: {json_module.dumps({'type': 'error', 'content': content}, ensure_ascii=False)}\n\n"
-                    return
+            # 注入文档结构到系统消息（防止AI幻觉）
+            if doc_paragraphs and messages:
+                doc_structure = format_document_structure(doc_paragraphs, max_paragraphs=100)
 
-                yield f"data: {json_module.dumps({'type': event_type, 'content': content}, ensure_ascii=False)}\n\n"
+                # 在第一个系统消息后追加文档结构
+                if messages[0]["role"] == "system":
+                    messages[0]["content"] += f"\n\n**完整文档结构（用于工具调用）：**\n{doc_structure}\n\n**重要：使用工具时，paragraph_id 必须是上述列表中实际存在的ID**"
 
-            # 流式完成后，保存对话记录
-            if full_response:
+            # 调用LLM（支持工具）
+            response_text, tool_calls = await engine.llm.chat_with_tools(
+                messages=messages,
+                tools=DOCUMENT_TOOLS,
+                temperature=0.3,
+            )
+
+            # 处理工具调用
+            if tool_calls:
+                supabase = get_supabase_client()
+                tool_executor = DocumentToolExecutor(supabase)
+
+                for tool_call in tool_calls:
+                    tool_id = tool_call["id"]
+                    tool_name = tool_call["function"]["name"]
+                    tool_args = json_module.loads(tool_call["function"]["arguments"])
+
+                    # 推送工具调用事件
+                    yield create_tool_call_event(tool_id, tool_name, tool_args)
+
+                    # 执行工具
+                    result = await tool_executor.execute_tool(
+                        tool_call=tool_call,
+                        task_id=task_id,
+                        document_paragraphs=doc_paragraphs
+                    )
+
+                    # 推送工具结果
+                    if result["success"]:
+                        yield create_tool_result_event(
+                            tool_id,
+                            True,
+                            result["message"],
+                            result.get("data")
+                        )
+
+                        # 如果是文档修改类工具，推送doc_update事件
+                        if tool_name in ["modify_paragraph", "batch_replace_text", "insert_clause"]:
+                            yield create_doc_update_event(
+                                result["change_id"],
+                                tool_name,
+                                result["data"]
+                            )
+                    else:
+                        yield create_tool_error_event(tool_id, result["message"])
+
+            # 流式推送AI回复文本
+            if response_text:
+                words = response_text.split()
+                for i, word in enumerate(words):
+                    yield create_message_delta_event(word + (" " if i < len(words) - 1 else ""))
+                    await asyncio.sleep(0.01)  # 模拟打字效果
+
+                full_response = response_text
+
+            # 保存对话记录
+            if full_response or tool_calls:
                 # 添加用户消息
                 interactive_manager.add_message(
                     chat_id=chat.id,
@@ -5063,11 +5152,11 @@ async def chat_with_item_stream(
                     content=request.message,
                 )
 
-                # 添加 AI 回复
+                # 添加AI回复（包含工具调用信息）
                 interactive_manager.add_message(
                     chat_id=chat.id,
                     role="assistant",
-                    content=full_response,
+                    content=full_response or "已执行操作",
                     suggestion_snapshot=updated_suggestion or chat.current_suggestion,
                 )
 
@@ -5082,9 +5171,12 @@ async def chat_with_item_stream(
                     if found:
                         storage_manager.save_result(result)
 
+            # 完成
+            yield create_done_event(True)
+
         except Exception as e:
-            logger.error(f"流式对话失败: {e}")
-            yield f"data: {json_module.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+            logger.error(f"流式对话失败: {e}", exc_info=True)
+            yield create_error_event(str(e))
 
     return StreamingResponse(
         event_generator(),
@@ -5203,6 +5295,143 @@ async def skip_item(
         "status": "skipped",
         "message": "已跳过该风险点",
     }
+
+
+# ==================== 文档变更管理 API ====================
+
+
+@app.get("/api/tasks/{task_id}/changes")
+async def get_task_changes(
+    task_id: str,
+    status: Optional[str] = Query(None, description="筛选状态: pending|applied|rejected|reverted"),
+    user_id: str = Depends(get_current_user),
+):
+    """获取任务的所有文档变更记录"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    try:
+        supabase = get_supabase_client()
+
+        # 构建查询
+        query = supabase.table("document_changes").select("*").eq("task_id", task_id)
+
+        if status:
+            query = query.eq("status", status)
+
+        query = query.order("created_at", desc=True)
+
+        response = query.execute()
+
+        return {
+            "task_id": task_id,
+            "changes": response.data,
+            "total": len(response.data),
+        }
+    except Exception as e:
+        logger.error(f"获取变更记录失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取变更记录失败: {str(e)}")
+
+
+@app.post("/api/tasks/{task_id}/changes/{change_id}/apply")
+async def apply_change(
+    task_id: str,
+    change_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """应用一个文档变更"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    try:
+        supabase = get_supabase_client()
+
+        # 获取变更记录
+        response = supabase.table("document_changes").select("*").eq("id", change_id).eq("task_id", task_id).execute()
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail="变更记录不存在")
+
+        change = response.data[0]
+
+        # 检查状态
+        if change["status"] == "applied":
+            return {
+                "change_id": change_id,
+                "status": "applied",
+                "message": "该变更已经应用过了",
+            }
+
+        if change["status"] not in ["pending", "rejected"]:
+            raise HTTPException(status_code=400, detail=f"无法应用状态为 {change['status']} 的变更")
+
+        # 更新状态为 applied
+        update_response = supabase.table("document_changes").update({
+            "status": "applied",
+            "applied_at": datetime.utcnow().isoformat(),
+            "applied_by": user_id,
+        }).eq("id", change_id).execute()
+
+        return {
+            "change_id": change_id,
+            "status": "applied",
+            "message": "变更已应用",
+            "data": update_response.data[0] if update_response.data else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"应用变更失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"应用变更失败: {str(e)}")
+
+
+@app.post("/api/tasks/{task_id}/changes/{change_id}/revert")
+async def revert_change(
+    task_id: str,
+    change_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """回滚一个已应用的文档变更"""
+    # 验证任务
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    try:
+        supabase = get_supabase_client()
+
+        # 获取变更记录
+        response = supabase.table("document_changes").select("*").eq("id", change_id).eq("task_id", task_id).execute()
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail="变更记录不存在")
+
+        change = response.data[0]
+
+        # 检查状态 - 只能回滚已应用的变更
+        if change["status"] != "applied":
+            raise HTTPException(status_code=400, detail=f"只能回滚已应用的变更，当前状态为: {change['status']}")
+
+        # 更新状态为 reverted
+        update_response = supabase.table("document_changes").update({
+            "status": "reverted",
+        }).eq("id", change_id).execute()
+
+        return {
+            "change_id": change_id,
+            "status": "reverted",
+            "message": "变更已回滚",
+            "data": update_response.data[0] if update_response.data else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"回滚变更失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"回滚变更失败: {str(e)}")
 
 
 # ==================== 批量生成修改建议 API ====================

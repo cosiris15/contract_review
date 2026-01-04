@@ -1194,3 +1194,32 @@ def build_document_summary_messages(
     )
 
     return [{"role": "user", "content": prompt}]
+
+
+def format_document_structure(paragraphs: List[Dict], max_paragraphs: int = 100) -> str:
+    """
+    格式化文档段落结构，用于注入到Prompt中防止AI幻觉
+
+    Args:
+        paragraphs: 段落列表，格式 [{"id": 1, "content": "..."}, ...]
+        max_paragraphs: 最多显示的段落数（避免超过token限制）
+
+    Returns:
+        格式化的文档结构字符串
+    """
+    if not paragraphs:
+        return "（文档结构不可用）"
+
+    lines = []
+    for para in paragraphs[:max_paragraphs]:
+        para_id = para.get("id", "?")
+        content = para.get("content", "")
+        # 只显示前50个字符作为预览
+        preview = content[:50] + ("..." if len(content) > 50 else "")
+        lines.append(f"[段落 {para_id}] {preview}")
+
+    if len(paragraphs) > max_paragraphs:
+        lines.append(f"... （还有 {len(paragraphs) - max_paragraphs} 个段落）")
+
+    return "\n".join(lines)
+

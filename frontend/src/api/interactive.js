@@ -273,7 +273,19 @@ export default {
    * @returns {Promise<void>}
    */
   async sendChatMessageStream(taskId, itemId, message, llmProvider = 'deepseek', callbacks = {}) {
-    const { onChunk, onSuggestion, onDone, onError } = callbacks
+    const {
+      onChunk,
+      onSuggestion,
+      onDone,
+      onError,
+      // 新增：工具调用相关回调
+      onToolThinking,
+      onToolCall,
+      onToolResult,
+      onToolError,
+      onDocUpdate,
+      onMessageDelta
+    } = callbacks
 
     // 获取 token
     let token = ''
@@ -337,7 +349,7 @@ export default {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6))
-              const { type, content } = data
+              const { type, content, data: eventData } = data
 
               switch (type) {
                 case 'chunk':
@@ -352,8 +364,29 @@ export default {
                 case 'error':
                   if (onError) onError(new Error(content))
                   break
+
+                // 新增：工具调用相关事件
+                case 'tool_thinking':
+                  if (onToolThinking) onToolThinking(content)
+                  break
+                case 'tool_call':
+                  if (onToolCall) onToolCall(eventData)
+                  break
+                case 'tool_result':
+                  if (onToolResult) onToolResult(eventData)
+                  break
+                case 'tool_error':
+                  if (onToolError) onToolError(eventData)
+                  break
+                case 'doc_update':
+                  if (onDocUpdate) onDocUpdate(eventData)
+                  break
+                case 'message_delta':
+                  if (onMessageDelta) onMessageDelta(content)
+                  break
               }
             } catch (e) {
+              console.error('解析 SSE 事件失败:', e)
               // 忽略无法解析的行
             }
           }
