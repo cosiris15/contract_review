@@ -90,9 +90,22 @@ export const useDocumentStore = defineStore('document', {
         const response = await api.getDocumentChanges(this.taskId)
 
         // 按状态分类
-        this.pendingChanges = response.data.changes.filter(c => c.status === 'pending')
-        this.appliedChanges = response.data.changes.filter(c => c.status === 'applied')
-        this.revertedChanges = response.data.changes.filter(c => c.status === 'reverted')
+        const normalizeChange = (change) => {
+          if (!change.data) {
+            change.data = change.result?.data || change.arguments || null
+          }
+          return change
+        }
+
+        this.pendingChanges = response.data.changes
+          .filter(c => c.status === 'pending')
+          .map(normalizeChange)
+        this.appliedChanges = response.data.changes
+          .filter(c => c.status === 'applied')
+          .map(normalizeChange)
+        this.revertedChanges = response.data.changes
+          .filter(c => c.status === 'reverted')
+          .map(normalizeChange)
 
         // 重建draft版本（应用所有已应用的变更）
         this._rebuildDraft()
@@ -269,25 +282,27 @@ export const useDocumentStore = defineStore('document', {
      * 应用batch_replace_text变更
      */
     _applyBatchReplace(text, data) {
-      const { old_text, new_text } = data
-      return text.replaceAll(old_text, new_text)
+      const findText = data?.find_text || data?.old_text
+      const replaceText = data?.replace_text || data?.new_text
+      if (!findText) return text
+      return text.replaceAll(findText, replaceText || '')
     },
 
     /**
      * 应用insert_clause变更
      */
     _applyInsertClause(text, data) {
-      const { position, new_clause } = data
+      const { position, new_clause, after_paragraph_id, new_content } = data
       const paragraphs = text.split('\n\n')
 
       if (position === 'before' && data.before_paragraph_id) {
         const idx = data.before_paragraph_id - 1
         paragraphs.splice(idx, 0, new_clause)
-      } else if (position === 'after' && data.after_paragraph_id) {
-        const idx = data.after_paragraph_id
-        paragraphs.splice(idx, 0, new_clause)
+      } else if ((position === 'after' && data.after_paragraph_id) || after_paragraph_id) {
+        const idx = (data.after_paragraph_id || after_paragraph_id)
+        paragraphs.splice(idx, 0, new_clause || new_content || '')
       } else if (position === 'end') {
-        paragraphs.push(new_clause)
+        paragraphs.push(new_clause || new_content || '')
       }
 
       return paragraphs.join('\n\n')

@@ -5000,11 +5000,15 @@ async def chat_with_item_stream(
             if document and document.text:
                 # 按双换行分段
                 paragraphs = document.text.split('\n\n')
-                doc_paragraphs = [
-                    {"id": i+1, "content": para.strip()}
-                    for i, para in enumerate(paragraphs)
-                    if para.strip()
-                ]
+                doc_paragraphs = []
+                for para in paragraphs:
+                    stripped = para.strip()
+                    if not stripped:
+                        continue
+                    doc_paragraphs.append({
+                        "id": len(doc_paragraphs) + 1,
+                        "content": stripped
+                    })
         logger.info(f"文档包含 {len(doc_paragraphs)} 个段落")
     except Exception as e:
         logger.warning(f"无法解析文档段落: {e}")
@@ -5067,6 +5071,55 @@ async def chat_with_item_stream(
     # 创建引擎
     engine = InteractiveReviewEngine(settings, llm_provider=request.llm_provider)
 
+    def _build_fallback_replace_tool(message: str) -> Optional[Dict]:
+        import re
+        from uuid import uuid4
+
+        patterns = [
+            r'把["“”]?(.+?)["“”]?\s*改成["“”]?(.+?)["“”]?$',
+            r'把["“”]?(.+?)["“”]?\s*替换为["“”]?(.+?)["“”]?$',
+            r'将["“”]?(.+?)["“”]?\s*替换为["“”]?(.+?)["“”]?$',
+            r'将["“”]?(.+?)["“”]?\s*改为["“”]?(.+?)["“”]?$',
+            r'将["“”]?(.+?)["“”]?\s*换成["“”]?(.+?)["“”]?$',
+        ]
+
+        find_text = None
+        replace_text = None
+        for pattern in patterns:
+            match = re.search(pattern, message.strip())
+            if match:
+                find_text = match.group(1).strip()
+                replace_text = match.group(2).strip()
+                break
+
+        if not find_text:
+            return None
+
+        paragraph_ids = []
+        clause_match = re.search(r'第\s*([0-9]+(?:\.[0-9]+)*)\s*条', message)
+        if clause_match:
+            clause_token = clause_match.group(1)
+            for para in doc_paragraphs:
+                if clause_token in para["content"]:
+                    paragraph_ids.append(para["id"])
+
+        scope = "specific_paragraphs" if paragraph_ids else "all"
+
+        return {
+            "id": f"call_{uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": "batch_replace_text",
+                "arguments": json_module.dumps({
+                    "find_text": find_text,
+                    "replace_text": replace_text,
+                    "scope": scope,
+                    "paragraph_ids": paragraph_ids,
+                    "reason": "用户在文档修改模式下请求替换"
+                }, ensure_ascii=False)
+            }
+        }
+
     async def event_generator():
         """生成 SSE 事件流（支持工具调用）"""
         full_response = ""
@@ -5127,6 +5180,13 @@ async def chat_with_item_stream(
                 tools=DOCUMENT_TOOLS,
                 temperature=0.3,
             )
+
+            if request.mode == "modify" and not tool_calls:
+                fallback_call = _build_fallback_replace_tool(request.message)
+                if fallback_call:
+                    tool_calls = [fallback_call]
+                    if not response_text:
+                        response_text = "已根据您的指令执行替换。"
 
             # 处理工具调用
             if tool_calls:
@@ -5811,14 +5871,14 @@ async def get_document_text(
         paragraphs = []
         current_pos = 0
 
-        # 按换行符分割，保留非空段落
-        raw_paragraphs = document.text.split('\n')
+        # 按双换行分割，保留非空段落（与交互工具的段落ID保持一致）
+        raw_paragraphs = document.text.split('\n\n')
 
         for idx, para_text in enumerate(raw_paragraphs):
             # 跳过空段落
             stripped = para_text.strip()
             if not stripped:
-                current_pos += len(para_text) + 1  # +1 for newline
+                current_pos += len(para_text) + 2  # +2 for double newline
                 continue
 
             start_pos = current_pos
@@ -5831,7 +5891,7 @@ async def get_document_text(
                 end_char=end_pos,
             ))
 
-            current_pos = end_pos + 1  # +1 for newline
+            current_pos = end_pos + 2  # +2 for double newline
 
         return DocumentTextResponse(
             task_id=task_id,

@@ -87,7 +87,7 @@
         <DocumentViewer
           ref="documentViewerRef"
           :document-name="task?.document_filename"
-          :paragraphs="documentParagraphs"
+          :paragraphs="displayParagraphs"
           :highlight-text="activeItem?.original_text"
           :loading="documentLoading"
         />
@@ -164,6 +164,25 @@ const completedCount = computed(() => {
 const completionPercentage = computed(() => {
   if (items.value.length === 0) return 0
   return Math.round((completedCount.value / items.value.length) * 100)
+})
+
+const displayParagraphs = computed(() => {
+  const sourceText = documentStore.draft || ''
+  if (sourceText) {
+    const rawParagraphs = sourceText.split('\n\n')
+    const formatted = []
+    for (const paraText of rawParagraphs) {
+      const stripped = paraText.trim()
+      if (!stripped) continue
+      formatted.push({
+        index: formatted.length,
+        text: stripped
+      })
+    }
+    return formatted
+  }
+
+  return documentParagraphs.value
 })
 
 // 当前条目索引
@@ -461,7 +480,13 @@ async function sendMessage(message, mode = 'discuss') {
           // 添加到文档store的待处理变更列表
           documentStore.addPendingChange(change_id, tool_name, data)
 
-          ElMessage.success(`AI已执行操作: ${tool_name}`)
+          documentStore.applyChange(change_id).then((result) => {
+            if (result?.success) {
+              ElMessage.success(`AI已执行并应用操作: ${tool_name}`)
+            } else {
+              ElMessage.warning(`AI已执行操作: ${tool_name}`)
+            }
+          })
         },
         onMessageDelta: (delta) => {
           // 流式文本增量（如果使用message_delta而不是chunk）
@@ -1132,16 +1157,16 @@ function goBack() {
 
 /* 左侧：文档区域 60% */
 .content-left {
-  flex: 6;
+  flex: 5;
   overflow: hidden;
   background: #fff;
 }
 
 /* 右侧：聊天面板 40% */
 .content-right {
-  flex: 4;
-  min-width: 400px;
-  max-width: 560px;
+  flex: 5;
+  min-width: 460px;
+  max-width: 720px;
   overflow: hidden;
   border-left: 1px solid #e5e5e5;
 }
@@ -1149,12 +1174,12 @@ function goBack() {
 /* 响应式 */
 @media (max-width: 1200px) {
   .content-right {
-    min-width: 360px;
-    flex: 5;
+    min-width: 400px;
+    flex: 6;
   }
 
   .content-left {
-    flex: 5;
+    flex: 4;
   }
 
   .document-name {

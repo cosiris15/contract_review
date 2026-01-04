@@ -349,31 +349,37 @@ export default {
         buffer = lines.pop() || '' // 保留未完成的行
 
         for (const line of lines) {
-          if (line.startsWith('event: ')) {
+          const cleaned = line.replace(/\r$/, '')
+          if (cleaned.startsWith('event: ')) {
             // 捕获事件类型
-            currentEvent = line.slice(7).trim()
-          } else if (line.startsWith('data: ') && currentEvent) {
+            currentEvent = cleaned.slice(7).trim()
+          } else if (cleaned.startsWith('data: ')) {
             // 解析事件数据
             try {
-              const data = JSON.parse(line.slice(6))
+              const data = JSON.parse(cleaned.slice(6))
+              const eventType = currentEvent || data.type
 
-              switch (currentEvent) {
+              switch (eventType) {
                 case 'chunk':
-                  if (onChunk) onChunk(data.content || data)
+                case 'message_delta':
+                  if (onChunk && currentEvent === 'chunk') onChunk(data.content || data)
+                  if (onMessageDelta) onMessageDelta(data.content || data)
                   break
                 case 'suggestion':
-                  if (onSuggestion) onSuggestion(data.content || data)
+                case 'suggestion_update':
+                  if (onSuggestion) onSuggestion(data.content || data.suggestion || data)
                   break
                 case 'done':
+                case 'message_done':
                   if (onDone) onDone(data.content || data)
                   break
                 case 'error':
-                  if (onError) onError(new Error(data.message || data.content))
+                  if (onError) onError(new Error(data.message || data.content || data))
                   break
 
                 // 工具调用相关事件
                 case 'tool_thinking':
-                  if (onToolThinking) onToolThinking(data.content || data.thinking)
+                  if (onToolThinking) onToolThinking(data.content || data.thinking || data.message)
                   break
                 case 'tool_call':
                   if (onToolCall) onToolCall(data)
@@ -387,12 +393,9 @@ export default {
                 case 'doc_update':
                   if (onDocUpdate) onDocUpdate(data)
                   break
-                case 'message_delta':
-                  if (onMessageDelta) onMessageDelta(data.content || data)
-                  break
               }
             } catch (e) {
-              console.error('解析 SSE 事件失败:', e, '行内容:', line)
+              console.error('解析 SSE 事件失败:', e, '行内容:', cleaned)
             }
             currentEvent = null // 重置事件类型
           }

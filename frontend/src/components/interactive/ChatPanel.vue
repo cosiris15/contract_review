@@ -322,7 +322,7 @@ const props = defineProps({
 const emit = defineEmits(['select-item', 'send-message', 'complete', 'locate', 'confirm-risk', 'skip', 'quick-accept', 'batch-accept'])
 
 // 导航折叠状态
-const navCollapsed = ref(false)
+const navCollapsed = ref(true)
 
 // 点击聊天区域时收起条目列表
 function collapseNav() {
@@ -686,7 +686,7 @@ onUnmounted(() => {
 .chat-history {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 18px 20px;
 }
 
 /* 空状态 */
@@ -720,16 +720,16 @@ onUnmounted(() => {
 /* 底部输入区 */
 .input-area {
   flex-shrink: 0;
-  max-height: 60vh;
+  max-height: 40vh;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 12px 16px;
   background: #fff;
   border-top: 1px solid #eee;
 }
 
 /* 模式切换容器 */
 .mode-switch-container {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .mode-switch {
@@ -773,7 +773,7 @@ onUnmounted(() => {
 
 .mode-hint {
   margin-top: 8px;
-  padding: 6px 12px;
+  padding: 6px 10px;
   background: #f0f9ff;
   border-left: 3px solid #1890ff;
   border-radius: 4px;
@@ -791,7 +791,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 14px;
+  padding: 10px 12px;
   background: #f6ffed;
   border-radius: 8px;
   color: #52c41a;
@@ -804,7 +804,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 14px;
+  padding: 10px 12px;
   background: #f5f5f5;
   border-radius: 8px;
   color: #999;
