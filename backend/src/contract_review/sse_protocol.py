@@ -93,7 +93,13 @@ def create_tool_thinking_event(message: str) -> str:
     """创建工具思考事件"""
     return format_sse_event(
         SSEEventType.TOOL_THINKING,
-        {"message": message}
+        {
+            "message": message,
+            "type": "tool_thinking",
+            # 兼容前端字段命名
+            "content": message,
+            "thinking": message,
+        }
     )
 
 
@@ -114,7 +120,12 @@ def create_tool_call_event(tool_call_id: str, tool_name: str, arguments: Dict) -
         {
             "id": tool_call_id,
             "tool": tool_name,
-            "args": arguments
+            "args": arguments,
+            # 兼容前端字段命名
+            "tool_id": tool_call_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "type": "tool_call",
         },
         event_id=tool_call_id
     )
@@ -141,7 +152,10 @@ def create_tool_result_event(
     event_data = {
         "id": tool_call_id,
         "success": success,
-        "message": message
+        "message": message,
+        # 兼容前端字段命名
+        "tool_id": tool_call_id,
+        "type": "tool_result",
     }
 
     if data is not None:
@@ -160,7 +174,10 @@ def create_tool_error_event(tool_call_id: str, error: str) -> str:
         SSEEventType.TOOL_ERROR,
         {
             "id": tool_call_id,
-            "error": error
+            "error": error,
+            # 兼容前端字段命名
+            "tool_id": tool_call_id,
+            "type": "tool_error",
         },
         event_id=tool_call_id
     )
@@ -183,7 +200,10 @@ def create_doc_update_event(change_id: str, tool_name: str, data: Dict) -> str:
         {
             "change_id": change_id,
             "tool": tool_name,
-            "data": data
+            "data": data,
+            # 兼容前端字段命名
+            "tool_name": tool_name,
+            "type": "doc_update",
         }
     )
 
@@ -192,7 +212,11 @@ def create_message_delta_event(content: str) -> str:
     """创建消息片段事件（流式文本）"""
     return format_sse_event(
         SSEEventType.MESSAGE_DELTA,
-        {"content": content}
+        {
+            "content": content,
+            # 兼容旧版前端 SSE 解析格式
+            "type": "chunk",
+        }
     )
 
 
@@ -201,6 +225,7 @@ def create_message_done_event(message_id: str = None) -> str:
     data = {}
     if message_id:
         data["message_id"] = message_id
+    data["type"] = "done"
 
     return format_sse_event(
         SSEEventType.MESSAGE_DONE,
@@ -212,7 +237,12 @@ def create_suggestion_update_event(suggestion: str) -> str:
     """创建建议更新事件"""
     return format_sse_event(
         SSEEventType.SUGGESTION_UPDATE,
-        {"suggestion": suggestion}
+        {
+            "suggestion": suggestion,
+            # 兼容旧版前端 SSE 解析格式
+            "type": "suggestion",
+            "content": suggestion,
+        }
     )
 
 
@@ -227,7 +257,12 @@ def create_error_event(message: str, details: Dict = None) -> str:
     Returns:
         SSE事件字符串
     """
-    data = {"message": message}
+    data = {
+        "message": message,
+        # 兼容旧版前端 SSE 解析格式
+        "type": "error",
+        "content": message,
+    }
     if details:
         data["details"] = details
 
@@ -248,7 +283,12 @@ def create_done_event(success: bool = True, summary: Dict = None) -> str:
     Returns:
         SSE事件字符串
     """
-    data = {"success": success}
+    data = {
+        "success": success,
+        # 兼容旧版前端 SSE 解析格式
+        "type": "done",
+        "content": "done" if success else "failed",
+    }
     if summary:
         data.update(summary)
 
