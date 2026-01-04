@@ -19,12 +19,40 @@
       <div class="message-text" v-html="renderContent(message.content)"></div>
 
       <!-- 上下文消息的定位按钮（第一条消息或标记为 isContext 的消息显示） -->
-      <button v-if="message.isContext || showLocateBtn" class="locate-btn" @click="$emit('locate')">
+      <button
+        v-if="(message.isContext || showLocateBtn) && canLocate"
+        class="locate-btn icon-only"
+        title="定位原文"
+        @click="$emit('locate')"
+      >
         <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
           <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
         </svg>
-        在文档中定位
       </button>
+
+      <!-- 快捷操作按钮 -->
+      <div v-if="showActions" class="message-actions">
+        <button
+          v-if="canSkip"
+          class="action-btn ghost"
+          title="跳过"
+          @click="$emit('skip')"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+            <path d="M6 7h8a4 4 0 0 1 0 8H6v-2h8a2 2 0 0 0 0-4H6V7zm12 0h-2v10h2V7z"/>
+          </svg>
+        </button>
+        <button
+          v-if="canConfirm"
+          class="action-btn primary"
+          title="生成修改建议"
+          @click="$emit('confirm')"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+            <path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm18-11.5a1 1 0 0 0 0-1.41l-1.34-1.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75L21 5.75z"/>
+          </svg>
+        </button>
+      </div>
 
       <!-- AI 消息中的建议更新 -->
       <div v-if="message.role === 'assistant' && message.suggestion_snapshot" class="suggestion-update">
@@ -47,10 +75,26 @@ defineProps({
   showLocateBtn: {
     type: Boolean,
     default: false
+  },
+  canLocate: {
+    type: Boolean,
+    default: true
+  },
+  showActions: {
+    type: Boolean,
+    default: false
+  },
+  canSkip: {
+    type: Boolean,
+    default: false
+  },
+  canConfirm: {
+    type: Boolean,
+    default: false
   }
 })
 
-defineEmits(['locate'])
+defineEmits(['locate', 'skip', 'confirm'])
 
 // 渲染消息内容（Markdown 处理）
 function renderContent(content) {
@@ -208,9 +252,51 @@ function renderContent(content) {
   transition: all 0.2s;
 }
 
+.locate-btn.icon-only {
+  padding: 6px 8px;
+}
+
 .locate-btn:hover {
   border-color: #1890ff;
   color: #1890ff;
+}
+
+.message-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  margin-left: 8px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid #e5e5e5;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn.ghost:hover {
+  border-color: #999;
+  color: #333;
+}
+
+.action-btn.primary {
+  border-color: #1890ff;
+  background: #1890ff;
+  color: #fff;
+}
+
+.action-btn.primary:hover {
+  background: #40a9ff;
+  border-color: #40a9ff;
 }
 
 /* 建议更新卡片 */

@@ -101,7 +101,13 @@
         :key="index"
         :message="msg"
         :show-locate-btn="index === 0"
+        :can-locate="Boolean(activeItem?.original_text)"
+        :show-actions="index === 0 && showQuickActions"
+        :can-skip="showQuickActions"
+        :can-confirm="showQuickActions"
         @locate="$emit('locate')"
+        @skip="$emit('skip')"
+        @confirm="$emit('confirm-risk')"
       />
 
       <!-- 流式输出时的打字指示器 -->
@@ -127,34 +133,26 @@
       <template v-else>
         <!-- 阶段1: 分析讨论阶段（未生成修改建议时） -->
         <template v-if="!activeItem.has_modification">
-          <!-- 模式切换 -->
-          <div class="mode-switch-container">
-            <div class="mode-switch">
+          <!-- 输入框 -->
+          <div class="input-container">
+            <div class="mode-icons" role="group" aria-label="chat mode">
               <button
-                class="mode-btn"
+                class="mode-icon"
                 :class="{ active: chatMode === 'discuss' }"
+                title="风险讨论：与AI讨论风险点，分析利弊"
                 @click="chatMode = 'discuss'"
               >
                 <el-icon><ChatDotRound /></el-icon>
-                <span>风险讨论</span>
               </button>
               <button
-                class="mode-btn"
+                class="mode-icon"
                 :class="{ active: chatMode === 'modify' }"
+                title="文档修改：直接下达修改命令，AI将调用工具执行"
                 @click="chatMode = 'modify'"
               >
                 <el-icon><EditPen /></el-icon>
-                <span>文档修改</span>
               </button>
             </div>
-            <div class="mode-hint">
-              <span v-if="chatMode === 'discuss'">💬 与AI讨论风险点，分析利弊</span>
-              <span v-else>✏️ 直接下达修改命令，AI将调用工具执行</span>
-            </div>
-          </div>
-
-          <!-- 输入框 -->
-          <div class="input-container">
             <textarea
               ref="inputRef"
               v-model="inputText"
@@ -175,30 +173,12 @@
               <el-icon v-else><Promotion /></el-icon>
             </button>
           </div>
-          <div class="input-footer">
+          <div class="input-footer compact">
             <span class="phase-hint">
               {{ activeItem?.is_missing_clause
-                ? '讨论完成后，点击右侧按钮生成补充条款'
-                : '讨论完成后，点击右侧按钮生成修改方案' }}
+                ? '讨论完成后可生成补充条款'
+                : '讨论完成后可生成修改方案' }}
             </span>
-            <div class="action-buttons">
-              <button
-                class="skip-btn"
-                @click="$emit('skip')"
-                :disabled="loading || confirmingRisk"
-              >
-                跳过
-              </button>
-              <button
-                class="confirm-btn"
-                @click="$emit('confirm-risk')"
-                :disabled="loading || confirmingRisk"
-              >
-                <el-icon v-if="confirmingRisk" class="is-loading"><Loading /></el-icon>
-                <el-icon v-else><EditPen /></el-icon>
-                {{ confirmingRisk ? '生成中...' : (activeItem?.is_missing_clause ? '补充' : '修改') }}
-              </button>
-            </div>
           </div>
         </template>
 
@@ -728,61 +708,35 @@ onUnmounted(() => {
 }
 
 /* 模式切换容器 */
-.mode-switch-container {
-  margin-bottom: 8px;
-}
-
-.mode-switch {
+.mode-icons {
   display: flex;
-  gap: 8px;
-  padding: 4px;
-  background: #f5f5f5;
-  border-radius: 10px;
-  width: fit-content;
-}
-
-.mode-btn {
-  display: flex;
-  align-items: center;
   gap: 6px;
-  padding: 8px 16px;
-  border: none;
+  margin-right: 4px;
+}
+
+.mode-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 8px;
+  border: 1px solid transparent;
   background: transparent;
-  color: #666;
-  font-size: 13px;
+  color: #999;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.mode-btn:hover {
-  background: rgba(24, 144, 255, 0.1);
+.mode-icon:hover {
   color: #1890ff;
+  background: rgba(24, 144, 255, 0.08);
 }
 
-.mode-btn.active {
-  background: #1890ff;
-  color: #fff;
-  font-weight: 500;
-  box-shadow: 0 2px 4px rgba(24, 144, 255, 0.3);
-}
-
-.mode-btn .el-icon {
-  font-size: 14px;
-}
-
-.mode-hint {
-  margin-top: 8px;
-  padding: 6px 10px;
-  background: #f0f9ff;
-  border-left: 3px solid #1890ff;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #666;
-}
-
-.mode-hint span {
-  display: inline-block;
+.mode-icon.active {
+  color: #1890ff;
+  border-color: rgba(24, 144, 255, 0.35);
+  background: rgba(24, 144, 255, 0.12);
 }
 
 /* 已完成横幅 */
@@ -1047,3 +1001,20 @@ onUnmounted(() => {
   }
 }
 </style>
+const showQuickActions = computed(() => {
+  return Boolean(
+    props.activeItem &&
+    !props.activeItem.has_modification &&
+    props.activeItem.chat_status !== 'completed' &&
+    !props.activeItem.is_skipped &&
+    props.activeItem.chat_status !== 'skipped'
+  )
+})
+.input-footer.compact {
+  margin-top: 6px;
+}
+
+.input-footer.compact .phase-hint {
+  font-size: 12px;
+  color: #999;
+}
