@@ -204,7 +204,7 @@ class DocumentToolExecutor:
             result = await handler(task_id, arguments, document_paragraphs)
 
             # 记录到document_changes表
-            change_id = await self._save_change_record(
+            change_id = self._save_change_record(
                 task_id=task_id,
                 tool_name=function_name,
                 arguments=arguments,
@@ -346,7 +346,7 @@ class DocumentToolExecutor:
             }
         }
 
-    async def _save_change_record(
+    def _save_change_record(
         self,
         task_id: str,
         tool_name: str,
