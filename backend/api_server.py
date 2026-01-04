@@ -5189,6 +5189,9 @@ async def chat_with_item_stream(
                         response_text = "已根据您的指令执行替换。"
 
             # 处理工具调用
+            read_paragraph_info = None
+            executed_modify_tool = False
+
             if tool_calls:
                 supabase = get_supabase_client()
                 tool_executor = DocumentToolExecutor(supabase)
@@ -5220,6 +5223,15 @@ async def chat_with_item_stream(
                             result.get("data")
                         )
 
+                        if tool_name in ["modify_paragraph", "batch_replace_text", "insert_clause"]:
+                            executed_modify_tool = True
+
+                        if tool_name == "read_paragraph" and result.get("data"):
+                            read_paragraph_info = {
+                                "paragraph_id": result["data"].get("paragraph_id"),
+                                "content": result["data"].get("content", ""),
+                            }
+
                         # 如果是文档修改类工具且有change_id，推送doc_update事件
                         if tool_name in ["modify_paragraph", "batch_replace_text", "insert_clause"] and result.get("change_id"):
                             logger.info(f"推送doc_update事件: {result.get('change_id')}")
@@ -5231,6 +5243,61 @@ async def chat_with_item_stream(
                     else:
                         logger.warning(f"工具执行失败: {result['message']}")
                         yield create_tool_error_event(tool_id, result["message"])
+
+                # 文档修改模式兜底：已读取段落但未执行修改
+                if request.mode == "modify" and read_paragraph_info and not executed_modify_tool:
+                    fallback_call = _build_fallback_replace_tool(request.message)
+                    if fallback_call:
+                        try:
+                            from uuid import uuid4
+                            tool_id = f"call_{uuid4().hex[:12]}"
+                            tool_name = "modify_paragraph"
+                            find_text = json_module.loads(fallback_call["function"]["arguments"]).get("find_text")
+                            replace_text = json_module.loads(fallback_call["function"]["arguments"]).get("replace_text")
+                            if find_text and replace_text and read_paragraph_info["content"]:
+                                new_content = read_paragraph_info["content"].replace(find_text, replace_text)
+                                tool_args = {
+                                    "paragraph_id": read_paragraph_info["paragraph_id"],
+                                    "new_content": new_content,
+                                    "reason": "用户在文档修改模式下请求替换"
+                                }
+
+                                yield create_tool_call_event(tool_id, tool_name, tool_args)
+
+                                result = await tool_executor.execute_tool(
+                                    tool_call={
+                                        "id": tool_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": json_module.dumps(tool_args, ensure_ascii=False)
+                                        }
+                                    },
+                                    task_id=task_id,
+                                    document_paragraphs=doc_paragraphs
+                                )
+
+                                if result.get("success"):
+                                    yield create_tool_result_event(
+                                        tool_id,
+                                        True,
+                                        result["message"],
+                                        result.get("data")
+                                    )
+                                    if result.get("change_id"):
+                                        yield create_doc_update_event(
+                                            result["change_id"],
+                                            tool_name,
+                                            result["data"]
+                                        )
+                                    full_response = "已完成替换并更新文档。"
+                                else:
+                                    yield create_tool_error_event(tool_id, result.get("message", "执行失败"))
+                        except Exception as e:
+                            logger.warning(f"文档修改兜底执行失败: {e}")
+
+            if full_response and not response_text:
+                response_text = full_response
 
             # 流式推送AI回复文本
             logger.info(f"AI回复文本长度: {len(response_text) if response_text else 0}")
