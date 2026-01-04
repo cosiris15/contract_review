@@ -5142,14 +5142,17 @@ async def chat_with_item_stream(
                     yield create_tool_call_event(tool_id, tool_name, tool_args)
 
                     # 执行工具
+                    logger.info(f"开始执行工具: {tool_name}")
                     result = await tool_executor.execute_tool(
                         tool_call=tool_call,
                         task_id=task_id,
                         document_paragraphs=doc_paragraphs
                     )
+                    logger.info(f"工具执行完成: {tool_name}, success={result.get('success')}")
 
                     # 推送工具结果
                     if result["success"]:
+                        logger.info(f"推送工具结果事件: {tool_id}")
                         yield create_tool_result_event(
                             tool_id,
                             True,
@@ -5159,12 +5162,14 @@ async def chat_with_item_stream(
 
                         # 如果是文档修改类工具且有change_id，推送doc_update事件
                         if tool_name in ["modify_paragraph", "batch_replace_text", "insert_clause"] and result.get("change_id"):
+                            logger.info(f"推送doc_update事件: {result.get('change_id')}")
                             yield create_doc_update_event(
                                 result["change_id"],
                                 tool_name,
                                 result["data"]
                             )
                     else:
+                        logger.warning(f"工具执行失败: {result['message']}")
                         yield create_tool_error_event(tool_id, result["message"])
 
             # 流式推送AI回复文本
