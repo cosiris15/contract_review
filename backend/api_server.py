@@ -5176,36 +5176,30 @@ async def chat_with_item_stream(
 
                 full_response = response_text
 
-            # 保存对话记录（非阻塞，失败不影响流式响应）
-            if full_response or tool_calls:
+            # TODO: 保存对话记录导致PATCH请求超时，暂时禁用
+            # 后续需要改为异步后台任务或在done事件后由前端触发
+            # if full_response or tool_calls:
+            #     try:
+            #         # 添加用户消息
+            #         interactive_manager.add_message(...)
+            #         # 添加AI回复
+            #         interactive_manager.add_message(...)
+            #     except Exception as e:
+            #         logger.error(f"保存对话记录失败（非致命）: {e}")
+
+            # 同步更新 review_results 中的建议
+            if updated_suggestion:
                 try:
-                    # 添加用户消息
-                    interactive_manager.add_message(
-                        chat_id=chat.id,
-                        role="user",
-                        content=request.message,
-                    )
-
-                    # 添加AI回复（包含工具调用信息）
-                    interactive_manager.add_message(
-                        chat_id=chat.id,
-                        role="assistant",
-                        content=full_response or "已执行操作",
-                        suggestion_snapshot=updated_suggestion or chat.current_suggestion,
-                    )
-
-                    # 同步更新 review_results 中的建议
-                    if updated_suggestion:
-                        found = False
-                        for mod in result.modifications:
-                            if mod.id == item_id or mod.risk_id == item_id:
-                                mod.suggested_text = updated_suggestion
-                                found = True
-                                break
-                        if found:
-                            storage_manager.save_result(result)
+                    found = False
+                    for mod in result.modifications:
+                        if mod.id == item_id or mod.risk_id == item_id:
+                            mod.suggested_text = updated_suggestion
+                            found = True
+                            break
+                    if found:
+                        storage_manager.save_result(result)
                 except Exception as e:
-                    logger.error(f"保存对话记录失败（非致命）: {e}")
+                    logger.error(f"更新建议失败（非致命）: {e}")
 
             # 完成
             yield create_done_event(True)
