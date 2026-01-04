@@ -110,9 +110,10 @@ const paragraphChangeStatus = computed(() => {
     // 根据不同的工具类型，提取受影响的paragraph_id
     let affectedParagraphIds = []
 
-    if (tool_name === 'modify_paragraph' && data.paragraph_id) {
+    // 防御性编程：确保 data 存在再访问其属性
+    if (tool_name === 'modify_paragraph' && data && data.paragraph_id) {
       affectedParagraphIds.push(data.paragraph_id)
-    } else if (tool_name === 'insert_clause' && data.after_paragraph_id !== undefined) {
+    } else if (tool_name === 'insert_clause' && data && data.after_paragraph_id !== undefined) {
       // 插入条款影响后续段落，这里简化为标记插入点
       affectedParagraphIds.push(data.after_paragraph_id + 1)
     }

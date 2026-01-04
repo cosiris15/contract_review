@@ -5173,13 +5173,18 @@ async def chat_with_item_stream(
                         yield create_tool_error_event(tool_id, result["message"])
 
             # 流式推送AI回复文本
+            logger.info(f"AI回复文本长度: {len(response_text) if response_text else 0}")
             if response_text:
+                logger.info("开始流式推送 AI 回复文本")
                 words = response_text.split()
                 for i, word in enumerate(words):
                     yield create_message_delta_event(word + (" " if i < len(words) - 1 else ""))
                     await asyncio.sleep(0.01)  # 模拟打字效果
 
                 full_response = response_text
+                logger.info("AI 回复文本推送完成")
+            else:
+                logger.info("AI 没有返回文本回复（可能只调用了工具）")
 
             # TODO: 保存对话记录导致PATCH请求超时，暂时禁用
             # 后续需要改为异步后台任务或在done事件后由前端触发
@@ -5194,6 +5199,7 @@ async def chat_with_item_stream(
 
             # 同步更新 review_results 中的建议
             if updated_suggestion:
+                logger.info("更新修改建议到数据库")
                 try:
                     found = False
                     for mod in result.modifications:
@@ -5203,11 +5209,14 @@ async def chat_with_item_stream(
                             break
                     if found:
                         storage_manager.save_result(result)
+                        logger.info("修改建议更新成功")
                 except Exception as e:
                     logger.error(f"更新建议失败（非致命）: {e}")
 
             # 完成
+            logger.info("准备推送 done 事件")
             yield create_done_event(True)
+            logger.info("done 事件已推送")
 
         except Exception as e:
             logger.error(f"流式对话失败: {e}", exc_info=True)
