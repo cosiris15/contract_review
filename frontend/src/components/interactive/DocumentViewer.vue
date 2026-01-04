@@ -8,6 +8,14 @@
       <span class="paragraph-count">共 {{ paragraphs.length }} 段</span>
     </div>
 
+    <!-- 变更状态图例 -->
+    <div v-if="hasChanges" class="change-legend">
+      <span class="legend-title">变更标记：</span>
+      <span class="legend-item pending-badge">待处理</span>
+      <span class="legend-item applied-badge">已应用</span>
+      <span class="legend-item reverted-badge">已回滚</span>
+    </div>
+
     <div class="document-content" ref="contentRef">
       <div
         v-for="para in paragraphs"
@@ -16,11 +24,23 @@
         class="paragraph"
         :class="{
           highlighted: highlightedIndex === para.index,
-          pulse: pulseIndex === para.index
+          pulse: pulseIndex === para.index,
+          'has-pending-change': paragraphChangeStatus[para.index + 1] === 'pending',
+          'has-applied-change': paragraphChangeStatus[para.index + 1] === 'applied',
+          'has-reverted-change': paragraphChangeStatus[para.index + 1] === 'reverted',
         }"
+        @click="handleParagraphClick(para)"
       >
         <span class="para-number">{{ para.index + 1 }}</span>
         <span class="para-text">{{ para.text }}</span>
+
+        <!-- 变更状态徽章 -->
+        <span v-if="paragraphChangeStatus[para.index + 1]" class="change-badge" :class="`${paragraphChangeStatus[para.index + 1]}-badge`">
+          <el-icon v-if="paragraphChangeStatus[para.index + 1] === 'pending'"><Clock /></el-icon>
+          <el-icon v-else-if="paragraphChangeStatus[para.index + 1] === 'applied'"><Check /></el-icon>
+          <el-icon v-else-if="paragraphChangeStatus[para.index + 1] === 'reverted'"><RefreshLeft /></el-icon>
+          {{ paragraphChangeStatus[para.index + 1] === 'pending' ? '待处理' : paragraphChangeStatus[para.index + 1] === 'applied' ? '已应用' : '已回滚' }}
+        </span>
       </div>
 
       <el-empty v-if="paragraphs.length === 0 && !loading" description="暂无文档内容" />
@@ -35,7 +55,8 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
-import { Document, Loading } from '@element-plus/icons-vue'
+import { Document, Loading, Clock, Check, RefreshLeft } from '@element-plus/icons-vue'
+import { useDocumentStore } from '@/store/document'
 
 const props = defineProps({
   documentName: {
@@ -56,6 +77,10 @@ const props = defineProps({
   }
 })
 
+const emit = defineEmits(['paragraphClick'])
+
+const documentStore = useDocumentStore()
+
 const containerRef = ref(null)
 const contentRef = ref(null)
 const pulseIndex = ref(-1)
@@ -64,7 +89,71 @@ const pulseIndex = ref(-1)
 let scrollDebounceTimer = null
 let pulseTimer = null
 
-// 优化：单次遍历搜索，多条件匹配
+// ========== 段落变更状态映射 ==========
+/**
+ * 计算每个段落的变更状态
+ * 返回: { paragraph_id: 'pending' | 'applied' | 'reverted' }
+ */
+const paragraphChangeStatus = computed(() => {
+  const statusMap = {}
+
+  // 遍历所有变更，记录每个段落的最新状态
+  const allChanges = [
+    ...documentStore.pendingChanges,
+    ...documentStore.appliedChanges,
+    ...documentStore.revertedChanges
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) // 最新的在前
+
+  for (const change of allChanges) {
+    const { tool_name, data, status } = change
+
+    // 根据不同的工具类型，提取受影响的paragraph_id
+    let affectedParagraphIds = []
+
+    if (tool_name === 'modify_paragraph' && data.paragraph_id) {
+      affectedParagraphIds.push(data.paragraph_id)
+    } else if (tool_name === 'insert_clause' && data.after_paragraph_id !== undefined) {
+      // 插入条款影响后续段落，这里简化为标记插入点
+      affectedParagraphIds.push(data.after_paragraph_id + 1)
+    }
+    // batch_replace_text 影响多个段落，暂时不标记单个段落
+
+    // 为每个受影响的段落设置状态（如果尚未设置）
+    for (const paraId of affectedParagraphIds) {
+      if (!statusMap[paraId]) {
+        statusMap[paraId] = status
+      }
+    }
+  }
+
+  return statusMap
+})
+
+/**
+ * 是否有任何变更
+ */
+const hasChanges = computed(() => {
+  return documentStore.hasPendingChanges ||
+         documentStore.appliedChanges.length > 0 ||
+         documentStore.revertedChanges.length > 0
+})
+
+// ========== 段落点击事件 ==========
+function handleParagraphClick(para) {
+  const paragraphId = para.index + 1
+  const changeStatus = paragraphChangeStatus.value[paragraphId]
+
+  if (changeStatus) {
+    // 如果段落有变更，触发事件，由父组件处理（显示变更详情）
+    emit('paragraphClick', {
+      paragraph: para,
+      paragraphId,
+      changeStatus
+    })
+  }
+}
+
+// ========== 原有的高亮和滚动功能 ==========
 function findParagraphIndex(text) {
   if (!text || props.paragraphs.length === 0) return -1
 
@@ -82,16 +171,13 @@ function findParagraphIndex(text) {
   return -1
 }
 
-// 计算哪个段落应该高亮
 const highlightedIndex = computed(() => {
   return findParagraphIndex(props.highlightText)
 })
 
-// 防抖滚动到高亮的段落
 function scrollToHighlight() {
   if (highlightedIndex.value === -1) return
 
-  // 清除之前的定时器
   if (scrollDebounceTimer) {
     clearTimeout(scrollDebounceTimer)
   }
@@ -102,10 +188,8 @@ function scrollToHighlight() {
       if (element && contentRef.value) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' })
 
-        // 添加脉冲动画
         pulseIndex.value = highlightedIndex.value
 
-        // 清除之前的脉冲定时器
         if (pulseTimer) {
           clearTimeout(pulseTimer)
         }
@@ -117,7 +201,6 @@ function scrollToHighlight() {
   }, 150)
 }
 
-// 滚动到指定文本（供外部调用）
 function scrollToText(text) {
   const targetIndex = findParagraphIndex(text)
   if (targetIndex === -1) return false
@@ -140,14 +223,12 @@ function scrollToText(text) {
   return true
 }
 
-// 监听 highlightText 变化，自动滚动
 watch(() => props.highlightText, (newVal) => {
   if (newVal) {
     scrollToHighlight()
   }
 })
 
-// 清理定时器
 onUnmounted(() => {
   if (scrollDebounceTimer) {
     clearTimeout(scrollDebounceTimer)
@@ -157,7 +238,6 @@ onUnmounted(() => {
   }
 })
 
-// 暴露给父组件的方法
 defineExpose({
   scrollToHighlight,
   scrollToText
@@ -180,6 +260,7 @@ defineExpose({
   padding: var(--spacing-3) var(--spacing-4);
   border-bottom: 1px solid var(--color-border-light);
   background: var(--color-bg-secondary);
+  flex-shrink: 0;
 }
 
 .document-title {
@@ -197,6 +278,51 @@ defineExpose({
   color: var(--color-text-tertiary);
 }
 
+/* ========== 变更图例 ========== */
+.change-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.legend-title {
+  font-weight: 500;
+  color: #6c757d;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.pending-badge {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffc107;
+}
+
+.applied-badge {
+  background: #d1e7dd;
+  color: #0f5132;
+  border: 1px solid #28a745;
+}
+
+.reverted-badge {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #dc3545;
+}
+
+/* ========== 文档内容 ========== */
 .document-content {
   flex: 1;
   overflow-y: auto;
@@ -211,10 +337,31 @@ defineExpose({
   border-radius: var(--radius-md);
   transition: all 0.3s ease;
   border-left: 3px solid transparent;
+  position: relative;
+  cursor: default;
 }
 
 .paragraph:hover {
   background: var(--color-bg-hover);
+}
+
+/* 变更状态段落样式 */
+.paragraph.has-pending-change {
+  background: linear-gradient(to right, #fff3cd, #fffbeb);
+  border-left-color: #ffc107;
+  cursor: pointer;
+}
+
+.paragraph.has-applied-change {
+  background: linear-gradient(to right, #d1e7dd, #e8f5e9);
+  border-left-color: #28a745;
+  cursor: pointer;
+}
+
+.paragraph.has-reverted-change {
+  background: linear-gradient(to right, #f8d7da, #ffebee);
+  border-left-color: #dc3545;
+  cursor: pointer;
 }
 
 .paragraph.highlighted {
@@ -248,9 +395,26 @@ defineExpose({
   border-radius: var(--radius-sm);
 }
 
-.paragraph.highlighted .para-number {
-  background: #fcd34d;
-  color: #92400e;
+.paragraph.highlighted .para-number,
+.paragraph.has-pending-change .para-number,
+.paragraph.has-applied-change .para-number,
+.paragraph.has-reverted-change .para-number {
+  font-weight: 600;
+}
+
+.paragraph.has-pending-change .para-number {
+  background: #ffc107;
+  color: #856404;
+}
+
+.paragraph.has-applied-change .para-number {
+  background: #28a745;
+  color: #fff;
+}
+
+.paragraph.has-reverted-change .para-number {
+  background: #dc3545;
+  color: #fff;
 }
 
 .para-text {
@@ -261,6 +425,24 @@ defineExpose({
   word-break: break-word;
 }
 
+/* ========== 变更徽章 ========== */
+.change-badge {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  align-self: flex-start;
+}
+
+.change-badge .el-icon {
+  font-size: 12px;
+}
+
+/* ========== 加载状态 ========== */
 .loading-state {
   display: flex;
   flex-direction: column;
@@ -271,7 +453,7 @@ defineExpose({
   color: var(--color-text-tertiary);
 }
 
-/* 滚动条样式 */
+/* ========== 滚动条样式 ========== */
 .document-content::-webkit-scrollbar {
   width: 6px;
 }
