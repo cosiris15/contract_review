@@ -359,7 +359,7 @@ class DocumentToolExecutor:
         Returns:
             change_id: 变更记录ID
         """
-        change_id = generate_id("change")
+        change_id = generate_id()
 
         try:
             await self.supabase.table("document_changes").insert({
