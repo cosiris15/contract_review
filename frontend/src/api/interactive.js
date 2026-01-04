@@ -265,6 +265,7 @@ export default {
    * @param {string} itemId - 条目 ID
    * @param {string} message - 用户消息
    * @param {string} llmProvider - LLM 提供者
+   * @param {string} mode - 聊天模式 ('discuss' | 'modify')
    * @param {Object} callbacks - 回调函数
    * @param {Function} callbacks.onChunk - 收到文本片段时的回调
    * @param {Function} callbacks.onSuggestion - 收到更新建议时的回调
@@ -272,7 +273,7 @@ export default {
    * @param {Function} callbacks.onError - 错误时的回调
    * @returns {Promise<void>}
    */
-  async sendChatMessageStream(taskId, itemId, message, llmProvider = 'deepseek', callbacks = {}) {
+  async sendChatMessageStream(taskId, itemId, message, llmProvider = 'deepseek', mode = 'discuss', callbacks = {}) {
     const {
       onChunk,
       onSuggestion,
@@ -307,7 +308,8 @@ export default {
         },
         body: JSON.stringify({
           message,
-          llm_provider: llmProvider
+          llm_provider: llmProvider,
+          mode  // 添加聊天模式参数
         })
       })
 

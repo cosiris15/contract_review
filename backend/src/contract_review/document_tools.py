@@ -203,19 +203,21 @@ class DocumentToolExecutor:
         try:
             result = await handler(task_id, arguments, document_paragraphs)
 
-            # 记录到document_changes表
-            change_id = self._save_change_record(
-                task_id=task_id,
-                tool_name=function_name,
-                arguments=arguments,
-                result=result
-            )
+            # 只为修改类工具保存变更记录（read_paragraph是只读操作，不保存）
+            change_id = None
+            if function_name in ["modify_paragraph", "batch_replace_text", "insert_clause"]:
+                change_id = self._save_change_record(
+                    task_id=task_id,
+                    tool_name=function_name,
+                    arguments=arguments,
+                    result=result
+                )
 
             return {
                 "success": True,
                 "message": result["message"],
                 "data": result.get("data"),
-                "change_id": change_id
+                "change_id": change_id  # read_paragraph将返回None
             }
         except Exception as e:
             logger.error(f"工具执行失败 [{function_name}]: {e}", exc_info=True)

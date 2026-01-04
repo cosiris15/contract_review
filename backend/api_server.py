@@ -3962,6 +3962,7 @@ class ChatRequest(BaseModel):
     """对话消息请求"""
     message: str
     llm_provider: str = "deepseek"
+    mode: str = "discuss"  # discuss（讨论风险）或 modify（文档修改）
 
 
 class ChatResponse(BaseModel):
@@ -5090,9 +5091,35 @@ async def chat_with_item_stream(
             if doc_paragraphs and messages:
                 doc_structure = format_document_structure(doc_paragraphs, max_paragraphs=100)
 
-                # 在第一个系统消息后追加文档结构
+                # 根据聊天模式调整系统消息
+                if request.mode == "modify":
+                    # 文档修改模式：强调用户发送的是操作命令
+                    mode_instruction = (
+                        "\n\n**当前模式：文档修改模式**\n"
+                        "用户发送的是文档修改命令（如"把第3段的甲方改成我方"），请：\n"
+                        "1. 理解用户的修改意图\n"
+                        "2. 使用相应的工具执行修改操作\n"
+                        "3. 简洁确认执行结果\n\n"
+                        "不要只是讨论或建议，而是**直接执行用户的命令**。"
+                    )
+                else:
+                    # 讨论模式：专注于分析和建议
+                    mode_instruction = (
+                        "\n\n**当前模式：风险讨论模式**\n"
+                        "用户正在与您讨论风险点，请：\n"
+                        "1. 分析风险的利弊\n"
+                        "2. 提供专业的法律意见\n"
+                        "3. 帮助用户理解不同修改方案的影响\n\n"
+                        "只有当用户明确要求执行修改时，才使用工具。"
+                    )
+
+                # 在第一个系统消息后追加文档结构和模式说明
                 if messages[0]["role"] == "system":
-                    messages[0]["content"] += f"\n\n**完整文档结构（用于工具调用）：**\n{doc_structure}\n\n**重要：使用工具时，paragraph_id 必须是上述列表中实际存在的ID**"
+                    messages[0]["content"] += (
+                        mode_instruction +
+                        f"\n**完整文档结构（用于工具调用）：**\n{doc_structure}\n\n"
+                        "**重要：使用工具时，paragraph_id 必须是上述列表中实际存在的ID**"
+                    )
 
             # 调用LLM（支持工具）
             response_text, tool_calls = await engine.llm.chat_with_tools(
@@ -5130,8 +5157,8 @@ async def chat_with_item_stream(
                             result.get("data")
                         )
 
-                        # 如果是文档修改类工具，推送doc_update事件
-                        if tool_name in ["modify_paragraph", "batch_replace_text", "insert_clause"]:
+                        # 如果是文档修改类工具且有change_id，推送doc_update事件
+                        if tool_name in ["modify_paragraph", "batch_replace_text", "insert_clause"] and result.get("change_id"):
                             yield create_doc_update_event(
                                 result["change_id"],
                                 tool_name,

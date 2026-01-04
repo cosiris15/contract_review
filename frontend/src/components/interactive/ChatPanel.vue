@@ -127,13 +127,39 @@
       <template v-else>
         <!-- 阶段1: 分析讨论阶段（未生成修改建议时） -->
         <template v-if="!activeItem.has_modification">
+          <!-- 模式切换 -->
+          <div class="mode-switch-container">
+            <div class="mode-switch">
+              <button
+                class="mode-btn"
+                :class="{ active: chatMode === 'discuss' }"
+                @click="chatMode = 'discuss'"
+              >
+                <el-icon><ChatDotRound /></el-icon>
+                <span>风险讨论</span>
+              </button>
+              <button
+                class="mode-btn"
+                :class="{ active: chatMode === 'modify' }"
+                @click="chatMode = 'modify'"
+              >
+                <el-icon><EditPen /></el-icon>
+                <span>文档修改</span>
+              </button>
+            </div>
+            <div class="mode-hint">
+              <span v-if="chatMode === 'discuss'">💬 与AI讨论风险点，分析利弊</span>
+              <span v-else>✏️ 直接下达修改命令，AI将调用工具执行</span>
+            </div>
+          </div>
+
           <!-- 输入框 -->
           <div class="input-container">
             <textarea
               ref="inputRef"
               v-model="inputText"
               class="chat-input"
-              placeholder="与AI讨论这个风险点..."
+              :placeholder="chatMode === 'discuss' ? '与AI讨论这个风险点...' : '输入修改命令，例如：把第3段的甲方改成我方'"
               rows="1"
               @input="autoResize"
               @keydown.enter.exact="handleEnter"
@@ -355,6 +381,9 @@ const chatHistoryRef = ref(null)
 const inputRef = ref(null)
 const editableSuggestion = ref('')
 
+// 聊天模式：discuss（讨论风险）或 modify（文档修改）
+const chatMode = ref('discuss')
+
 // 定时器引用
 let resizeTimer = null
 
@@ -423,7 +452,7 @@ function handleEnter(e) {
 // 发送消息
 function send() {
   if (!inputText.value.trim() || props.loading) return
-  emit('send-message', inputText.value.trim())
+  emit('send-message', inputText.value.trim(), chatMode.value)
   inputText.value = ''
   nextTick(() => {
     if (inputRef.value) {
@@ -696,6 +725,64 @@ onUnmounted(() => {
   padding: 16px 20px;
   background: #fff;
   border-top: 1px solid #eee;
+}
+
+/* 模式切换容器 */
+.mode-switch-container {
+  margin-bottom: 12px;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  background: #f5f5f5;
+  border-radius: 10px;
+  width: fit-content;
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:hover {
+  background: rgba(24, 144, 255, 0.1);
+  color: #1890ff;
+}
+
+.mode-btn.active {
+  background: #1890ff;
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 2px 4px rgba(24, 144, 255, 0.3);
+}
+
+.mode-btn .el-icon {
+  font-size: 14px;
+}
+
+.mode-hint {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: #f0f9ff;
+  border-left: 3px solid #1890ff;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #666;
+}
+
+.mode-hint span {
+  display: inline-block;
 }
 
 /* 已完成横幅 */

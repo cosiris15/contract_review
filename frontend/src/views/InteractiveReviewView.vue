@@ -354,7 +354,7 @@ function scrollToHighlight() {
 }
 
 // 发送消息（流式输出）
-async function sendMessage(message) {
+async function sendMessage(message, mode = 'discuss') {
   if (!activeItemApiId.value || chatLoading.value) return
 
   // 添加用户消息到界面
@@ -385,6 +385,7 @@ async function sendMessage(message) {
       activeItemApiId.value,
       message,
       'deepseek',
+      mode,  // 传递聊天模式
       {
         onChunk: (chunk) => {
           // 实时更新 AI 回复内容
