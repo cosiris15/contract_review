@@ -112,7 +112,8 @@
 
       <!-- 流式输出时的打字指示器 -->
       <div v-if="streaming" class="streaming-indicator">
-        <span class="typing-cursor"></span>
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>AI 正在思考...</span>
       </div>
     </div>
 
@@ -682,20 +683,14 @@ onUnmounted(() => {
 
 /* 流式输出指示器 */
 .streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 0;
+  color: #999;
+  font-size: 12px;
 }
 
-.typing-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 16px;
-  background: #1890ff;
-  animation: cursor-blink 1s step-end infinite;
-}
-
-@keyframes cursor-blink {
-  50% { opacity: 0; }
-}
 
 /* 底部输入区 */
 .input-area {

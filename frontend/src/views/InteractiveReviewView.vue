@@ -335,33 +335,51 @@ function stopIncrementalPolling() {
   isLoadingMore.value = false
 }
 
+function cacheActiveItemState() {
+  if (!activeItemId.value) return
+  const currentItem = items.value.find(i => i.id === activeItemId.value)
+  if (!currentItem) return
+  currentItem.messages = activeMessages.value
+  currentItem.current_suggestion = currentSuggestion.value
+  currentItem.message_count = activeMessages.value.length
+}
+
 // 选择条目
 async function selectItem(item) {
   if (activeItemId.value === item.id) return
 
+  cacheActiveItemState()
   activeItemId.value = item.id
   activeItemApiId.value = item.item_id  // 保存 API 调用需要的 item_id
-  activeMessages.value = []
+  const cachedMessages = item.messages || []
+  activeMessages.value = cachedMessages
   currentSuggestion.value = item.current_suggestion || item.suggested_text || ''
+  item.messages = activeMessages.value
 
   // 加载条目详情（含对话历史）
   try {
     const response = await interactiveApi.getItemDetail(taskId.value, item.item_id)
     const detail = response.data
 
-    activeMessages.value = detail.messages || []
-    currentSuggestion.value = detail.current_suggestion || item.suggested_text || ''
+    const detailMessages = Array.isArray(detail.messages) ? detail.messages : null
+    const resolvedMessages = detailMessages
+      ? (detailMessages.length >= cachedMessages.length ? detailMessages : cachedMessages)
+      : cachedMessages
+    activeMessages.value = resolvedMessages
+    currentSuggestion.value = detail.current_suggestion || item.current_suggestion || item.suggested_text || ''
 
     // 更新本地条目状态
     const localItem = items.value.find(i => i.id === item.id)
     if (localItem) {
       localItem.status = detail.status
-      localItem.message_count = detail.messages?.length || 0
+      localItem.message_count = resolvedMessages.length
+      localItem.messages = resolvedMessages
+      localItem.current_suggestion = currentSuggestion.value
     }
   } catch (error) {
     console.error('加载条目详情失败:', error)
     // 如果加载失败，使用条目列表中的信息
-    activeMessages.value = item.messages || []
+    activeMessages.value = item.messages || cachedMessages
   }
 }
 
@@ -376,16 +394,20 @@ function scrollToHighlight() {
 async function sendMessage(message, mode = 'discuss') {
   if (!activeItemApiId.value || chatLoading.value) return
 
+  const targetItemId = activeItemId.value
+  const targetItem = items.value.find(i => i.id === targetItemId)
+  const targetMessages = activeMessages.value
+
   // 添加用户消息到界面
-  activeMessages.value.push({
+  targetMessages.push({
     role: 'user',
     content: message,
     timestamp: new Date().toISOString()
   })
 
   // 添加一个空的 AI 回复占位，用于流式填充
-  const aiMessageIndex = activeMessages.value.length
-  activeMessages.value.push({
+  const aiMessageIndex = targetMessages.length
+  targetMessages.push({
     role: 'assistant',
     content: '',
     timestamp: new Date().toISOString(),
@@ -409,42 +431,45 @@ async function sendMessage(message, mode = 'discuss') {
         onChunk: (chunk) => {
           // 实时更新 AI 回复内容
           streamedContent += chunk
-          activeMessages.value[aiMessageIndex].content = streamedContent
+          targetMessages[aiMessageIndex].content = streamedContent
         },
         onSuggestion: (suggestion) => {
           // 更新当前建议
-          currentSuggestion.value = suggestion
-          activeMessages.value[aiMessageIndex].suggestion_snapshot = suggestion
+          if (targetItem) {
+            targetItem.current_suggestion = suggestion
+          }
+          if (targetItemId === activeItemId.value) {
+            currentSuggestion.value = suggestion
+          }
+          targetMessages[aiMessageIndex].suggestion_snapshot = suggestion
         },
         onDone: (fullContent) => {
           // 流式完成，移除 streaming 标记
-          activeMessages.value[aiMessageIndex].isStreaming = false
+          targetMessages[aiMessageIndex].isStreaming = false
 
           // 更新本地条目状态
-          const localItem = items.value.find(i => i.id === activeItemId.value)
-          if (localItem) {
-            localItem.status = 'in_progress'
-            localItem.current_suggestion = currentSuggestion.value
-            localItem.message_count = activeMessages.value.length
+          if (targetItem) {
+            targetItem.status = 'in_progress'
+            targetItem.message_count = targetMessages.length
           }
         },
         onError: (error) => {
           console.error('流式对话失败:', error)
           // 更新 AI 消息显示错误
-          activeMessages.value[aiMessageIndex].content = '抱歉，对话出错了：' + error.message
-          activeMessages.value[aiMessageIndex].isStreaming = false
-          activeMessages.value[aiMessageIndex].isError = true
+          targetMessages[aiMessageIndex].content = '抱歉，对话出错了：' + error.message
+          targetMessages[aiMessageIndex].isStreaming = false
+          targetMessages[aiMessageIndex].isError = true
         },
 
         // 新增：工具调用相关回调
         onToolThinking: (thinking) => {
           // AI思考过程
-          activeMessages.value[aiMessageIndex].thinking = thinking
+          targetMessages[aiMessageIndex].thinking = thinking
         },
         onToolCall: (toolCallData) => {
           // 记录工具调用
           const { tool_id, tool_name, arguments: toolArgs } = toolCallData
-          activeMessages.value[aiMessageIndex].toolCalls.push({
+          targetMessages[aiMessageIndex].toolCalls.push({
             tool_id,
             tool_name,
             arguments: toolArgs,
@@ -456,7 +481,7 @@ async function sendMessage(message, mode = 'discuss') {
         onToolResult: (toolResultData) => {
           // 更新工具调用结果
           const { tool_id, success, message: resultMessage, data } = toolResultData
-          const toolCall = activeMessages.value[aiMessageIndex].toolCalls.find(tc => tc.tool_id === tool_id)
+          const toolCall = targetMessages[aiMessageIndex].toolCalls.find(tc => tc.tool_id === tool_id)
           if (toolCall) {
             toolCall.status = success ? 'success' : 'error'
             toolCall.result = { success, message: resultMessage, data }
@@ -466,7 +491,7 @@ async function sendMessage(message, mode = 'discuss') {
         onToolError: (toolErrorData) => {
           // 处理工具错误
           const { tool_id, error: errorMessage } = toolErrorData
-          const toolCall = activeMessages.value[aiMessageIndex].toolCalls.find(tc => tc.tool_id === tool_id)
+          const toolCall = targetMessages[aiMessageIndex].toolCalls.find(tc => tc.tool_id === tool_id)
           if (toolCall) {
             toolCall.status = 'error'
             toolCall.result = { success: false, message: errorMessage }
@@ -491,7 +516,7 @@ async function sendMessage(message, mode = 'discuss') {
         onMessageDelta: (delta) => {
           // 流式文本增量（如果使用message_delta而不是chunk）
           streamedContent += delta
-          activeMessages.value[aiMessageIndex].content = streamedContent
+          targetMessages[aiMessageIndex].content = streamedContent
         }
       }
     )
@@ -500,8 +525,8 @@ async function sendMessage(message, mode = 'discuss') {
     ElMessage.error('发送消息失败: ' + (error.message || '请重试'))
     // 如果 AI 回复是空的，移除它
     if (!streamedContent) {
-      activeMessages.value.pop() // 移除空的 AI 回复
-      activeMessages.value.pop() // 移除用户消息
+      targetMessages.pop() // 移除空的 AI 回复
+      targetMessages.pop() // 移除用户消息
     }
   } finally {
     chatLoading.value = false
