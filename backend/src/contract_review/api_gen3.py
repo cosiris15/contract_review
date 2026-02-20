@@ -135,7 +135,7 @@ async def start_review(request: StartReviewRequest):
 
     from .graph.builder import build_review_graph
 
-    graph = build_review_graph()
+    graph = build_review_graph(domain_id=request.domain_id)
     config = {"configurable": {"thread_id": task_id}}
     initial_state = {
         "task_id": task_id,

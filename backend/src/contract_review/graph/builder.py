@@ -7,13 +7,15 @@ from typing import Any, Dict, List, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from pydantic import BaseModel
 
 from ..config import get_settings
 from ..llm_client import LLMClient
 from ..models import generate_id
+from ..plugins.registry import get_domain_plugin
 from ..skills.dispatcher import SkillDispatcher
-from ..skills.schema import SkillBackend, SkillRegistration
 from ..skills.local.clause_context import ClauseContextInput, ClauseContextOutput
+from ..skills.schema import GenericSkillInput, SkillBackend, SkillRegistration
 from .llm_utils import parse_json_response
 from .prompts import (
     build_clause_analyze_messages,
@@ -27,6 +29,20 @@ logger = logging.getLogger(__name__)
 
 _llm_client: Optional[LLMClient] = None
 _llm_init_warned = False
+
+_GENERIC_SKILLS: list[SkillRegistration] = [
+    SkillRegistration(
+        skill_id="get_clause_context",
+        name="获取条款上下文",
+        description="从文档结构中提取指定条款文本",
+        input_schema=ClauseContextInput,
+        output_schema=ClauseContextOutput,
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.clause_context.get_clause_context",
+        domain="*",
+        category="extraction",
+    )
+]
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:
@@ -97,24 +113,54 @@ def _get_llm_client() -> LLMClient | None:
     return _llm_client
 
 
-def _create_dispatcher() -> SkillDispatcher | None:
+def _create_dispatcher(domain_id: str | None = None) -> SkillDispatcher | None:
     try:
         dispatcher = SkillDispatcher()
-        dispatcher.register(
-            SkillRegistration(
-                skill_id="get_clause_context",
-                name="获取条款上下文",
-                description="从文档结构中提取指定条款文本",
-                input_schema=ClauseContextInput,
-                output_schema=ClauseContextOutput,
-                backend=SkillBackend.LOCAL,
-                local_handler="contract_review.skills.local.clause_context.get_clause_context",
-            )
-        )
+        for skill in _GENERIC_SKILLS:
+            try:
+                dispatcher.register(skill)
+            except Exception as exc:
+                logger.warning("注册通用 Skill '%s' 失败: %s", skill.skill_id, exc)
+
+        if domain_id:
+            plugin = get_domain_plugin(domain_id)
+            if plugin and plugin.domain_skills:
+                for skill in plugin.domain_skills:
+                    try:
+                        dispatcher.register(skill)
+                    except Exception as exc:
+                        logger.warning("注册领域 Skill '%s' 失败（已跳过）: %s", skill.skill_id, exc)
         return dispatcher
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("创建 SkillDispatcher 失败，将跳过技能调用: %s", exc)
         return None
+
+
+def _build_skill_input(
+    skill_id: str,
+    clause_id: str,
+    primary_structure: Any,
+    state: ReviewGraphState,
+) -> BaseModel | None:
+    """Build per-skill input payload. Return None if input cannot be constructed."""
+    if skill_id == "get_clause_context":
+        try:
+            return ClauseContextInput(
+                clause_id=clause_id,
+                document_structure=primary_structure,
+            )
+        except Exception:
+            return None
+
+    return GenericSkillInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        state_snapshot={
+            "our_party": state.get("our_party", ""),
+            "language": state.get("language", "en"),
+            "domain_id": state.get("domain_id", ""),
+        },
+    )
 
 
 async def node_init(state: ReviewGraphState) -> Dict[str, Any]:
@@ -167,17 +213,30 @@ async def node_clause_analyze(
     priority = item.get("priority", "medium")
     our_party = state.get("our_party", "")
     language = state.get("language", "en")
+    required_skills = item.get("required_skills", [])
+
+    primary_structure = state.get("primary_structure")
+    skill_context: Dict[str, Any] = {}
+
+    if dispatcher and primary_structure:
+        for skill_id in required_skills:
+            if skill_id not in dispatcher.skill_ids:
+                logger.debug("Skill '%s' 未注册，跳过", skill_id)
+                continue
+            try:
+                skill_input = _build_skill_input(skill_id, clause_id, primary_structure, state)
+                if skill_input is None:
+                    continue
+                skill_result = await dispatcher.call(skill_id, skill_input)
+                if skill_result.success and skill_result.data:
+                    skill_context[skill_id] = skill_result.data
+            except Exception as exc:
+                logger.warning("Skill '%s' 调用失败: %s", skill_id, exc)
 
     clause_text = ""
-    primary_structure = state.get("primary_structure")
-    if dispatcher and primary_structure:
-        try:
-            skill_input = ClauseContextInput(clause_id=clause_id, document_structure=primary_structure)
-            skill_result = await dispatcher.call("get_clause_context", skill_input)
-            if skill_result.success and isinstance(skill_result.data, dict):
-                clause_text = skill_result.data.get("context_text", "")
-        except Exception as exc:
-            logger.warning("Skill get_clause_context 调用失败: %s", exc)
+    context = skill_context.get("get_clause_context")
+    if isinstance(context, dict):
+        clause_text = str(context.get("context_text", "") or "")
 
     if not clause_text and primary_structure:
         clause_text = _extract_clause_text(primary_structure, clause_id)
@@ -197,6 +256,7 @@ async def node_clause_analyze(
                 description=description,
                 priority=priority,
                 clause_text=clause_text,
+                skill_context=skill_context,
             )
             response = await llm_client.chat(messages)
             raw_risks = parse_json_response(response, expect_list=True)
@@ -452,11 +512,15 @@ def _generate_generic_checklist(structure) -> List[Dict[str, Any]]:
     return checklist
 
 
-def build_review_graph(checkpointer=None, interrupt_before: List[str] | None = None):
+def build_review_graph(
+    checkpointer=None,
+    interrupt_before: List[str] | None = None,
+    domain_id: str | None = None,
+):
     if interrupt_before is None:
         interrupt_before = ["human_approval"]
 
-    dispatcher = _create_dispatcher()
+    dispatcher = _create_dispatcher(domain_id=domain_id)
 
     async def _node_clause_analyze(state: ReviewGraphState):
         return await node_clause_analyze(state, dispatcher=dispatcher)

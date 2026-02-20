@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Optional, Type
+from typing import Any, Dict, Optional, Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SkillBackend(str, Enum):
@@ -29,6 +29,8 @@ class SkillRegistration(BaseModel):
     backend: SkillBackend
     refly_workflow_id: Optional[str] = None
     local_handler: Optional[str] = None
+    domain: str = "*"
+    category: str = "general"
 
     class Config:
         arbitrary_types_allowed = True
@@ -50,3 +52,11 @@ class SkillResult(BaseModel):
     data: Optional[Any] = None
     error: Optional[str] = None
     execution_time_ms: Optional[int] = None
+
+
+class GenericSkillInput(BaseModel):
+    """Generic input payload for skills without dedicated schema."""
+
+    clause_id: str
+    document_structure: Any = None
+    state_snapshot: Dict[str, Any] = Field(default_factory=dict)

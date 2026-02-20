@@ -71,6 +71,22 @@ def _anti_injection_instruction(language: str, our_party: str) -> str:
     return template.format(our_party=our_party)
 
 
+def _format_skill_context(skill_context: Dict[str, Any]) -> str:
+    """Format skill outputs into LLM-readable text blocks."""
+    parts: List[str] = []
+    for skill_id, data in skill_context.items():
+        if skill_id == "get_clause_context":
+            continue
+        if isinstance(data, dict):
+            parts.append(f"[{skill_id}]\n{json.dumps(data, ensure_ascii=False, indent=2)}")
+            continue
+        if isinstance(data, str):
+            parts.append(f"[{skill_id}]\n{data}")
+            continue
+        parts.append(f"[{skill_id}]\n{str(data)}")
+    return "\n\n".join(parts)
+
+
 def build_clause_analyze_messages(
     *,
     language: str,
@@ -80,6 +96,7 @@ def build_clause_analyze_messages(
     description: str,
     priority: str,
     clause_text: str,
+    skill_context: Dict[str, Any] | None = None,
 ) -> List[Dict[str, str]]:
     system = CLAUSE_ANALYZE_SYSTEM.format(
         anti_injection=_anti_injection_instruction(language, our_party),
@@ -94,6 +111,10 @@ def build_clause_analyze_messages(
         f"- 优先级：{priority}\n\n"
         f"【条款原文】\n<<<CLAUSE_START>>>\n{clause_text}\n<<<CLAUSE_END>>>"
     )
+    if skill_context:
+        extra_context = _format_skill_context(skill_context)
+        if extra_context:
+            user += f"\n\n【辅助分析信息】\n{extra_context}"
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
