@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from ..config import get_settings
 from ..llm_client import LLMClient
 from ..models import generate_id
-from ..plugins.registry import get_domain_plugin
+from ..plugins.registry import get_baseline_text, get_domain_plugin
 from ..skills.dispatcher import SkillDispatcher
 from ..skills.local.clause_context import ClauseContextInput, ClauseContextOutput
 from ..skills.schema import GenericSkillInput, SkillBackend, SkillRegistration
@@ -41,7 +41,43 @@ _GENERIC_SKILLS: list[SkillRegistration] = [
         local_handler="contract_review.skills.local.clause_context.get_clause_context",
         domain="*",
         category="extraction",
-    )
+    ),
+    SkillRegistration(
+        skill_id="resolve_definition",
+        name="定义解析",
+        description="查找条款中引用的术语定义",
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.resolve_definition.resolve_definition",
+        domain="*",
+        category="extraction",
+    ),
+    SkillRegistration(
+        skill_id="compare_with_baseline",
+        name="基线文本对比",
+        description="将条款文本与标准模板进行对比",
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.compare_with_baseline.compare_with_baseline",
+        domain="*",
+        category="comparison",
+    ),
+    SkillRegistration(
+        skill_id="cross_reference_check",
+        name="交叉引用检查",
+        description="检查条款中的交叉引用是否有效",
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.cross_reference_check.cross_reference_check",
+        domain="*",
+        category="validation",
+    ),
+    SkillRegistration(
+        skill_id="extract_financial_terms",
+        name="财务条款提取",
+        description="从条款中提取金额、百分比、期限等数值",
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.extract_financial_terms.extract_financial_terms",
+        domain="*",
+        category="extraction",
+    ),
 ]
 
 
@@ -151,6 +187,45 @@ def _build_skill_input(
             )
         except Exception:
             return None
+
+    if skill_id == "resolve_definition":
+        from ..skills.local.resolve_definition import ResolveDefinitionInput
+
+        return ResolveDefinitionInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
+
+    if skill_id == "compare_with_baseline":
+        from ..skills.local.compare_with_baseline import CompareWithBaselineInput
+
+        baseline_text = get_baseline_text(state.get("domain_id", ""), clause_id) or ""
+        return CompareWithBaselineInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            baseline_text=baseline_text,
+            state_snapshot={
+                "our_party": state.get("our_party", ""),
+                "language": state.get("language", "en"),
+                "domain_id": state.get("domain_id", ""),
+            },
+        )
+
+    if skill_id == "cross_reference_check":
+        from ..skills.local.cross_reference_check import CrossReferenceCheckInput
+
+        return CrossReferenceCheckInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
+
+    if skill_id == "extract_financial_terms":
+        from ..skills.local.extract_financial_terms import ExtractFinancialTermsInput
+
+        return ExtractFinancialTermsInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
 
     return GenericSkillInput(
         clause_id=clause_id,
