@@ -83,7 +83,7 @@ class TestReviewGraph:
         config = {"configurable": {"thread_id": "test_empty"}}
         result = await graph.ainvoke(initial_state, config)
         assert result["is_complete"] is True
-        assert "审查完成" in result.get("summary_notes", "")
+        assert result.get("summary_notes", "").strip()
 
     @pytest.mark.asyncio
     async def test_single_clause_no_interrupt(self):

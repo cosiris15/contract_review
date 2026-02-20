@@ -291,6 +291,29 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       }
     },
 
+    async exportRedline() {
+      if (!this.taskId) {
+        throw new Error('任务不存在')
+      }
+      this._startOperation('export_redline', '正在生成红线文档...')
+      try {
+        const response = await gen3Api.exportRedline(this.taskId)
+        this._endOperation()
+        return response.data
+      } catch (error) {
+        this._endOperation(error, { setErrorPhase: false })
+        throw error
+      }
+    },
+
+    async fetchResult() {
+      if (!this.taskId) {
+        throw new Error('任务不存在')
+      }
+      const response = await gen3Api.getResult(this.taskId)
+      return response.data
+    },
+
     disconnect() {
       if (this._sseConnection) {
         this._sseConnection.close()

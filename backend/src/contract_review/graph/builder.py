@@ -37,6 +37,44 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return {}
 
 
+def _search_clauses(clauses: list, target_id: str) -> str:
+    """Recursively search clause tree and return matched clause text."""
+    for clause in clauses:
+        if not isinstance(clause, dict):
+            continue
+        clause_id = str(clause.get("clause_id", "") or "")
+        if clause_id == target_id:
+            return str(clause.get("text", "") or "")
+        children = clause.get("children", [])
+        if isinstance(children, list) and children:
+            found = _search_clauses(children, target_id)
+            if found:
+                return found
+        # Fuzzy prefix match for numbering differences (e.g. 14.2 vs 14.2.1).
+        if clause_id and target_id and (
+            clause_id.startswith(f"{target_id}.") or target_id.startswith(f"{clause_id}.")
+        ):
+            text = str(clause.get("text", "") or "")
+            if text:
+                return text
+    return ""
+
+
+def _extract_clause_text(structure: Any, clause_id: str) -> str:
+    """Extract clause text directly from structure dict as dispatcher fallback."""
+    if not structure:
+        return ""
+    if not isinstance(structure, dict):
+        if hasattr(structure, "model_dump"):
+            structure = structure.model_dump()
+        else:
+            return ""
+    clauses = structure.get("clauses", [])
+    if not isinstance(clauses, list):
+        return ""
+    return _search_clauses(clauses, clause_id)
+
+
 def _normalize_risk_level(level: str | None) -> str:
     if level in {"high", "medium", "low"}:
         return level
@@ -140,6 +178,9 @@ async def node_clause_analyze(
                 clause_text = skill_result.data.get("context_text", "")
         except Exception as exc:
             logger.warning("Skill get_clause_context 调用失败: %s", exc)
+
+    if not clause_text and primary_structure:
+        clause_text = _extract_clause_text(primary_structure, clause_id)
 
     if not clause_text:
         clause_text = f"{clause_name}\n{description}".strip() or clause_id

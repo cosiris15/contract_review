@@ -118,6 +118,7 @@
 
     <div v-else-if="store.phase === 'complete'" class="complete-section">
       <ReviewSummary
+        :task-id="store.taskId"
         :summary="store.summary"
         :approved-diffs="store.approvedDiffs"
         :rejected-diffs="store.rejectedDiffs"

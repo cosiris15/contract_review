@@ -149,6 +149,17 @@ const gen3Api = {
     return api.post(`/review/${taskId}/run`)
   },
 
+  exportRedline(taskId) {
+    return api.post(`/review/${taskId}/export`, null, {
+      responseType: 'blob',
+      timeout: 60000
+    })
+  },
+
+  getResult(taskId) {
+    return api.get(`/review/${taskId}/result`)
+  },
+
   async connectEventStream(taskId, callbacks = {}) {
     const {
       onProgress,

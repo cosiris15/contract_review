@@ -8,6 +8,7 @@ import logging
 import shutil
 import tempfile
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict
 
@@ -20,6 +21,7 @@ from .models import (
     ApprovalResponse,
     BatchApprovalRequest,
     DocumentRole,
+    ModificationSuggestion,
     StartReviewRequest,
     StartReviewResponse,
     TaskDocument,
@@ -31,6 +33,7 @@ from .plugins.registry import (
     get_review_checklist,
     list_domain_plugins,
 )
+from .redline_generator import generate_redline_document
 from .structure_parser import StructureParser
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,44 @@ def _role_to_str(value: Any) -> str:
     if hasattr(value, "value"):
         return str(value.value)
     return str(value or "")
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return {}
+
+
+def _priority_from_risk_level(level: Any) -> str:
+    normalized = str(level or "").lower()
+    if normalized in {"high", "critical"}:
+        return "must"
+    if normalized == "medium":
+        return "should"
+    return "may"
+
+
+def _diff_to_modification(diff: dict) -> ModificationSuggestion:
+    action_type = str(diff.get("action_type", "replace"))
+    clause_id = str(diff.get("clause_id", "") or "")
+    diff_id = str(diff.get("diff_id", "") or generate_id())
+    risk_id = str(diff.get("risk_id", "") or diff_id)
+    is_addition = action_type == "insert"
+    insertion_point = f"插入到条款 {clause_id} 之后" if is_addition and clause_id else None
+
+    return ModificationSuggestion(
+        id=diff_id,
+        risk_id=risk_id,
+        original_text=str(diff.get("original_text", "") or ""),
+        suggested_text=str(diff.get("proposed_text", "") or ""),
+        modification_reason=str(diff.get("reason", "") or ""),
+        priority=_priority_from_risk_level(diff.get("risk_level")),
+        user_confirmed=True,
+        is_addition=is_addition,
+        insertion_point=insertion_point,
+    )
 
 
 def _now_ts() -> float:
@@ -381,6 +422,101 @@ async def resume_review(task_id: str):
         _resume_graph(task_id, entry["graph"], entry["config"])
     )
     return {"task_id": task_id, "status": "resumed"}
+
+
+@router.get("/review/{task_id}/result")
+async def get_review_result(task_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    _touch_entry(entry)
+    snapshot = entry["graph"].get_state(entry["config"])
+    state = snapshot.values
+    all_diffs = [_as_dict(d) for d in state.get("all_diffs", [])]
+    approved_count = sum(
+        1 for d in all_diffs
+        if str(d.get("status", "")).lower() == "approved"
+        or str(state.get("user_decisions", {}).get(d.get("diff_id"), "")).lower() == "approve"
+    )
+    rejected_count = sum(
+        1 for v in state.get("user_decisions", {}).values()
+        if str(v).lower() == "reject"
+    )
+
+    return {
+        "task_id": task_id,
+        "is_complete": bool(state.get("is_complete", False)),
+        "summary_notes": state.get("summary_notes", ""),
+        "total_risks": len(state.get("all_risks", [])),
+        "approved_count": approved_count,
+        "rejected_count": rejected_count,
+        "findings": state.get("findings", {}),
+        "all_risks": state.get("all_risks", []),
+    }
+
+
+@router.post("/review/{task_id}/export")
+async def export_redline(task_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    _touch_entry(entry)
+    snapshot = entry["graph"].get_state(entry["config"])
+    state = snapshot.values
+    if not state.get("is_complete"):
+        raise HTTPException(400, "审阅尚未完成，无法导出")
+
+    all_diffs = [_as_dict(d) for d in state.get("all_diffs", [])]
+    user_decisions = state.get("user_decisions", {}) or {}
+    approved_diffs = [
+        d for d in all_diffs
+        if str(d.get("status", "")).lower() == "approved"
+        or str(user_decisions.get(d.get("diff_id"), "")).lower() == "approve"
+    ]
+    if not approved_diffs and all_diffs:
+        # all_diffs 在当前图中通常只保存已批准修改，兼容无 status 场景
+        approved_diffs = all_diffs
+    if not approved_diffs:
+        raise HTTPException(400, "没有已批准的修改建议")
+
+    docs = entry.get("documents", [])
+    primary_doc = next(
+        (
+            _as_dict(d) for d in docs
+            if _role_to_str(_as_dict(d).get("role", "")).lower() == "primary"
+        ),
+        None,
+    )
+    if not primary_doc:
+        raise HTTPException(400, "未找到 primary 文档")
+
+    tmp_dir = entry.get("tmp_dir")
+    if not tmp_dir:
+        raise HTTPException(400, "未找到原始文档目录")
+
+    source_name = primary_doc.get("storage_name") or primary_doc.get("filename")
+    source_path = Path(tmp_dir) / str(source_name or "")
+    if source_path.suffix.lower() != ".docx":
+        raise HTTPException(400, "仅支持 .docx 格式的红线导出")
+    if not source_path.exists():
+        raise HTTPException(400, "原始文档不存在，无法导出")
+
+    modifications = [_diff_to_modification(d) for d in approved_diffs]
+    result = generate_redline_document(source_path, modifications, filter_confirmed=False)
+    if not result.success or not result.document_bytes:
+        reason = "；".join(result.skipped_reasons or []) if result else ""
+        raise HTTPException(400, f"红线导出失败{f'：{reason}' if reason else ''}")
+
+    filename = f"redline_{task_id}.docx"
+    return StreamingResponse(
+        BytesIO(result.document_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/domains")
