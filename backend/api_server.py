@@ -80,6 +80,8 @@ from src.contract_review.sse_protocol import (
     create_done_event,
     create_error_event,
 )
+from src.contract_review.api_gen3 import router as gen3_router
+from src.contract_review.plugins.fidic import register_fidic_plugin
 
 # 配置日志
 logging.basicConfig(
@@ -97,6 +99,7 @@ app = FastAPI(
     description="使用 LLM 从法务角度审阅合同、营销材料等文本",
     version="1.0.0",
 )
+app.include_router(gen3_router)
 
 # 配置 CORS
 app.add_middleware(
@@ -272,6 +275,12 @@ async def _start_storage_cleanup_task():
     if USE_SUPABASE:
         _storage_cleanup_task = asyncio.create_task(_scheduled_storage_cleanup())
         logger.info("📅 Storage 清理任务已启动 (每日 03:00 UTC 执行)")
+
+
+@app.on_event("startup")
+async def _register_gen3_plugins():
+    """启动时注册 Gen3 领域插件。"""
+    register_fidic_plugin()
 
 
 @app.on_event("shutdown")

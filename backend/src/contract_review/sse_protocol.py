@@ -37,6 +37,15 @@ class SSEEventType(str, Enum):
     ERROR = "error"  # 错误事件
     DONE = "done"  # 完成事件
 
+    # Gen 3.0 新增事件类型
+    DIFF_PROPOSED = "diff_proposed"
+    DIFF_APPROVED = "diff_approved"
+    DIFF_REJECTED = "diff_rejected"
+    DIFF_REVISED = "diff_revised"
+    REVIEW_PROGRESS = "review_progress"
+    REVIEW_COMPLETE = "review_complete"
+    APPROVAL_REQUIRED = "approval_required"
+
 
 def format_sse_event(event_type: SSEEventType, data: Any, event_id: str = None) -> str:
     """
@@ -337,3 +346,46 @@ def done(success: bool = True) -> str:
 def error(message: str) -> str:
     """快捷方式：创建错误事件"""
     return create_error_event(message)
+
+
+def diff_proposed(diff_data: Dict) -> str:
+    """快捷方式：创建 Diff 提议事件"""
+    return format_sse_event(SSEEventType.DIFF_PROPOSED, diff_data)
+
+
+def diff_approved(diff_id: str) -> str:
+    """快捷方式：创建 Diff 批准事件"""
+    return format_sse_event(
+        SSEEventType.DIFF_APPROVED,
+        {"diff_id": diff_id, "type": "diff_approved"},
+    )
+
+
+def diff_rejected(diff_id: str, reason: str = "") -> str:
+    """快捷方式：创建 Diff 拒绝事件"""
+    return format_sse_event(
+        SSEEventType.DIFF_REJECTED,
+        {"diff_id": diff_id, "reason": reason, "type": "diff_rejected"},
+    )
+
+
+def review_progress(task_id: str, current: int, total: int, message: str = "") -> str:
+    """快捷方式：创建审查进度事件"""
+    return format_sse_event(
+        SSEEventType.REVIEW_PROGRESS,
+        {
+            "task_id": task_id,
+            "current": current,
+            "total": total,
+            "message": message,
+            "type": "review_progress",
+        },
+    )
+
+
+def approval_required(task_id: str, diffs: list) -> str:
+    """快捷方式：创建审批请求事件"""
+    return format_sse_event(
+        SSEEventType.APPROVAL_REQUIRED,
+        {"task_id": task_id, "pending_count": len(diffs), "type": "approval_required"},
+    )

@@ -33,6 +33,16 @@ class GeminiSettings(BaseModel):
     timeout: int = Field(default=120)
 
 
+class ReflySettings(BaseModel):
+    """Refly API 配置"""
+
+    base_url: str = "https://api.refly.ai"
+    api_key: str = ""
+    timeout: int = 120
+    poll_interval: int = 2
+    max_poll_attempts: int = 60
+
+
 class ReviewSettings(BaseModel):
     """审阅任务配置"""
     tasks_dir: Path = Field(default=Path("tasks"))
@@ -53,6 +63,7 @@ class Settings(BaseModel):
     llm: LLMSettings
     review: ReviewSettings = Field(default_factory=ReviewSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
+    refly: ReflySettings = Field(default_factory=ReflySettings)
 
 
 def load_settings(config_path: Optional[Path] = None) -> Settings:
@@ -92,13 +103,27 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
         gemini_cfg["api_key"] = gemini_api_key
     data["gemini"] = gemini_cfg
 
+    refly_cfg = data.get("refly", {})
+    refly_api_key = os.getenv("REFLY_API_KEY", refly_cfg.get("api_key", ""))
+    if refly_api_key:
+        refly_cfg["api_key"] = refly_api_key
+    refly_base_url = os.getenv("REFLY_BASE_URL", refly_cfg.get("base_url", ""))
+    if refly_base_url:
+        refly_cfg["base_url"] = refly_base_url
+    data["refly"] = refly_cfg
+
     settings = Settings(**data)
 
     # 解析相对路径
     base_dir = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
     resolved_review = settings.review.resolve_paths(base_dir)
 
-    return Settings(llm=settings.llm, review=resolved_review, gemini=settings.gemini)
+    return Settings(
+        llm=settings.llm,
+        review=resolved_review,
+        gemini=settings.gemini,
+        refly=settings.refly,
+    )
 
 
 # 全局配置实例（延迟加载）

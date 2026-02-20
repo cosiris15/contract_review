@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -398,3 +399,233 @@ class ReviewTask(BaseModel):
             message=message,
         )
         self.updated_at = datetime.now()
+
+
+# ==================== Gen 3.0 扩展类型 ====================
+
+ApprovalDecision = Literal["approve", "reject"]
+DiffActionType = Literal["replace", "delete", "insert"]
+DiffStatus = Literal["pending", "approved", "rejected"]
+
+AgentTaskStatus = Literal[
+    "created",
+    "uploading",
+    "reviewing",
+    "partial_ready",
+    "completed",
+    "failed",
+    "awaiting_approval",
+    "processing_approval",
+]
+
+
+# ==================== 文档结构化模型 ====================
+
+class ClauseNode(BaseModel):
+    """条款树节点。"""
+
+    clause_id: str
+    title: str = ""
+    level: int = 0
+    text: str = ""
+    start_offset: int = 0
+    end_offset: int = 0
+    children: List["ClauseNode"] = Field(default_factory=list)
+
+    class Config:
+        json_encoders = {Path: str}
+
+
+ClauseNode.model_rebuild()
+
+
+class CrossReference(BaseModel):
+    """条款间交叉引用。"""
+
+    source_clause_id: str
+    target_clause_id: str
+    reference_text: str = ""
+    is_valid: Optional[bool] = None
+
+
+class DocumentParserConfig(BaseModel):
+    """文档解析器配置。"""
+
+    clause_pattern: str = r"^\d+(?:\.\d+)*\s+"
+    chapter_pattern: Optional[str] = None
+    definitions_section_id: Optional[str] = None
+    max_depth: int = 4
+    structure_type: str = "generic_numbered"
+
+
+class DocumentStructure(BaseModel):
+    """文档结构化解析结果。"""
+
+    document_id: str
+    structure_type: str = "generic_numbered"
+    clauses: List[ClauseNode] = Field(default_factory=list)
+    definitions: Dict[str, str] = Field(default_factory=dict)
+    cross_references: List[CrossReference] = Field(default_factory=list)
+    total_clauses: int = 0
+    parsed_at: datetime = Field(default_factory=datetime.now)
+
+
+# ==================== 多文档关联模型 ====================
+
+class DocumentRole(str, Enum):
+    """文档在审查任务中的角色。"""
+
+    PRIMARY = "primary"
+    BASELINE = "baseline"
+    SUPPLEMENT = "supplement"
+    REFERENCE = "reference"
+    STANDARD = "standard"
+
+
+class TaskDocument(BaseModel):
+    """任务关联文档。"""
+
+    id: str = Field(default_factory=generate_id)
+    task_id: str
+    role: DocumentRole
+    filename: str
+    storage_name: str
+    structure: Optional[DocumentStructure] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    uploaded_at: datetime = Field(default_factory=datetime.now)
+
+
+# ==================== JSON Diff 模型 ====================
+
+class DocumentDiff(BaseModel):
+    """单条文档修改指令。"""
+
+    diff_id: str = Field(default_factory=generate_id)
+    risk_id: Optional[str] = None
+    clause_id: Optional[str] = None
+    action_type: DiffActionType
+    original_text: str = ""
+    proposed_text: str = ""
+    location: Optional[TextLocation] = None
+    status: DiffStatus = "pending"
+    reason: str = ""
+    risk_level: Optional[RiskLevel] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class DiffBatch(BaseModel):
+    """一批修改指令。"""
+
+    task_id: str
+    clause_id: Optional[str] = None
+    diffs: List[DocumentDiff] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def count(self) -> int:
+        return len(self.diffs)
+
+    @property
+    def pending_count(self) -> int:
+        return sum(1 for d in self.diffs if d.status == "pending")
+
+
+# ==================== 审查状态模型 ====================
+
+class ReviewChecklistItem(BaseModel):
+    """审查清单条目。"""
+
+    clause_id: str
+    clause_name: str = ""
+    priority: Literal["critical", "high", "medium", "low"] = "medium"
+    required_skills: List[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class Deviation(BaseModel):
+    """与基线文本的偏离项。"""
+
+    clause_id: str
+    deviation_type: Literal["added", "removed", "modified"]
+    baseline_text: str = ""
+    actual_text: str = ""
+    severity: RiskLevel = "medium"
+    description: str = ""
+
+
+class ClauseFindings(BaseModel):
+    """单个条款的审查发现。"""
+
+    clause_id: str
+    clause_name: str = ""
+    risks: List[RiskPoint] = Field(default_factory=list)
+    deviations: List[Deviation] = Field(default_factory=list)
+    financial_terms: Dict[str, Any] = Field(default_factory=dict)
+    cross_references: List[str] = Field(default_factory=list)
+    diffs: List[DocumentDiff] = Field(default_factory=list)
+    notes: str = ""
+    completed: bool = False
+
+
+# ==================== API 请求/响应模型（Gen 3.0）====================
+
+class StartReviewRequest(BaseModel):
+    """启动审查请求。"""
+
+    task_id: str
+    domain_id: Optional[str] = None
+    domain_subtype: Optional[str] = None
+    business_line_id: Optional[str] = None
+    special_requirements: Optional[str] = None
+
+
+class StartReviewResponse(BaseModel):
+    """启动审查响应。"""
+
+    task_id: str
+    status: str
+    graph_run_id: str
+
+
+class ApprovalRequest(BaseModel):
+    """用户审批请求。"""
+
+    diff_id: str
+    decision: ApprovalDecision
+    feedback: Optional[str] = None
+    user_modified_text: Optional[str] = None
+
+
+class ApprovalResponse(BaseModel):
+    """审批响应。"""
+
+    diff_id: str
+    new_status: DiffStatus
+    message: str = ""
+
+
+class BatchApprovalRequest(BaseModel):
+    """批量审批请求。"""
+
+    approvals: List[ApprovalRequest]
+
+
+class DiffPushEvent(BaseModel):
+    """Diff 推送事件。"""
+
+    event_type: Literal["diff_proposed", "diff_approved", "diff_rejected", "diff_revised"]
+    diff: DocumentDiff
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+
+class ReviewProgressEvent(BaseModel):
+    """审查进度事件。"""
+
+    task_id: str
+    current_clause_id: Optional[str] = None
+    current_clause_name: Optional[str] = None
+    total_clauses: int = 0
+    completed_clauses: int = 0
+    message: str = ""
+    timestamp: datetime = Field(default_factory=datetime.now)

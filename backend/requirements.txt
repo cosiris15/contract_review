@@ -30,6 +30,7 @@ python-dotenv>=1.0.0
 
 # 异步支持
 aiofiles>=23.2.0
+langgraph>=0.2.0
 
 # 开发工具
 tqdm>=4.66.0
