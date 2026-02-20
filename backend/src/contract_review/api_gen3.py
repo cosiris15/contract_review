@@ -5,20 +5,33 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
+import tempfile
 import time
+from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from .document_loader import load_document
 from .models import (
     ApprovalRequest,
     ApprovalResponse,
     BatchApprovalRequest,
+    DocumentRole,
     StartReviewRequest,
     StartReviewResponse,
+    TaskDocument,
+    generate_id,
 )
-from .plugins.registry import get_domain_plugin, get_review_checklist, list_domain_plugins
+from .plugins.registry import (
+    get_domain_plugin,
+    get_parser_config,
+    get_review_checklist,
+    list_domain_plugins,
+)
+from .structure_parser import StructureParser
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +39,15 @@ router = APIRouter(prefix="/api/v3", tags=["Gen 3.0"])
 
 _active_graphs: Dict[str, Dict[str, Any]] = {}
 GRAPH_RETENTION_SECONDS = 3600
+ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md"}
+MAX_UPLOAD_SIZE_MB = 10
+ALLOWED_ROLES = {"primary", "baseline", "supplement", "reference"}
+
+
+def _role_to_str(value: Any) -> str:
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value or "")
 
 
 def _now_ts() -> float:
@@ -47,7 +69,15 @@ def _prune_inactive_graphs() -> None:
             stale_task_ids.append(task_id)
 
     for task_id in stale_task_ids:
-        _active_graphs.pop(task_id, None)
+        entry = _active_graphs.pop(task_id, None)
+        if not entry:
+            continue
+        tmp_dir = entry.get("tmp_dir")
+        if tmp_dir:
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception as exc:  # pragma: no cover - defensive cleanup
+                logger.warning("清理临时目录失败 [%s]: %s", tmp_dir, exc)
 
 
 @router.post("/review/start", response_model=StartReviewResponse)
@@ -60,6 +90,7 @@ async def start_review(request: StartReviewRequest):
     checklist = []
     if request.domain_id:
         checklist = get_review_checklist(request.domain_id, request.domain_subtype)
+    checklist_dicts = [item.model_dump() if hasattr(item, "model_dump") else item for item in checklist]
 
     from .graph.builder import build_review_graph
 
@@ -67,13 +98,13 @@ async def start_review(request: StartReviewRequest):
     config = {"configurable": {"thread_id": task_id}}
     initial_state = {
         "task_id": task_id,
-        "our_party": "",
+        "our_party": request.our_party,
         "material_type": "contract",
-        "language": "en",
+        "language": request.language,
         "domain_id": request.domain_id,
         "domain_subtype": request.domain_subtype,
         "documents": [],
-        "review_checklist": checklist,
+        "review_checklist": checklist_dicts,
     }
 
     graph_run_id = f"run_{task_id}"
@@ -85,6 +116,8 @@ async def start_review(request: StartReviewRequest):
         "run_task": run_task,
         "last_access_ts": _now_ts(),
         "completed_ts": None,
+        "domain_id": request.domain_id,
+        "documents": [],
     }
 
     return StartReviewResponse(task_id=task_id, status="reviewing", graph_run_id=graph_run_id)
@@ -127,6 +160,130 @@ async def get_pending_diffs(task_id: str):
         "task_id": task_id,
         "pending_diffs": snapshot.values.get("pending_diffs", []),
         "clause_id": snapshot.values.get("current_clause_id"),
+    }
+
+
+@router.post("/review/{task_id}/upload")
+async def upload_document(
+    task_id: str,
+    file: UploadFile = File(...),
+    role: str = Form("primary"),
+    our_party: str = Form(""),
+    language: str = Form("zh-CN"),
+):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    role = role.strip().lower()
+    if role not in ALLOWED_ROLES:
+        raise HTTPException(400, f"不支持的文档角色: {role}")
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"不支持的文件类型: {ext or 'unknown'}")
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise HTTPException(413, f"文件大小超过 {MAX_UPLOAD_SIZE_MB}MB 限制")
+
+    tmp_dir = entry.get("tmp_dir")
+    if not tmp_dir:
+        tmp_dir = tempfile.mkdtemp(prefix=f"cr_{task_id}_")
+        entry["tmp_dir"] = tmp_dir
+
+    filename = file.filename or f"document{ext}"
+    file_path = Path(tmp_dir) / filename
+    file_path.write_bytes(content)
+
+    try:
+        loaded = load_document(file_path)
+    except Exception as exc:
+        raise HTTPException(422, f"文档解析失败: {exc}") from exc
+
+    if not loaded.text.strip():
+        raise HTTPException(422, "无法从文档中提取文本内容")
+
+    domain_id = entry.get("domain_id")
+    parser_config = get_parser_config(domain_id) if domain_id else None
+    parser = StructureParser(config=parser_config)
+    structure = parser.parse(loaded)
+
+    doc_id = generate_id()
+    task_doc = TaskDocument(
+        id=doc_id,
+        task_id=task_id,
+        role=DocumentRole(role),
+        filename=filename,
+        storage_name=file_path.name,
+        structure=structure,
+        metadata={"text_length": len(loaded.text), "source": "gen3_upload"},
+    )
+
+    docs = entry.get("documents", [])
+    filtered_docs = [d for d in docs if _role_to_str((d or {}).get("role", "")).lower() != role]
+    filtered_docs.append(task_doc.model_dump(mode="json"))
+    entry["documents"] = filtered_docs
+
+    if our_party:
+        entry["our_party"] = our_party
+    if language:
+        entry["language"] = language
+    if role == "primary":
+        entry["primary_structure"] = structure.model_dump(mode="json")
+
+    graph = entry.get("graph")
+    config = entry.get("config")
+    if graph and config:
+        try:
+            graph.update_state(
+                config,
+                {
+                    "documents": entry["documents"],
+                    "primary_structure": (
+                        entry.get("primary_structure")
+                    ),
+                    "our_party": entry.get("our_party", ""),
+                    "language": entry.get("language", "zh-CN"),
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("注入文档到图状态失败: %s", exc)
+
+    _touch_entry(entry)
+    return {
+        "task_id": task_id,
+        "document_id": doc_id,
+        "filename": filename,
+        "role": role,
+        "total_clauses": structure.total_clauses,
+        "structure_type": structure.structure_type,
+        "message": "文档上传并解析成功",
+    }
+
+
+@router.get("/review/{task_id}/documents")
+async def get_documents(task_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    _touch_entry(entry)
+    docs = entry.get("documents", [])
+    return {
+        "task_id": task_id,
+        "documents": [
+            {
+                "document_id": d.get("id", ""),
+                "filename": d.get("filename", ""),
+                "role": _role_to_str(d.get("role", "")),
+                "total_clauses": (d.get("structure") or {}).get("total_clauses", 0),
+                "uploaded_at": d.get("uploaded_at", ""),
+            }
+            for d in docs
+        ],
     }
 
 

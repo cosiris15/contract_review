@@ -578,6 +578,8 @@ class StartReviewRequest(BaseModel):
     domain_subtype: Optional[str] = None
     business_line_id: Optional[str] = None
     special_requirements: Optional[str] = None
+    our_party: str = ""
+    language: str = "zh-CN"
 
 
 class StartReviewResponse(BaseModel):

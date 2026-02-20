@@ -97,13 +97,19 @@ async def node_init(state: ReviewGraphState) -> Dict[str, Any]:
 async def node_parse_document(state: ReviewGraphState) -> Dict[str, Any]:
     documents = state.get("documents", [])
     primary_docs = [d for d in documents if (_as_dict(d).get("role") == "primary")]
-    if not primary_docs and not state.get("review_checklist"):
-        return {"review_checklist": [], "primary_structure": state.get("primary_structure")}
-
     primary_structure = state.get("primary_structure")
+    if primary_docs and not primary_structure:
+        doc = _as_dict(primary_docs[0])
+        structure_data = doc.get("structure")
+        if structure_data:
+            primary_structure = structure_data
+
     checklist = state.get("review_checklist", [])
     if not checklist and primary_structure:
         checklist = _generate_generic_checklist(primary_structure)
+
+    if not primary_docs and not checklist:
+        return {"review_checklist": [], "primary_structure": primary_structure}
 
     return {"primary_structure": primary_structure, "review_checklist": checklist}
 
