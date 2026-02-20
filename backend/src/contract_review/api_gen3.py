@@ -28,6 +28,7 @@ from .models import (
     generate_id,
 )
 from .plugins.registry import (
+    get_all_skills_for_domain,
     get_domain_plugin,
     get_parser_config,
     get_review_checklist,
@@ -517,6 +518,126 @@ async def export_redline(task_id: str):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _collect_all_skills():
+    from .graph.builder import _GENERIC_SKILLS
+
+    merged = {}
+    for skill in _GENERIC_SKILLS:
+        merged[skill.skill_id] = skill
+    for plugin in list_domain_plugins():
+        for skill in plugin.domain_skills:
+            merged[skill.skill_id] = skill
+    return list(merged.values())
+
+
+def _skill_payload(skill, registered_ids: set[str] | None = None):
+    domain = getattr(skill, "domain", "*")
+    category = getattr(skill, "category", "general")
+    backend = skill.backend.value
+    payload = {
+        "skill_id": skill.skill_id,
+        "name": skill.name,
+        "description": skill.description,
+        "backend": backend,
+        "domain": domain,
+        "category": category,
+    }
+    if registered_ids is not None:
+        payload["is_registered"] = skill.skill_id in registered_ids
+    return payload
+
+
+@router.get("/skills")
+async def list_skills(domain_id: str | None = None):
+    all_skills = _collect_all_skills()
+    if domain_id:
+        all_skills = [s for s in all_skills if getattr(s, "domain", "*") in {domain_id, "*"}]
+
+    registered_ids: set[str] = set()
+    try:
+        from .graph.builder import _create_dispatcher
+
+        dispatcher = _create_dispatcher(domain_id=domain_id)
+        if dispatcher:
+            registered_ids = set(dispatcher.skill_ids)
+    except Exception:  # pragma: no cover - defensive
+        registered_ids = set()
+
+    by_domain: Dict[str, int] = {}
+    by_backend: Dict[str, int] = {}
+    skills = []
+    for skill in all_skills:
+        payload = _skill_payload(skill, registered_ids=registered_ids)
+        skills.append(payload)
+        domain = payload["domain"]
+        backend = payload["backend"]
+        by_domain[domain] = by_domain.get(domain, 0) + 1
+        by_backend[backend] = by_backend.get(backend, 0) + 1
+
+    return {
+        "skills": skills,
+        "total": len(skills),
+        "by_domain": by_domain,
+        "by_backend": by_backend,
+    }
+
+
+@router.get("/skills/by-domain/{domain_id}")
+async def get_skills_by_domain(domain_id: str):
+    from .graph.builder import _GENERIC_SKILLS
+
+    skills = get_all_skills_for_domain(domain_id, generic_skills=_GENERIC_SKILLS)
+    unique_by_id = {}
+    for skill in skills:
+        unique_by_id[skill.skill_id] = skill
+    merged = list(unique_by_id.values())
+
+    return {
+        "domain_id": domain_id,
+        "skills": [_skill_payload(skill) for skill in merged],
+        "total": len(merged),
+    }
+
+
+@router.get("/skills/{skill_id}")
+async def get_skill_detail(skill_id: str):
+    target = None
+    for skill in _collect_all_skills():
+        if skill.skill_id == skill_id:
+            target = skill
+            break
+
+    if target is None:
+        raise HTTPException(404, f"Skill '{skill_id}' 未找到")
+
+    used_by_checklist_items = []
+    for plugin in list_domain_plugins():
+        for item in plugin.review_checklist:
+            if skill_id in item.required_skills:
+                used_by_checklist_items.append(item.clause_id)
+
+    registered_ids: set[str] = set()
+    try:
+        from .graph.builder import _create_dispatcher
+
+        target_domain = getattr(target, "domain", "*")
+        dispatcher = _create_dispatcher(domain_id=None if target_domain == "*" else target_domain)
+        if dispatcher:
+            registered_ids = set(dispatcher.skill_ids)
+    except Exception:  # pragma: no cover - defensive
+        registered_ids = set()
+
+    payload = _skill_payload(target, registered_ids=registered_ids)
+    payload.update(
+        {
+            "local_handler": target.local_handler,
+            "refly_workflow_id": target.refly_workflow_id,
+            "used_by_checklist_items": used_by_checklist_items,
+        }
+    )
+    return payload
 
 
 @router.get("/domains")

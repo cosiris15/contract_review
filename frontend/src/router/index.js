@@ -65,6 +65,12 @@ const routes = [
     meta: { title: '标准管理' }
   },
   {
+    path: '/skills',
+    name: 'Skills',
+    component: lazyLoadView(() => import('@/views/SkillsView.vue'), 'SkillsView'),
+    meta: { title: 'Skills 管理' }
+  },
+  {
     path: '/business',
     name: 'Business',
     component: lazyLoadView(() => import('@/views/BusinessView.vue'), 'BusinessView'),

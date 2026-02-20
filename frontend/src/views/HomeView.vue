@@ -96,6 +96,16 @@
               <p>导出带修订标记的 Word 文档，方便对照查阅与团队协作</p>
             </div>
           </div>
+
+          <div class="feature-card nav-card" @click="$router.push('/skills')">
+            <div class="feature-icon">
+              <el-icon :size="32"><Setting /></el-icon>
+            </div>
+            <div class="feature-content">
+              <h3>Skills 管理</h3>
+              <p>查看和管理审阅技能</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -111,7 +121,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
-import { Plus, Search, Edit, List, Download, Cpu, MagicStick } from '@element-plus/icons-vue'
+import { Plus, Search, Edit, List, Download, Cpu, MagicStick, Setting } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
@@ -306,6 +316,10 @@ function goToNewReview() {
   border-color: var(--color-primary-lighter);
   box-shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
   transform: translateY(-2px);
+}
+
+.nav-card {
+  cursor: pointer;
 }
 
 .feature-icon {
