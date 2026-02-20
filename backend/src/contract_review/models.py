@@ -580,6 +580,7 @@ class StartReviewRequest(BaseModel):
     special_requirements: Optional[str] = None
     our_party: str = ""
     language: str = "zh-CN"
+    auto_start: bool = True
 
 
 class StartReviewResponse(BaseModel):

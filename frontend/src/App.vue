@@ -86,6 +86,7 @@ import { useSettingsStore } from '@/store/settings'
 import { useQuotaStore } from '@/store/quota'
 import { setAuthTokenGetter } from '@/api'
 import { setInteractiveAuthTokenGetter } from '@/api/interactive'
+import { setGen3AuthTokenGetter } from '@/api/gen3'
 
 const settingsStore = useSettingsStore()
 const quotaStore = useQuotaStore()
@@ -95,6 +96,7 @@ const { user } = useUser()
 // 设置 API 认证 token getter
 setAuthTokenGetter(() => getToken.value())
 setInteractiveAuthTokenGetter(() => getToken.value())
+setGen3AuthTokenGetter(() => getToken.value())
 
 // 配额徽章样式
 const quotaBadgeClass = computed(() => {

@@ -108,19 +108,49 @@ async def start_review(request: StartReviewRequest):
     }
 
     graph_run_id = f"run_{task_id}"
-    run_task = asyncio.create_task(_run_graph(task_id, graph, initial_state, config))
-    _active_graphs[task_id] = {
+    entry = {
         "graph": graph,
         "config": config,
+        "initial_state": initial_state,
         "graph_run_id": graph_run_id,
-        "run_task": run_task,
         "last_access_ts": _now_ts(),
         "completed_ts": None,
         "domain_id": request.domain_id,
         "documents": [],
+        "our_party": request.our_party,
+        "language": request.language,
     }
+    _active_graphs[task_id] = entry
 
-    return StartReviewResponse(task_id=task_id, status="reviewing", graph_run_id=graph_run_id)
+    status = "ready"
+    if request.auto_start:
+        run_task = asyncio.create_task(_run_graph(task_id, graph, initial_state, config))
+        entry["run_task"] = run_task
+        status = "reviewing"
+    else:
+        graph.update_state(config, initial_state)
+
+    return StartReviewResponse(task_id=task_id, status=status, graph_run_id=graph_run_id)
+
+
+@router.post("/review/{task_id}/run")
+async def run_review(task_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    run_task = entry.get("run_task")
+    if run_task and not run_task.done():
+        return {"task_id": task_id, "status": "already_running"}
+
+    _touch_entry(entry)
+    graph = entry["graph"]
+    config = entry["config"]
+    snapshot = graph.get_state(config)
+    state_for_run = snapshot.values or entry.get("initial_state", {})
+    entry["run_task"] = asyncio.create_task(_run_graph(task_id, graph, state_for_run, config))
+    return {"task_id": task_id, "status": "started"}
 
 
 @router.get("/review/{task_id}/status")

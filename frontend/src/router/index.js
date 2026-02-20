@@ -77,6 +77,12 @@ const routes = [
     meta: { title: '深度交互审阅' }
   },
   {
+    path: '/gen3/:taskId?',
+    name: 'Gen3Review',
+    component: lazyLoadView(() => import('@/views/Gen3ReviewView.vue'), 'Gen3ReviewView'),
+    meta: { title: 'Gen 3.0 智能审阅' }
+  },
+  {
     path: '/review-result/:taskId',
     name: 'UnifiedResult',
     component: lazyLoadView(() => import('@/views/UnifiedResultView.vue'), 'UnifiedResultView'),

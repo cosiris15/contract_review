@@ -68,6 +68,19 @@ class TestReviewEndpoints:
         assert resp.status_code == 409
 
     @pytest.mark.asyncio
+    async def test_run_review_after_manual_start(self, client):
+        start_resp = await client.post(
+            "/api/v3/review/start",
+            json={"task_id": "test_run", "auto_start": False},
+        )
+        assert start_resp.status_code == 200
+        assert start_resp.json()["status"] == "ready"
+
+        run_resp = await client.post("/api/v3/review/test_run/run")
+        assert run_resp.status_code == 200
+        assert run_resp.json()["status"] in {"started", "already_running"}
+
+    @pytest.mark.asyncio
     async def test_approve_nonexistent(self, client):
         resp = await client.post(
             "/api/v3/review/nonexistent/approve",

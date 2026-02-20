@@ -42,6 +42,15 @@
             <el-icon><Plus /></el-icon>
             开始审阅
           </el-button>
+          <el-button
+            type="success"
+            size="large"
+            @click="$router.push('/gen3')"
+            class="action-btn interactive-action"
+          >
+            <el-icon><MagicStick /></el-icon>
+            Gen 3.0 审阅
+          </el-button>
         </div>
       </div>
 
@@ -102,7 +111,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReviewStore } from '@/store'
-import { Plus, Search, Edit, List, Download, Cpu } from '@element-plus/icons-vue'
+import { Plus, Search, Edit, List, Download, Cpu, MagicStick } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useReviewStore()
