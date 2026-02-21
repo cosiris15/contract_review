@@ -103,6 +103,27 @@ def _format_skill_context(skill_context: Dict[str, Any]) -> str:
     for skill_id, data in skill_context.items():
         if skill_id == "get_clause_context":
             continue
+        if skill_id == "load_review_criteria":
+            if not isinstance(data, dict):
+                continue
+            if not data.get("has_criteria"):
+                continue
+            criteria = data.get("matched_criteria", [])
+            if not criteria:
+                parts.append("[审核标准] 未找到与本条款匹配的审核要点。")
+                continue
+            lines = ["[审核标准] 以下是与本条款匹配的审核要点："]
+            for row in criteria:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(f"- 【{row.get('risk_level', '')}】{row.get('review_point', '')}")
+                if row.get("baseline_text"):
+                    lines.append(f"  基准：{row.get('baseline_text', '')}")
+                if row.get("suggested_action"):
+                    lines.append(f"  建议：{row.get('suggested_action', '')}")
+                lines.append(f"  匹配方式：{row.get('match_type', '')}（{row.get('match_score', '')}）")
+            parts.append("\n".join(lines))
+            continue
         if isinstance(data, dict):
             parts.append(f"[{skill_id}]\n{json.dumps(data, ensure_ascii=False, indent=2)}")
             continue

@@ -78,6 +78,24 @@ _GENERIC_SKILLS: list[SkillRegistration] = [
         domain="*",
         category="extraction",
     ),
+    SkillRegistration(
+        skill_id="search_reference_doc",
+        name="参考文档语义检索",
+        description="在参考文档中检索与当前条款语义相关的段落",
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.semantic_search.search_reference_doc",
+        domain="*",
+        category="validation",
+    ),
+    SkillRegistration(
+        skill_id="load_review_criteria",
+        name="审核标准加载",
+        description="加载审核标准并匹配到当前条款",
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.load_review_criteria.load_review_criteria",
+        domain="*",
+        category="validation",
+    ),
 ]
 
 
@@ -313,6 +331,40 @@ def _build_skill_input(
             top_k=5,
         )
 
+    if skill_id == "search_reference_doc":
+        from ..skills.local.semantic_search import SearchReferenceDocInput
+
+        clause_text = _extract_clause_text(primary_structure, clause_id)
+        query = " ".join(
+            part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
+            if part
+        )
+        reference_structure = None
+        for doc in state.get("documents", []):
+            doc_dict = _as_dict(doc)
+            role = str(doc_dict.get("role", "") or "").lower()
+            if role == "reference":
+                reference_structure = doc_dict.get("structure")
+                break
+
+        return SearchReferenceDocInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            reference_structure=reference_structure,
+            query=query or clause_id,
+            top_k=5,
+        )
+
+    if skill_id == "load_review_criteria":
+        from ..skills.local.load_review_criteria import LoadReviewCriteriaInput
+
+        return LoadReviewCriteriaInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            criteria_data=state.get("criteria_data", []),
+            criteria_file_path=state.get("criteria_file_path", ""),
+        )
+
     if skill_id == "spa_extract_conditions":
         from ..skills.sha_spa.extract_conditions import ExtractConditionsInput
 
@@ -354,19 +406,27 @@ def _build_skill_input(
         )
 
     if skill_id == "transaction_doc_cross_check":
+        from ..skills.local.semantic_search import SearchReferenceDocInput
+
         clause_text = _extract_clause_text(primary_structure, clause_id)
-        return GenericSkillInput(
+        query = " ".join(
+            part for part in [clause_text[:500], state.get("material_type", "")]
+            if part
+        )
+        reference_structure = None
+        for doc in state.get("documents", []):
+            doc_dict = _as_dict(doc)
+            role = str(doc_dict.get("role", "") or "").lower()
+            if role == "reference":
+                reference_structure = doc_dict.get("structure")
+                break
+
+        return SearchReferenceDocInput(
             clause_id=clause_id,
             document_structure=primary_structure,
-            state_snapshot={
-                "primary_clause": {
-                    "clause_id": clause_id,
-                    "text": clause_text,
-                    "document_type": state.get("domain_subtype", "SPA").upper(),
-                },
-                "check_type": "rw_vs_disclosure",
-                "domain_id": state.get("domain_id", ""),
-            },
+            reference_structure=reference_structure,
+            query=query or clause_id,
+            top_k=5,
         )
 
     return GenericSkillInput(

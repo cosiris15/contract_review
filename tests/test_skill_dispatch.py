@@ -11,6 +11,7 @@ class TestCreateDispatcher:
         dispatcher = _create_dispatcher()
         assert dispatcher is not None
         assert "get_clause_context" in dispatcher.skill_ids
+        assert "search_reference_doc" in dispatcher.skill_ids
 
     def test_creates_with_domain_skills(self):
         from contract_review.plugins.fidic import register_fidic_plugin
@@ -87,3 +88,42 @@ class TestBuildSkillInput:
         assert isinstance(result, SearchErInput)
         assert result.query
         assert result.er_structure is not None
+
+    def test_transaction_cross_check_uses_semantic_search_input(self):
+        from contract_review.skills.local.semantic_search import SearchReferenceDocInput
+
+        result = _build_skill_input(
+            "transaction_doc_cross_check",
+            "4",
+            {"clauses": [{"clause_id": "4", "text": "representations and warranties", "children": []}]},
+            {
+                "domain_id": "sha_spa",
+                "material_type": "spa",
+                "documents": [
+                    {
+                        "role": "reference",
+                        "filename": "Disclosure Letter.docx",
+                        "structure": {"clauses": [{"clause_id": "DL-1", "text": "litigation disclosure", "children": []}]},
+                    }
+                ],
+            },
+        )
+        assert isinstance(result, SearchReferenceDocInput)
+        assert result.reference_structure is not None
+        assert result.query
+
+    def test_load_review_criteria_input(self):
+        from contract_review.skills.local.load_review_criteria import LoadReviewCriteriaInput
+
+        result = _build_skill_input(
+            "load_review_criteria",
+            "4.1",
+            {"clauses": [{"clause_id": "4.1", "text": "obligations", "children": []}]},
+            {
+                "criteria_data": [{"criterion_id": "RC-1", "review_point": "义务范围不应超出原文"}],
+                "criteria_file_path": "/tmp/criteria.xlsx",
+            },
+        )
+        assert isinstance(result, LoadReviewCriteriaInput)
+        assert result.criteria_file_path.endswith("criteria.xlsx")
+        assert len(result.criteria_data) == 1

@@ -43,9 +43,9 @@ router = APIRouter(prefix="/api/v3", tags=["Gen 3.0"])
 
 _active_graphs: Dict[str, Dict[str, Any]] = {}
 GRAPH_RETENTION_SECONDS = 3600
-ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md"}
+ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".xlsx"}
 MAX_UPLOAD_SIZE_MB = 10
-ALLOWED_ROLES = {"primary", "baseline", "supplement", "reference"}
+ALLOWED_ROLES = {"primary", "baseline", "supplement", "reference", "criteria"}
 
 
 def _role_to_str(value: Any) -> str:
@@ -147,6 +147,8 @@ async def start_review(request: StartReviewRequest):
         "domain_subtype": request.domain_subtype,
         "documents": [],
         "review_checklist": checklist_dicts,
+        "criteria_data": [],
+        "criteria_file_path": "",
     }
 
     graph_run_id = f"run_{task_id}"
@@ -161,6 +163,8 @@ async def start_review(request: StartReviewRequest):
         "documents": [],
         "our_party": request.our_party,
         "language": request.language,
+        "criteria_data": [],
+        "criteria_file_path": "",
     }
     _active_graphs[task_id] = entry
 
@@ -269,18 +273,31 @@ async def upload_document(
     file_path = Path(tmp_dir) / filename
     file_path.write_bytes(content)
 
-    try:
-        loaded = load_document(file_path)
-    except Exception as exc:
-        raise HTTPException(422, f"文档解析失败: {exc}") from exc
+    structure = None
+    total_clauses = 0
+    structure_type = "criteria_table" if role == "criteria" else ""
 
-    if not loaded.text.strip():
-        raise HTTPException(422, "无法从文档中提取文本内容")
+    if role == "criteria":
+        from .criteria_parser import parse_criteria_excel
 
-    domain_id = entry.get("domain_id")
-    parser_config = get_parser_config(domain_id) if domain_id else None
-    parser = StructureParser(config=parser_config)
-    structure = parser.parse(loaded)
+        criteria = parse_criteria_excel(file_path)
+        entry["criteria_data"] = [row.model_dump() for row in criteria]
+        entry["criteria_file_path"] = str(file_path)
+    else:
+        try:
+            loaded = load_document(file_path)
+        except Exception as exc:
+            raise HTTPException(422, f"文档解析失败: {exc}") from exc
+
+        if not loaded.text.strip():
+            raise HTTPException(422, "无法从文档中提取文本内容")
+
+        domain_id = entry.get("domain_id")
+        parser_config = get_parser_config(domain_id) if domain_id else None
+        parser = StructureParser(config=parser_config)
+        structure = parser.parse(loaded)
+        total_clauses = structure.total_clauses
+        structure_type = structure.structure_type
 
     doc_id = generate_id()
     task_doc = TaskDocument(
@@ -290,7 +307,11 @@ async def upload_document(
         filename=filename,
         storage_name=file_path.name,
         structure=structure,
-        metadata={"text_length": len(loaded.text), "source": "gen3_upload"},
+        metadata=(
+            {"total_criteria": len(entry.get("criteria_data", [])), "source": "gen3_upload"}
+            if role == "criteria"
+            else {"text_length": len(loaded.text), "source": "gen3_upload"}
+        ),
     )
 
     docs = entry.get("documents", [])
@@ -316,6 +337,8 @@ async def upload_document(
                     "primary_structure": (
                         entry.get("primary_structure")
                     ),
+                    "criteria_data": entry.get("criteria_data", []),
+                    "criteria_file_path": entry.get("criteria_file_path", ""),
                     "our_party": entry.get("our_party", ""),
                     "language": entry.get("language", "zh-CN"),
                 },
@@ -329,8 +352,9 @@ async def upload_document(
         "document_id": doc_id,
         "filename": filename,
         "role": role,
-        "total_clauses": structure.total_clauses,
-        "structure_type": structure.structure_type,
+        "total_clauses": total_clauses,
+        "total_criteria": len(entry.get("criteria_data", [])) if role == "criteria" else None,
+        "structure_type": structure_type,
         "message": "文档上传并解析成功",
     }
 
@@ -535,6 +559,7 @@ def _collect_all_skills():
 def _skill_payload(skill, registered_ids: set[str] | None = None):
     domain = getattr(skill, "domain", "*")
     category = getattr(skill, "category", "general")
+    status = getattr(skill, "status", "active")
     backend = skill.backend.value
     payload = {
         "skill_id": skill.skill_id,
@@ -543,6 +568,7 @@ def _skill_payload(skill, registered_ids: set[str] | None = None):
         "backend": backend,
         "domain": domain,
         "category": category,
+        "status": status,
     }
     if registered_ids is not None:
         payload["is_registered"] = skill.skill_id in registered_ids

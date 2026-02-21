@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import time
 from typing import Dict, List, Optional
@@ -35,7 +36,16 @@ class ReflySkillExecutor(SkillExecutor):
         task_id = await self.refly_client.call_workflow(
             self.workflow_id, input_data.model_dump() if isinstance(input_data, BaseModel) else input_data
         )
-        return await self.refly_client.poll_result(task_id)
+        raw_result = await self.refly_client.poll_result(task_id)
+        # poll_result 返回 {"content": "JSON文本", "output": [...]}
+        # 下游期望的是解析后的 dict（如 {"relevant_sections": [...]}）
+        content = raw_result.get("content", "")
+        if content:
+            try:
+                return json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Refly workflow %s 输出非 JSON，原样返回", self.workflow_id)
+        return raw_result
 
 
 def _import_handler(handler_path: str):

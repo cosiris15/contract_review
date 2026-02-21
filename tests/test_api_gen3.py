@@ -144,6 +144,38 @@ class TestUploadEndpoints:
         assert len(docs) == 1
         assert docs[0]["filename"] == "second.txt"
 
+    @pytest.mark.asyncio
+    async def test_upload_criteria_xlsx_success(self, client):
+        from io import BytesIO
+
+        from openpyxl import Workbook
+
+        await client.post("/api/v3/review/start", json={"task_id": "test_upload_criteria"})
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["条款编号", "条款名称", "审核要点", "风险等级", "标准条件", "建议措施"])
+        ws.append(["4.1", "承包商义务", "义务范围不应超出原文", "高", "GC 原文", "建议限缩"])
+        data = BytesIO()
+        wb.save(data)
+        data.seek(0)
+
+        files = {
+            "file": (
+                "criteria.xlsx",
+                data.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        }
+        resp = await client.post(
+            "/api/v3/review/test_upload_criteria/upload",
+            files=files,
+            data={"role": "criteria"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["role"] == "criteria"
+        assert payload["total_criteria"] >= 1
+
 
 class TestSSEProtocol:
     def test_new_event_types(self):

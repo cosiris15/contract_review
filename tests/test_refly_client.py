@@ -49,7 +49,9 @@ class _MockAsyncClient:
 
 @pytest.mark.asyncio
 async def test_call_workflow_success(monkeypatch):
-    mock = _MockAsyncClient(post_responses=[_MockResponse(payload={"task_id": "task_123"})])
+    mock = _MockAsyncClient(
+        post_responses=[_MockResponse(payload={"success": True, "data": {"executionId": "exe_123"}})]
+    )
     monkeypatch.setattr(
         "contract_review.skills.refly_client.httpx.AsyncClient",
         lambda **kwargs: _MockAsyncClient(post_responses=mock.post_responses, **kwargs),
@@ -57,7 +59,22 @@ async def test_call_workflow_success(monkeypatch):
 
     client = ReflyClient(ReflyClientConfig(api_key="k"))
     task_id = await client.call_workflow("wf_1", {"x": 1})
-    assert task_id == "task_123"
+    assert task_id == "exe_123"
+
+
+@pytest.mark.asyncio
+async def test_call_workflow_not_success(monkeypatch):
+    monkeypatch.setattr(
+        "contract_review.skills.refly_client.httpx.AsyncClient",
+        lambda **kwargs: _MockAsyncClient(
+            post_responses=[_MockResponse(payload={"success": False, "errMsg": "bad request"})],
+            **kwargs,
+        ),
+    )
+
+    client = ReflyClient(ReflyClientConfig(api_key="k"))
+    with pytest.raises(ReflyClientError, match="调用失败"):
+        await client.call_workflow("wf_1", {})
 
 
 @pytest.mark.asyncio
@@ -75,24 +92,41 @@ async def test_call_workflow_http_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_poll_result_completed(monkeypatch):
     responses = [
-        _MockResponse(payload={"status": "running"}),
-        _MockResponse(payload={"status": "completed", "result": {"ok": True}}),
+        _MockResponse(payload={"data": {"status": "executing"}}),
+        _MockResponse(payload={"data": {"status": "finish"}}),
     ]
+    output_responses = [
+        _MockResponse(
+            payload={
+                "data": {
+                    "output": [
+                        {"messages": [{"content": "first"}]},
+                        {"messages": [{"content": "second"}]},
+                    ]
+                }
+            }
+        )
+    ]
+    get_responses = responses + output_responses
     monkeypatch.setattr(
         "contract_review.skills.refly_client.httpx.AsyncClient",
-        lambda **kwargs: _MockAsyncClient(get_responses=responses, **kwargs),
+        lambda **kwargs: _MockAsyncClient(get_responses=get_responses, **kwargs),
     )
 
     client = ReflyClient(ReflyClientConfig(api_key="k", poll_interval=1, max_poll_attempts=3))
     result = await client.poll_result("task_1", timeout=3)
-    assert result == {"ok": True}
+    assert result["content"] == "first\n\nsecond"
+    assert isinstance(result["output"], list)
 
 
 @pytest.mark.asyncio
 async def test_poll_result_failed_status(monkeypatch):
     monkeypatch.setattr(
         "contract_review.skills.refly_client.httpx.AsyncClient",
-        lambda **kwargs: _MockAsyncClient(get_responses=[_MockResponse(payload={"status": "failed", "error": "x"})], **kwargs),
+        lambda **kwargs: _MockAsyncClient(
+            get_responses=[_MockResponse(payload={"data": {"status": "failed", "error": "x"}})],
+            **kwargs,
+        ),
     )
 
     client = ReflyClient(ReflyClientConfig(api_key="k", poll_interval=1, max_poll_attempts=2))
@@ -104,7 +138,10 @@ async def test_poll_result_failed_status(monkeypatch):
 async def test_poll_result_timeout(monkeypatch):
     monkeypatch.setattr(
         "contract_review.skills.refly_client.httpx.AsyncClient",
-        lambda **kwargs: _MockAsyncClient(get_responses=[_MockResponse(payload={"status": "running"})] * 4, **kwargs),
+        lambda **kwargs: _MockAsyncClient(
+            get_responses=[_MockResponse(payload={"data": {"status": "executing"}})] * 4,
+            **kwargs,
+        ),
     )
 
     client = ReflyClient(ReflyClientConfig(api_key="k", poll_interval=1, max_poll_attempts=2))

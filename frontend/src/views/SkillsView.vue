@@ -32,6 +32,12 @@
         <option value="local">本地</option>
         <option value="refly">Refly</option>
       </select>
+
+      <select v-model="filterStatus" class="filter-select">
+        <option value="">全部状态</option>
+        <option value="active">可用</option>
+        <option value="preview">开发中</option>
+      </select>
     </div>
 
     <div v-if="loading" class="state-text">加载中...</div>
@@ -57,6 +63,13 @@
           <span class="tag domain">{{ domainLabel(skill.domain) }}</span>
           <span class="tag backend">{{ backendLabel(skill.backend) }}</span>
           <span class="tag category">{{ categoryLabel(skill.category) }}</span>
+          <span
+            v-if="skill.status && skill.status !== 'active'"
+            class="tag status"
+            :class="'status-' + skill.status"
+          >
+            {{ statusLabel(skill.status) }}
+          </span>
         </div>
 
         <div
@@ -96,6 +109,7 @@ const skillsData = ref(null)
 const domains = ref([])
 const filterDomain = ref('')
 const filterBackend = ref('')
+const filterStatus = ref('')
 const expandedSkillId = ref('')
 const detailCache = ref({})
 const loading = ref(false)
@@ -106,6 +120,7 @@ const filteredSkills = computed(() => {
   return skillsData.value.skills.filter((skill) => {
     if (filterDomain.value && skill.domain !== filterDomain.value) return false
     if (filterBackend.value && skill.backend !== filterBackend.value) return false
+    if (filterStatus.value && (skill.status || 'active') !== filterStatus.value) return false
     return true
   })
 })
@@ -127,6 +142,14 @@ function categoryLabel(category) {
     general: '通用'
   }
   return labels[category] || category || '通用'
+}
+
+function statusLabel(status) {
+  const labels = {
+    preview: '开发中',
+    deprecated: '已废弃'
+  }
+  return labels[status] || status
 }
 
 function currentDetail(skillId) {
@@ -336,6 +359,18 @@ onMounted(() => {
   background: #fff7ed;
   color: #c2410c;
   border-color: #fed7aa;
+}
+
+.tag.status.status-preview {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.tag.status.status-deprecated {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #d1d5db;
 }
 
 .skill-detail {

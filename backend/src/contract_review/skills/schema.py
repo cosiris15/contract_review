@@ -31,6 +31,7 @@ class SkillRegistration(BaseModel):
     local_handler: Optional[str] = None
     domain: str = "*"
     category: str = "general"
+    status: str = "active"
 
     class Config:
         arbitrary_types_allowed = True

@@ -39,6 +39,7 @@ async def test_list_skills(client):
     assert "by_backend" in data
     assert data["total"] >= 1
     assert all("status" in row for row in data["skills"])
+    assert any(row["skill_id"] == "load_review_criteria" for row in data["skills"])
 
 
 @pytest.mark.asyncio

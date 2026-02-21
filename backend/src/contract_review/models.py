@@ -479,7 +479,21 @@ class DocumentRole(str, Enum):
     BASELINE = "baseline"
     SUPPLEMENT = "supplement"
     REFERENCE = "reference"
+    CRITERIA = "criteria"
     STANDARD = "standard"
+
+
+class ReviewCriterion(BaseModel):
+    """单条审核标准。"""
+
+    criterion_id: str
+    clause_ref: str = ""
+    clause_name: str = ""
+    review_point: str
+    risk_level: str = ""
+    baseline_text: str = ""
+    suggested_action: str = ""
+    raw_row: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskDocument(BaseModel):

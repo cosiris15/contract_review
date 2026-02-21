@@ -3,6 +3,8 @@ from contract_review.plugins.fidic import (
     FIDIC_SILVER_BOOK_CHECKLIST,
     register_fidic_plugin,
 )
+from contract_review.plugins.sha_spa import SHA_SPA_DOMAIN_SKILLS
+from contract_review.skills.schema import SkillBackend
 from contract_review.plugins.registry import (
     clear_plugins,
     get_domain_ids,
@@ -77,3 +79,9 @@ class TestFidicPlugin:
         clear_plugins()
         register_fidic_plugin()
         assert get_domain_plugin("fidic") is not None
+
+
+def test_sha_transaction_cross_check_is_local():
+    row = next(skill for skill in SHA_SPA_DOMAIN_SKILLS if skill.skill_id == "transaction_doc_cross_check")
+    assert row.backend == SkillBackend.LOCAL
+    assert row.local_handler == "contract_review.skills.local.semantic_search.search_reference_doc"

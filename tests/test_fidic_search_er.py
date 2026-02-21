@@ -17,7 +17,7 @@ def _build_er_structure():
 @pytest.mark.asyncio
 async def test_search_er_basic_match(monkeypatch):
     monkeypatch.setattr(
-        "contract_review.skills.fidic.search_er._embed_texts",
+        "contract_review.skills.local.semantic_search._embed_texts",
         lambda _texts: np.array(
             [
                 [1.0, 0.0],  # query
@@ -47,7 +47,7 @@ async def test_search_er_no_er_document():
 @pytest.mark.asyncio
 async def test_search_er_no_match(monkeypatch):
     monkeypatch.setattr(
-        "contract_review.skills.fidic.search_er._embed_texts",
+        "contract_review.skills.local.semantic_search._embed_texts",
         lambda _texts: np.array(
             [
                 [1.0, 0.0],
@@ -67,7 +67,7 @@ async def test_search_er_no_match(monkeypatch):
 @pytest.mark.asyncio
 async def test_search_er_top_k_limit(monkeypatch):
     monkeypatch.setattr(
-        "contract_review.skills.fidic.search_er._embed_texts",
+        "contract_review.skills.local.semantic_search._embed_texts",
         lambda _texts: np.array(
             [
                 [1.0, 0.0],
@@ -87,7 +87,7 @@ async def test_search_er_top_k_limit(monkeypatch):
 @pytest.mark.asyncio
 async def test_search_er_relevance_threshold(monkeypatch):
     monkeypatch.setattr(
-        "contract_review.skills.fidic.search_er._embed_texts",
+        "contract_review.skills.local.semantic_search._embed_texts",
         lambda _texts: np.array(
             [
                 [1.0, 0.0],
@@ -114,7 +114,7 @@ async def test_search_er_chinese_text(monkeypatch):
         ]
     }
     monkeypatch.setattr(
-        "contract_review.skills.fidic.search_er._embed_texts",
+        "contract_review.skills.local.semantic_search._embed_texts",
         lambda _texts: np.array(
             [
                 [1.0, 0.0],

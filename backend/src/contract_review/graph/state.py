@@ -26,6 +26,8 @@ class ReviewGraphState(TypedDict, total=False):
 
     documents: List[TaskDocument]
     primary_structure: Optional[DocumentStructure]
+    criteria_data: List[dict]
+    criteria_file_path: Optional[str]
 
     review_checklist: List[ReviewChecklistItem]
     current_clause_index: int

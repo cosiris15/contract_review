@@ -51,13 +51,15 @@ class ReflyClient:
         session = self._get_session()
         try:
             response = await session.post(
-                f"/v1/workflows/{workflow_id}/run",
-                json={"input": input_data},
+                f"/v1/openapi/workflow/{workflow_id}/run",
+                json={"variables": input_data},
             )
             response.raise_for_status()
             data = response.json()
-            task_id = data.get("task_id") or data.get("id", "")
-            if not task_id:
+            if not data.get("success", False):
+                raise ReflyClientError(f"Refly workflow 调用失败: {data.get('errMsg', '未知错误')}")
+            task_id = data.get("data", {}).get("executionId", "")
+            if not isinstance(task_id, str) or not task_id:
                 raise ReflyClientError("Refly 返回中缺少 task_id")
             logger.info("Refly workflow %s 已触发，task_id=%s", workflow_id, task_id)
             return task_id
@@ -77,17 +79,38 @@ class ReflyClient:
 
         for attempt in range(max_attempts):
             try:
-                response = await session.get(f"/v1/tasks/{task_id}")
+                response = await session.get(f"/v1/openapi/workflow/{task_id}/status")
                 response.raise_for_status()
                 data = response.json()
-                status = str(data.get("status", "")).lower()
+                status = str(data.get("data", {}).get("status", "")).lower()
                 consecutive_network_errors = 0
 
-                if status == "completed":
+                if status == "finish":
+                    output_response = await session.get(f"/v1/openapi/workflow/{task_id}/output")
+                    output_response.raise_for_status()
+                    output_data = output_response.json()
+                    output_nodes = output_data.get("data", {}).get("output", [])
+
+                    messages_content = []
+                    if isinstance(output_nodes, list):
+                        for node in output_nodes:
+                            if not isinstance(node, dict):
+                                continue
+                            messages = node.get("messages", [])
+                            if not isinstance(messages, list):
+                                continue
+                            for message in messages:
+                                if not isinstance(message, dict):
+                                    continue
+                                content = message.get("content")
+                                if content is not None:
+                                    messages_content.append(str(content))
+
+                    result = {"content": "\n\n".join(messages_content).strip(), "output": output_nodes}
                     logger.info("Refly task %s 完成", task_id)
-                    return data.get("result", {})
-                if status in {"failed", "error", "cancelled"}:
-                    error_message = data.get("error", "未知错误")
+                    return result
+                if status in {"failed"}:
+                    error_message = data.get("data", {}).get("error") or data.get("errMsg", "未知错误")
                     raise ReflyClientError(f"Refly task 失败: {error_message}")
 
                 await asyncio.sleep(self.config.poll_interval)
