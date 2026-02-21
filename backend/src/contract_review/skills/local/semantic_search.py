@@ -9,7 +9,7 @@ from typing import Any, List
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ._utils import ensure_dict
+from ._utils import ensure_dict, get_clause_text
 
 logger = logging.getLogger(__name__)
 
@@ -163,4 +163,32 @@ async def search_reference_doc(input_data: SearchReferenceDocInput) -> SearchRef
         clause_id=input_data.clause_id,
         matched_sections=results,
         total_found=len(results),
+    )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, state: dict) -> SearchReferenceDocInput:
+    clause_text = get_clause_text(primary_structure, clause_id)
+    query = " ".join(
+        part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
+        if part
+    )
+
+    reference_structure = None
+    for doc in state.get("documents", []):
+        if isinstance(doc, dict):
+            doc_dict = doc
+        elif hasattr(doc, "model_dump"):
+            doc_dict = doc.model_dump()
+        else:
+            doc_dict = {}
+        if str(doc_dict.get("role", "") or "").lower() == "reference":
+            reference_structure = doc_dict.get("structure")
+            break
+
+    return SearchReferenceDocInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        reference_structure=reference_structure,
+        query=query or clause_id,
+        top_k=5,
     )

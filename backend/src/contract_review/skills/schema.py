@@ -32,9 +32,54 @@ class SkillRegistration(BaseModel):
     domain: str = "*"
     category: str = "general"
     status: str = "active"
+    parameters_schema: Dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "properties": {}, "required": []}
+    )
+    prepare_input_fn: Optional[str] = None
 
     class Config:
         arbitrary_types_allowed = True
+
+    def to_tool_definition(self) -> dict:
+        internal_fields = {"document_structure", "state_snapshot", "criteria_data", "criteria_file_path"}
+
+        parameters = self.parameters_schema if isinstance(self.parameters_schema, dict) else {}
+        if not isinstance(parameters.get("properties"), dict):
+            parameters = {}
+        if parameters:
+            parameters = {
+                "type": str(parameters.get("type", "object") or "object"),
+                "properties": dict(parameters.get("properties", {})),
+                "required": list(parameters.get("required", [])),
+            }
+        elif self.input_schema is not None:
+            try:
+                schema = self.input_schema.model_json_schema()
+                parameters = {
+                    "type": "object",
+                    "properties": dict(schema.get("properties", {})),
+                    "required": list(schema.get("required", [])),
+                }
+            except Exception:
+                parameters = {"type": "object", "properties": {}, "required": []}
+        else:
+            parameters = {"type": "object", "properties": {}, "required": []}
+
+        props = parameters.get("properties", {})
+        required = parameters.get("required", [])
+        for field_name in internal_fields:
+            props.pop(field_name, None)
+            if field_name in required:
+                required.remove(field_name)
+
+        return {
+            "type": "function",
+            "function": {
+                "name": self.skill_id,
+                "description": self.description,
+                "parameters": parameters,
+            },
+        }
 
 
 class SkillExecutor(ABC):

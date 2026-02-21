@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
+
+from ...config import get_settings
+from ...llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
+
+_llm_client: LLMClient | None = None
+_llm_init_warned = False
 
 
 def ensure_dict(structure: Any) -> Dict[str, Any]:
@@ -46,3 +55,19 @@ def get_clause_text(structure: Any, clause_id: str) -> str:
     if not isinstance(clauses, list):
         return ""
     return _search_clauses(clauses, clause_id)
+
+
+def get_llm_client() -> LLMClient | None:
+    global _llm_client, _llm_init_warned
+    if _llm_client is not None:
+        return _llm_client
+
+    try:
+        settings = get_settings()
+        _llm_client = LLMClient(settings.llm)
+    except Exception as exc:  # pragma: no cover - defensive
+        if not _llm_init_warned:
+            logger.warning("无法初始化 LLMClient，assess_deviation 将使用 fallback: %s", exc)
+            _llm_init_warned = True
+        return None
+    return _llm_client

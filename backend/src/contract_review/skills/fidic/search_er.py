@@ -53,3 +53,35 @@ async def search_er(input_data: SearchErInput) -> SearchErOutput:
         total_found=generic_output.total_found,
         search_method=generic_output.search_method,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, state: dict) -> SearchErInput:
+    from ..local._utils import get_clause_text
+
+    clause_text = get_clause_text(primary_structure, clause_id)
+    query = " ".join(
+        part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
+        if part
+    )
+
+    er_structure = None
+    for doc in state.get("documents", []):
+        if isinstance(doc, dict):
+            doc_dict = doc
+        elif hasattr(doc, "model_dump"):
+            doc_dict = doc.model_dump()
+        else:
+            doc_dict = {}
+        role = str(doc_dict.get("role", "") or "").lower()
+        filename = str(doc_dict.get("filename", "") or "")
+        if role == "reference" and "er" in filename.lower():
+            er_structure = doc_dict.get("structure")
+            break
+
+    return SearchErInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        er_structure=er_structure,
+        query=query or clause_id,
+        top_k=5,
+    )

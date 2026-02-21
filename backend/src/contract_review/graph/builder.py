@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -14,7 +15,14 @@ from ..llm_client import LLMClient
 from ..models import generate_id
 from ..plugins.registry import get_baseline_text, get_domain_plugin
 from ..skills.dispatcher import SkillDispatcher
+from ..skills.local.assess_deviation import AssessDeviationInput
 from ..skills.local.clause_context import ClauseContextInput, ClauseContextOutput
+from ..skills.local.compare_with_baseline import CompareWithBaselineInput
+from ..skills.local.cross_reference_check import CrossReferenceCheckInput
+from ..skills.local.extract_financial_terms import ExtractFinancialTermsInput
+from ..skills.local.load_review_criteria import LoadReviewCriteriaInput
+from ..skills.local.resolve_definition import ResolveDefinitionInput
+from ..skills.local.semantic_search import SearchReferenceDocInput
 from ..skills.schema import GenericSkillInput, SkillBackend, SkillRegistration
 from .llm_utils import parse_json_response
 from .prompts import (
@@ -30,6 +38,23 @@ logger = logging.getLogger(__name__)
 _llm_client: Optional[LLMClient] = None
 _llm_init_warned = False
 
+
+def _parameters_schema(input_model: type[BaseModel] | None) -> Dict[str, Any]:
+    if input_model is None:
+        return {"type": "object", "properties": {}, "required": []}
+    try:
+        schema = input_model.model_json_schema()
+    except Exception:
+        return {"type": "object", "properties": {}, "required": []}
+
+    props = dict(schema.get("properties", {}))
+    required = list(schema.get("required", []))
+    for key in ("document_structure", "state_snapshot", "criteria_data", "criteria_file_path"):
+        props.pop(key, None)
+        if key in required:
+            required.remove(key)
+    return {"type": "object", "properties": props, "required": required}
+
 _GENERIC_SKILLS: list[SkillRegistration] = [
     SkillRegistration(
         skill_id="get_clause_context",
@@ -41,60 +66,92 @@ _GENERIC_SKILLS: list[SkillRegistration] = [
         local_handler="contract_review.skills.local.clause_context.get_clause_context",
         domain="*",
         category="extraction",
+        parameters_schema=_parameters_schema(ClauseContextInput),
+        prepare_input_fn="contract_review.skills.local.clause_context.prepare_input",
     ),
     SkillRegistration(
         skill_id="resolve_definition",
         name="定义解析",
         description="查找条款中引用的术语定义",
+        input_schema=ResolveDefinitionInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.resolve_definition.resolve_definition",
         domain="*",
         category="extraction",
+        parameters_schema=_parameters_schema(ResolveDefinitionInput),
+        prepare_input_fn="contract_review.skills.local.resolve_definition.prepare_input",
     ),
     SkillRegistration(
         skill_id="compare_with_baseline",
         name="基线文本对比",
         description="将条款文本与标准模板进行对比",
+        input_schema=CompareWithBaselineInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.compare_with_baseline.compare_with_baseline",
         domain="*",
         category="comparison",
+        parameters_schema=_parameters_schema(CompareWithBaselineInput),
+        prepare_input_fn="contract_review.skills.local.compare_with_baseline.prepare_input",
     ),
     SkillRegistration(
         skill_id="cross_reference_check",
         name="交叉引用检查",
         description="检查条款中的交叉引用是否有效",
+        input_schema=CrossReferenceCheckInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.cross_reference_check.cross_reference_check",
         domain="*",
         category="validation",
+        parameters_schema=_parameters_schema(CrossReferenceCheckInput),
+        prepare_input_fn="contract_review.skills.local.cross_reference_check.prepare_input",
     ),
     SkillRegistration(
         skill_id="extract_financial_terms",
         name="财务条款提取",
         description="从条款中提取金额、百分比、期限等数值",
+        input_schema=ExtractFinancialTermsInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.extract_financial_terms.extract_financial_terms",
         domain="*",
         category="extraction",
+        parameters_schema=_parameters_schema(ExtractFinancialTermsInput),
+        prepare_input_fn="contract_review.skills.local.extract_financial_terms.prepare_input",
     ),
     SkillRegistration(
         skill_id="search_reference_doc",
         name="参考文档语义检索",
         description="在参考文档中检索与当前条款语义相关的段落",
+        input_schema=SearchReferenceDocInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.semantic_search.search_reference_doc",
         domain="*",
         category="validation",
+        parameters_schema=_parameters_schema(SearchReferenceDocInput),
+        prepare_input_fn="contract_review.skills.local.semantic_search.prepare_input",
     ),
     SkillRegistration(
         skill_id="load_review_criteria",
         name="审核标准加载",
         description="加载审核标准并匹配到当前条款",
+        input_schema=LoadReviewCriteriaInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.load_review_criteria.load_review_criteria",
         domain="*",
         category="validation",
+        parameters_schema=_parameters_schema(LoadReviewCriteriaInput),
+        prepare_input_fn="contract_review.skills.local.load_review_criteria.prepare_input",
+    ),
+    SkillRegistration(
+        skill_id="assess_deviation",
+        name="偏离度评估",
+        description="基于审核标准评估条款偏离程度与风险",
+        input_schema=AssessDeviationInput,
+        backend=SkillBackend.LOCAL,
+        local_handler="contract_review.skills.local.assess_deviation.assess_deviation",
+        domain="*",
+        category="comparison",
+        parameters_schema=_parameters_schema(AssessDeviationInput),
+        prepare_input_fn="contract_review.skills.local.assess_deviation.prepare_input",
     ),
 ]
 
@@ -149,6 +206,26 @@ def _normalize_risk_level(level: str | None) -> str:
     if level in {"high", "medium", "low"}:
         return level
     return "medium"
+
+
+def _match_criteria_for_clause(criteria_data: Any, clause_id: str) -> list[dict]:
+    if not isinstance(criteria_data, list):
+        return []
+
+    current = str(clause_id or "").strip()
+    if not current:
+        return []
+
+    matched: list[dict] = []
+    for row in criteria_data:
+        if not isinstance(row, dict):
+            continue
+        candidate = str(row.get("clause_ref", "") or "").strip()
+        if not candidate:
+            continue
+        if candidate == current or current.startswith(f"{candidate}.") or candidate.startswith(f"{current}."):
+            matched.append(row)
+    return matched
 
 
 def _get_llm_client() -> LLMClient | None:
@@ -213,8 +290,21 @@ def _build_skill_input(
     clause_id: str,
     primary_structure: Any,
     state: ReviewGraphState,
+    dispatcher: SkillDispatcher | None = None,
 ) -> BaseModel | None:
     """Build per-skill input payload. Return None if input cannot be constructed."""
+    if dispatcher:
+        registration = dispatcher.get_registration(skill_id)
+        if registration and registration.prepare_input_fn:
+            try:
+                module_path, func_name = registration.prepare_input_fn.rsplit(".", 1)
+                prepare_fn = getattr(importlib.import_module(module_path), func_name)
+                prepared = prepare_fn(clause_id, primary_structure, dict(state))
+                if isinstance(prepared, BaseModel):
+                    return prepared
+            except Exception as exc:
+                logger.warning("prepare_input 调用失败 (skill=%s)，回退 fallback: %s", skill_id, exc)
+
     if skill_id == "get_clause_context":
         try:
             return ClauseContextInput(
@@ -365,6 +455,21 @@ def _build_skill_input(
             criteria_file_path=state.get("criteria_file_path", ""),
         )
 
+    if skill_id == "assess_deviation":
+        from ..skills.local.assess_deviation import AssessDeviationInput
+
+        clause_text = _extract_clause_text(primary_structure, clause_id)
+        baseline_text = get_baseline_text(state.get("domain_id", ""), clause_id) or ""
+        review_criteria = _match_criteria_for_clause(state.get("criteria_data", []), clause_id)
+
+        return AssessDeviationInput(
+            clause_id=clause_id,
+            clause_text=clause_text,
+            baseline_text=baseline_text,
+            review_criteria=review_criteria,
+            domain_id=state.get("domain_id", ""),
+        )
+
     if skill_id == "spa_extract_conditions":
         from ..skills.sha_spa.extract_conditions import ExtractConditionsInput
 
@@ -501,7 +606,13 @@ async def node_clause_analyze(
                 logger.debug("Skill '%s' 未注册，跳过", skill_id)
                 continue
             try:
-                skill_input = _build_skill_input(skill_id, clause_id, primary_structure, state)
+                skill_input = _build_skill_input(
+                    skill_id,
+                    clause_id,
+                    primary_structure,
+                    state,
+                    dispatcher=dispatcher,
+                )
                 if skill_input is None:
                     continue
                 skill_result = await dispatcher.call(skill_id, skill_input)

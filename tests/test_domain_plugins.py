@@ -3,7 +3,7 @@ from contract_review.plugins.fidic import (
     FIDIC_SILVER_BOOK_CHECKLIST,
     register_fidic_plugin,
 )
-from contract_review.plugins.sha_spa import SHA_SPA_DOMAIN_SKILLS
+from contract_review.plugins.sha_spa import SHA_SPA_CHECKLIST, SHA_SPA_DOMAIN_SKILLS
 from contract_review.skills.schema import SkillBackend
 from contract_review.plugins.registry import (
     clear_plugins,
@@ -85,3 +85,19 @@ def test_sha_transaction_cross_check_is_local():
     row = next(skill for skill in SHA_SPA_DOMAIN_SKILLS if skill.skill_id == "transaction_doc_cross_check")
     assert row.backend == SkillBackend.LOCAL
     assert row.local_handler == "contract_review.skills.local.semantic_search.search_reference_doc"
+
+
+def test_fidic_critical_checklist_has_assess_deviation():
+    critical_ids = {"4.1", "14.1", "17.6", "20.1"}
+    for item in FIDIC_SILVER_BOOK_CHECKLIST:
+        if item.clause_id in critical_ids:
+            assert "load_review_criteria" in item.required_skills
+            assert "assess_deviation" in item.required_skills
+
+
+def test_sha_critical_checklist_has_assess_deviation():
+    critical_ids = {"2", "3", "4", "7", "9"}
+    for item in SHA_SPA_CHECKLIST:
+        if item.clause_id in critical_ids:
+            assert "load_review_criteria" in item.required_skills
+            assert "assess_deviation" in item.required_skills

@@ -112,3 +112,10 @@ async def analyze_indemnity(input_data: IndemnityAnalysisInput) -> IndemnityAnal
             result.special_indemnity_items.append(keyword)
 
     return result
+
+
+def prepare_input(clause_id: str, primary_structure: Any, _state: dict) -> IndemnityAnalysisInput:
+    return IndemnityAnalysisInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

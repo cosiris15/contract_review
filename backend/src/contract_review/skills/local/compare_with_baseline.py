@@ -82,3 +82,20 @@ async def compare_with_baseline(input_data: CompareWithBaselineInput) -> Compare
         is_identical=is_identical,
         differences_summary=differences,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, state: dict) -> CompareWithBaselineInput:
+    from ...plugins.registry import get_baseline_text
+
+    domain_id = state.get("domain_id", "")
+    baseline_text = get_baseline_text(domain_id, clause_id) or ""
+    return CompareWithBaselineInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        baseline_text=baseline_text,
+        state_snapshot={
+            "our_party": state.get("our_party", ""),
+            "language": state.get("language", "en"),
+            "domain_id": domain_id,
+        },
+    )

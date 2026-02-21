@@ -40,6 +40,7 @@ async def test_list_skills(client):
     assert data["total"] >= 1
     assert all("status" in row for row in data["skills"])
     assert any(row["skill_id"] == "load_review_criteria" for row in data["skills"])
+    assert any(row["skill_id"] == "assess_deviation" for row in data["skills"])
 
 
 @pytest.mark.asyncio
@@ -107,3 +108,13 @@ async def test_get_skill_detail_preview_status(client):
     assert data["skill_id"] == "fidic_search_er"
     assert data["status"] == "active"
     assert data["backend"] == "local"
+
+
+@pytest.mark.asyncio
+async def test_get_skill_detail_assess_deviation(client):
+    resp = await client.get("/api/v3/skills/assess_deviation")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["skill_id"] == "assess_deviation"
+    assert data["backend"] == "local"
+    assert data["domain"] == "*"

@@ -124,3 +124,10 @@ async def extract_conditions(input_data: ExtractConditionsInput) -> ExtractCondi
         seller_conditions=seller_count,
         has_material_adverse_change=has_mac,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, _state: dict) -> ExtractConditionsInput:
+    return ExtractConditionsInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

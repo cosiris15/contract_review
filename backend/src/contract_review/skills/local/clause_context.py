@@ -34,3 +34,10 @@ async def get_clause_context(input_data: ClauseContextInput) -> ClauseContextOut
         context_text=text,
         title=title,
     )
+
+
+def prepare_input(clause_id: str, primary_structure, _state: dict) -> ClauseContextInput:
+    return ClauseContextInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

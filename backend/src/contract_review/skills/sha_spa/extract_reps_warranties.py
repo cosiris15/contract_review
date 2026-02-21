@@ -129,3 +129,14 @@ async def extract_reps_warranties(
         knowledge_qualified_count=sum(1 for item in items if item.has_knowledge_qualifier),
         materiality_qualified_count=sum(1 for item in items if item.has_materiality_qualifier),
     )
+
+
+def prepare_input(
+    clause_id: str,
+    primary_structure: Any,
+    _state: dict,
+) -> ExtractRepsWarrantiesInput:
+    return ExtractRepsWarrantiesInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

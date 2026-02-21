@@ -88,3 +88,14 @@ async def merge(input_data: MergeGcPcInput) -> MergeGcPcOutput:
         modification_type=modification_type,
         changes_summary=changes_summary,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, state: dict) -> MergeGcPcInput:
+    from ...plugins.registry import get_baseline_text
+
+    domain_id = state.get("domain_id", "")
+    return MergeGcPcInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        gc_baseline=get_baseline_text(domain_id, clause_id) or "",
+    )

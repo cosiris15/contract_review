@@ -116,3 +116,10 @@ async def calculate(input_data: CalculateTimeBarInput) -> CalculateTimeBarOutput
         total_time_bars=len(time_bars),
         has_strict_time_bar=has_strict,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, _state: dict) -> CalculateTimeBarInput:
+    return CalculateTimeBarInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

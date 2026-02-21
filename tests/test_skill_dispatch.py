@@ -12,6 +12,7 @@ class TestCreateDispatcher:
         assert dispatcher is not None
         assert "get_clause_context" in dispatcher.skill_ids
         assert "search_reference_doc" in dispatcher.skill_ids
+        assert "assess_deviation" in dispatcher.skill_ids
 
     def test_creates_with_domain_skills(self):
         from contract_review.plugins.fidic import register_fidic_plugin
@@ -127,3 +128,186 @@ class TestBuildSkillInput:
         assert isinstance(result, LoadReviewCriteriaInput)
         assert result.criteria_file_path.endswith("criteria.xlsx")
         assert len(result.criteria_data) == 1
+
+    def test_assess_deviation_input(self):
+        from contract_review.skills.local.assess_deviation import AssessDeviationInput
+
+        result = _build_skill_input(
+            "assess_deviation",
+            "4.1",
+            {"clauses": [{"clause_id": "4.1", "text": "contractor obligations", "children": []}]},
+            {
+                "domain_id": "fidic",
+                "criteria_data": [
+                    {"criterion_id": "RC-1", "clause_ref": "4.1", "review_point": "义务范围不应扩张"}
+                ],
+            },
+        )
+        assert isinstance(result, AssessDeviationInput)
+        assert result.clause_id == "4.1"
+        assert result.clause_text
+        assert result.domain_id == "fidic"
+        assert len(result.review_criteria) == 1
+
+
+class TestPrepareInputFallback:
+    def test_prepare_input_fn_takes_priority(self, monkeypatch):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        reg = dispatcher.get_registration("get_clause_context")
+        assert reg is not None
+
+        monkeypatch.setattr(reg, "prepare_input_fn", "x.y.prepare")
+
+        class _Mod:
+            @staticmethod
+            def prepare(_clause_id, _primary_structure, _state):
+                return GenericSkillInput(
+                    clause_id="from_prepare",
+                    document_structure={},
+                    state_snapshot={"source": "prepare"},
+                )
+
+        monkeypatch.setattr("contract_review.graph.builder.importlib.import_module", lambda _path: _Mod())
+        result = _build_skill_input(
+            "get_clause_context",
+            "4.1",
+            {"clauses": [{"clause_id": "4.1", "text": "test", "children": []}]},
+            {"our_party": "承包商", "language": "zh-CN"},
+            dispatcher=dispatcher,
+        )
+        assert isinstance(result, GenericSkillInput)
+        assert result.clause_id == "from_prepare"
+
+    def test_fallback_when_no_prepare_input(self):
+        structure = {
+            "clauses": [{"clause_id": "4.1", "title": "Test", "text": "test", "children": []}],
+            "document_id": "test",
+            "structure_type": "generic",
+            "definitions": {},
+            "cross_references": [],
+            "total_clauses": 1,
+        }
+        result = _build_skill_input(
+            "get_clause_context",
+            "4.1",
+            structure,
+            {"our_party": "承包商", "language": "zh-CN"},
+        )
+        assert result is not None
+        assert result.clause_id == "4.1"
+
+    def test_fallback_when_prepare_input_fails(self, monkeypatch):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        reg = dispatcher.get_registration("get_clause_context")
+        assert reg is not None
+        monkeypatch.setattr(reg, "prepare_input_fn", "x.y.prepare")
+
+        def _raise(_path):
+            raise ImportError("boom")
+
+        monkeypatch.setattr("contract_review.graph.builder.importlib.import_module", _raise)
+        structure = {
+            "clauses": [{"clause_id": "4.1", "title": "Test", "text": "test", "children": []}],
+            "document_id": "test",
+            "structure_type": "generic",
+            "definitions": {},
+            "cross_references": [],
+            "total_clauses": 1,
+        }
+        result = _build_skill_input(
+            "get_clause_context",
+            "4.1",
+            structure,
+            {"our_party": "承包商", "language": "zh-CN"},
+            dispatcher=dispatcher,
+        )
+        assert result is not None
+        assert result.clause_id == "4.1"
+
+
+class TestDispatcherToolDefinitions:
+    def test_get_all_tool_definitions(self):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        tools = dispatcher.get_tool_definitions()
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        for tool in tools:
+            assert tool["type"] == "function"
+            assert "name" in tool["function"]
+            assert "description" in tool["function"]
+            assert "parameters" in tool["function"]
+
+    def test_tool_definitions_names_match_skill_ids(self):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        tools = dispatcher.get_tool_definitions()
+        names = {row["function"]["name"] for row in tools}
+        for skill_id in dispatcher.skill_ids:
+            reg = dispatcher.get_registration(skill_id)
+            if reg and reg.status == "active":
+                assert skill_id in names
+
+
+class TestDispatcherPrepareAndCall:
+    @pytest.mark.asyncio
+    async def test_prepare_and_call_success(self):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        result = await dispatcher.prepare_and_call(
+            "get_clause_context",
+            "1.1",
+            {
+                "clauses": [{"clause_id": "1.1", "title": "Defs", "text": "Definition text", "children": []}],
+                "document_id": "d1",
+                "structure_type": "generic",
+                "definitions": {},
+                "cross_references": [],
+                "total_clauses": 1,
+            },
+            {},
+        )
+        assert result.success is True
+        assert result.skill_id == "get_clause_context"
+
+    @pytest.mark.asyncio
+    async def test_prepare_and_call_fallback_generic(self, monkeypatch):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        reg = dispatcher.get_registration("cross_reference_check")
+        assert reg is not None
+        monkeypatch.setattr(reg, "prepare_input_fn", "x.y.prepare")
+        def _raise(_path):
+            raise ImportError("boom")
+
+        monkeypatch.setattr("contract_review.skills.dispatcher._import_handler", _raise)
+
+        result = await dispatcher.prepare_and_call(
+            "cross_reference_check",
+            "1.1",
+            {"clauses": [{"clause_id": "1.1", "text": "x", "children": []}]},
+            {},
+            llm_arguments={"check": True},
+        )
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_prepare_and_call_assess_deviation_uses_prepare_input(self):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+        result = await dispatcher.prepare_and_call(
+            "assess_deviation",
+            "4.1",
+            {"clauses": [{"clause_id": "4.1", "text": "contractor obligations", "children": []}]},
+            {
+                "domain_id": "fidic",
+                "criteria_data": [
+                    {"criterion_id": "RC-1", "clause_ref": "4.1", "review_point": "义务范围不应扩张"}
+                ],
+            },
+        )
+        assert result.success is True
+        assert isinstance(result.data, dict)
+        assert result.data.get("clause_id") == "4.1"

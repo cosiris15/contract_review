@@ -61,3 +61,10 @@ async def cross_reference_check(input_data: CrossReferenceCheckInput) -> CrossRe
         total_references=len(references),
         total_invalid=len(invalid_references),
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, _state: dict) -> CrossReferenceCheckInput:
+    return CrossReferenceCheckInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

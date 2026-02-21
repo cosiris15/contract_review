@@ -245,3 +245,34 @@ async def check_pc_consistency(input_data: CheckPcConsistencyInput) -> CheckPcCo
         total_issues=len(issues),
         clauses_checked=len(clauses),
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, state: dict) -> CheckPcConsistencyInput:
+    findings = state.get("findings", {})
+    pc_clauses: list[PcClause] = []
+    for cid, finding in findings.items():
+        if isinstance(finding, dict):
+            row = finding
+        elif hasattr(finding, "model_dump"):
+            row = finding.model_dump()
+        else:
+            row = {}
+        skills_data = row.get("skill_context", {})
+        merge_data = skills_data.get("fidic_merge_gc_pc", {})
+        if not isinstance(merge_data, dict):
+            merge_data = {}
+        mod_type = merge_data.get("modification_type", "")
+        if mod_type in {"modified", "added"}:
+            pc_clauses.append(
+                PcClause(
+                    clause_id=str(cid),
+                    text=str(merge_data.get("pc_text", "") or ""),
+                    modification_type=mod_type,
+                )
+            )
+    return CheckPcConsistencyInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        pc_clauses=pc_clauses,
+        focus_clause_id=clause_id,
+    )

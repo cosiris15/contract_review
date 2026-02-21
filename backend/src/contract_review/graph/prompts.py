@@ -124,6 +124,26 @@ def _format_skill_context(skill_context: Dict[str, Any]) -> str:
                 lines.append(f"  匹配方式：{row.get('match_type', '')}（{row.get('match_score', '')}）")
             parts.append("\n".join(lines))
             continue
+        if skill_id == "assess_deviation":
+            if not isinstance(data, dict):
+                continue
+            deviations = data.get("deviations", [])
+            if not isinstance(deviations, list) or not deviations:
+                continue
+            lines = ["[偏离度评估] 以下是按审核标准生成的偏离评估："]
+            for row in deviations:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"- [{row.get('criterion_id', '')}] 偏离等级={row.get('deviation_level', 'unknown')} "
+                    f"风险等级={row.get('risk_level', 'unknown')}"
+                )
+                if row.get("rationale"):
+                    lines.append(f"  依据：{row.get('rationale', '')}")
+                if row.get("suggested_action"):
+                    lines.append(f"  建议：{row.get('suggested_action', '')}")
+            parts.append("\n".join(lines))
+            continue
         if isinstance(data, dict):
             parts.append(f"[{skill_id}]\n{json.dumps(data, ensure_ascii=False, indent=2)}")
             continue

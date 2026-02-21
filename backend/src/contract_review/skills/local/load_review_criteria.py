@@ -163,3 +163,12 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
         total_matched=len(semantic_matches),
         has_criteria=True,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, state: dict) -> LoadReviewCriteriaInput:
+    return LoadReviewCriteriaInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+        criteria_data=state.get("criteria_data", []),
+        criteria_file_path=state.get("criteria_file_path", ""),
+    )

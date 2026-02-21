@@ -79,3 +79,10 @@ async def resolve_definition(input_data: ResolveDefinitionInput) -> ResolveDefin
         definitions_found=found,
         terms_not_found=not_found,
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, _state: dict) -> ResolveDefinitionInput:
+    return ResolveDefinitionInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from ..models import DocumentParserConfig, ReviewChecklistItem
+from ..skills.local.semantic_search import SearchReferenceDocInput
 from ..skills.schema import SkillBackend, SkillRegistration
+from ..skills.schema import GenericSkillInput
+from ..skills.sha_spa.extract_conditions import ExtractConditionsInput
+from ..skills.sha_spa.extract_reps_warranties import ExtractRepsWarrantiesInput
+from ..skills.sha_spa.indemnity_analysis import IndemnityAnalysisInput
 from .registry import DomainPlugin
+
+
+def _parameters_schema(input_model) -> Dict[str, Any]:
+    if input_model is None:
+        return {"type": "object", "properties": {}, "required": []}
+    schema = input_model.model_json_schema()
+    props = dict(schema.get("properties", {}))
+    required = list(schema.get("required", []))
+    for key in ("document_structure", "state_snapshot", "criteria_data", "criteria_file_path"):
+        props.pop(key, None)
+        if key in required:
+            required.remove(key)
+    return {"type": "object", "properties": props, "required": required}
 
 SHA_SPA_PARSER_CONFIG = DocumentParserConfig(
     clause_pattern=r"^(?:Article|Section|Clause)\s+\d+",
@@ -19,47 +39,62 @@ SHA_SPA_DOMAIN_SKILLS: list[SkillRegistration] = [
         skill_id="spa_extract_conditions",
         name="先决条件提取",
         description="提取交割先决条件清单",
+        input_schema=ExtractConditionsInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.sha_spa.extract_conditions.extract_conditions",
         domain="sha_spa",
         category="extraction",
+        parameters_schema=_parameters_schema(ExtractConditionsInput),
+        prepare_input_fn="contract_review.skills.sha_spa.extract_conditions.prepare_input",
     ),
     SkillRegistration(
         skill_id="spa_extract_reps_warranties",
         name="陈述与保证提取",
         description="提取 R&W 结构化清单",
+        input_schema=ExtractRepsWarrantiesInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.sha_spa.extract_reps_warranties.extract_reps_warranties",
         domain="sha_spa",
         category="extraction",
+        parameters_schema=_parameters_schema(ExtractRepsWarrantiesInput),
+        prepare_input_fn="contract_review.skills.sha_spa.extract_reps_warranties.prepare_input",
     ),
     SkillRegistration(
         skill_id="spa_indemnity_analysis",
         name="赔偿条款分析",
         description="提取赔偿上限、免赔额、时效等参数",
+        input_schema=IndemnityAnalysisInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.sha_spa.indemnity_analysis.analyze_indemnity",
         domain="sha_spa",
         category="comparison",
+        parameters_schema=_parameters_schema(IndemnityAnalysisInput),
+        prepare_input_fn="contract_review.skills.sha_spa.indemnity_analysis.prepare_input",
     ),
     SkillRegistration(
         skill_id="sha_governance_check",
         name="治理条款完整性检查",
         description="分析 SHA 治理结构的完整性和公平性",
+        input_schema=GenericSkillInput,
         backend=SkillBackend.REFLY,
         refly_workflow_id="refly_wf_sha_governance",
         domain="sha_spa",
         category="validation",
         status="preview",
+        parameters_schema=_parameters_schema(GenericSkillInput),
+        prepare_input_fn="contract_review.skills.sha_spa.governance_check.prepare_input",
     ),
     SkillRegistration(
         skill_id="transaction_doc_cross_check",
         name="交易文件交叉检查",
         description="在关联交易文件中检索与当前条款相关的段落",
+        input_schema=SearchReferenceDocInput,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.local.semantic_search.search_reference_doc",
         domain="sha_spa",
         category="validation",
+        parameters_schema=_parameters_schema(SearchReferenceDocInput),
+        prepare_input_fn="contract_review.skills.local.semantic_search.prepare_input",
     ),
 ]
 
@@ -75,21 +110,21 @@ SHA_SPA_CHECKLIST: list[ReviewChecklistItem] = [
         clause_id="2",
         clause_name="交易结构与对价",
         priority="critical",
-        required_skills=["get_clause_context", "extract_financial_terms"],
+        required_skills=["get_clause_context", "load_review_criteria", "extract_financial_terms", "assess_deviation"],
         description="核查交易对价、支付方式、价格调整机制",
     ),
     ReviewChecklistItem(
         clause_id="3",
         clause_name="先决条件",
         priority="critical",
-        required_skills=["get_clause_context", "spa_extract_conditions"],
+        required_skills=["get_clause_context", "load_review_criteria", "spa_extract_conditions", "assess_deviation"],
         description="审查交割先决条件的完整性和可控性",
     ),
     ReviewChecklistItem(
         clause_id="4",
         clause_name="陈述与保证",
         priority="critical",
-        required_skills=["get_clause_context", "spa_extract_reps_warranties", "transaction_doc_cross_check"],
+        required_skills=["get_clause_context", "load_review_criteria", "spa_extract_reps_warranties", "transaction_doc_cross_check", "assess_deviation"],
         description="审查 R&W 范围、限定词、与披露函的一致性",
     ),
     ReviewChecklistItem(
@@ -110,7 +145,7 @@ SHA_SPA_CHECKLIST: list[ReviewChecklistItem] = [
         clause_id="7",
         clause_name="赔偿条款",
         priority="critical",
-        required_skills=["get_clause_context", "spa_indemnity_analysis", "extract_financial_terms"],
+        required_skills=["get_clause_context", "load_review_criteria", "spa_indemnity_analysis", "extract_financial_terms", "assess_deviation"],
         description="审查赔偿上限、免赔额、时效、特别赔偿",
     ),
     ReviewChecklistItem(
@@ -124,7 +159,7 @@ SHA_SPA_CHECKLIST: list[ReviewChecklistItem] = [
         clause_id="9",
         clause_name="治理结构（SHA）",
         priority="critical",
-        required_skills=["get_clause_context", "sha_governance_check"],
+        required_skills=["get_clause_context", "load_review_criteria", "sha_governance_check", "assess_deviation"],
         description="审查董事会组成、重大事项、表决机制",
     ),
     ReviewChecklistItem(

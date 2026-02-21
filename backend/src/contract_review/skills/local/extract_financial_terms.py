@@ -58,3 +58,10 @@ async def extract_financial_terms(input_data: ExtractFinancialTermsInput) -> Ext
         terms=terms,
         total_terms=len(terms),
     )
+
+
+def prepare_input(clause_id: str, primary_structure: Any, _state: dict) -> ExtractFinancialTermsInput:
+    return ExtractFinancialTermsInput(
+        clause_id=clause_id,
+        document_structure=primary_structure,
+    )

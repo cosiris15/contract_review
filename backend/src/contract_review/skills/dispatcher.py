@@ -6,11 +6,11 @@ import importlib
 import json
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from .schema import SkillBackend, SkillExecutor, SkillRegistration, SkillResult
+from .schema import GenericSkillInput, SkillBackend, SkillExecutor, SkillRegistration, SkillResult
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,60 @@ class SkillDispatcher:
                 error=str(exc),
                 execution_time_ms=elapsed,
             )
+
+    def get_tool_definitions(
+        self,
+        *,
+        domain_filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+    ) -> List[dict]:
+        from .tool_adapter import skills_to_tool_definitions
+
+        return skills_to_tool_definitions(
+            self.list_skills(),
+            domain_filter=domain_filter,
+            category_filter=category_filter,
+        )
+
+    async def prepare_and_call(
+        self,
+        skill_id: str,
+        clause_id: str,
+        primary_structure: Any,
+        state: dict,
+        *,
+        llm_arguments: Optional[dict] = None,
+    ) -> SkillResult:
+        registration = self.get_registration(skill_id)
+        if registration is None:
+            return SkillResult(skill_id=skill_id, success=False, error=f"Skill '{skill_id}' 未注册")
+
+        input_data: BaseModel | None = None
+
+        if registration.prepare_input_fn:
+            try:
+                prepare_fn = _import_handler(registration.prepare_input_fn)
+                prepared = prepare_fn(clause_id, primary_structure, state)
+                if isinstance(prepared, BaseModel):
+                    if llm_arguments:
+                        payload = prepared.model_dump()
+                        for key, value in llm_arguments.items():
+                            if key in payload:
+                                payload[key] = value
+                        input_data = prepared.__class__(**payload)
+                    else:
+                        input_data = prepared
+            except Exception as exc:
+                logger.warning("prepare_input 调用失败 (skill=%s): %s", skill_id, exc)
+
+        if input_data is None:
+            input_data = GenericSkillInput(
+                clause_id=clause_id,
+                document_structure=primary_structure,
+                state_snapshot=llm_arguments or {},
+            )
+
+        return await self.call(skill_id, input_data)
 
     def get_registration(self, skill_id: str) -> Optional[SkillRegistration]:
         return self._registrations.get(skill_id)
