@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -65,10 +66,30 @@ class Settings(BaseModel):
     review: ReviewSettings = Field(default_factory=ReviewSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     refly: ReflySettings = Field(default_factory=ReflySettings)
+    execution_mode: str = "legacy"
     use_react_agent: bool = False
     react_max_iterations: int = 5
     react_temperature: float = 0.1
     use_orchestrator: bool = False
+
+
+class ExecutionMode(str, Enum):
+    LEGACY = "legacy"
+    GEN3 = "gen3"
+
+
+def get_execution_mode(settings: Settings) -> ExecutionMode:
+    mode_str = str(getattr(settings, "execution_mode", "legacy") or "legacy").strip().lower()
+    if mode_str != ExecutionMode.LEGACY.value:
+        try:
+            return ExecutionMode(mode_str)
+        except ValueError:
+            return ExecutionMode.LEGACY
+
+    if getattr(settings, "use_orchestrator", False) or getattr(settings, "use_react_agent", False):
+        return ExecutionMode.GEN3
+
+    return ExecutionMode.LEGACY
 
 
 def load_settings(config_path: Optional[Path] = None) -> Settings:
@@ -120,6 +141,10 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
         refly_cfg["base_url"] = refly_base_url
     data["refly"] = refly_cfg
 
+    execution_mode = str(os.getenv("EXECUTION_MODE", "")).strip().lower()
+    if execution_mode in {ExecutionMode.LEGACY.value, ExecutionMode.GEN3.value}:
+        data["execution_mode"] = execution_mode
+
     react_enabled = os.getenv("USE_REACT_AGENT", None)
     if react_enabled is not None:
         data["use_react_agent"] = str(react_enabled).strip().lower() in {"1", "true", "yes", "on"}
@@ -145,16 +170,7 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
     base_dir = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
     resolved_review = settings.review.resolve_paths(base_dir)
 
-    return Settings(
-        llm=settings.llm,
-        review=resolved_review,
-        gemini=settings.gemini,
-        refly=settings.refly,
-        use_react_agent=settings.use_react_agent,
-        react_max_iterations=settings.react_max_iterations,
-        react_temperature=settings.react_temperature,
-        use_orchestrator=settings.use_orchestrator,
-    )
+    return settings.model_copy(update={"review": resolved_review})
 
 
 # 全局配置实例（延迟加载）

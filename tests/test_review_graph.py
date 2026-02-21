@@ -6,6 +6,7 @@ import pytest
 
 langgraph = pytest.importorskip("langgraph")
 
+from contract_review.config import ExecutionMode, get_execution_mode
 from contract_review.graph.builder import build_review_graph, route_after_analyze
 from contract_review.graph.orchestrator import ClauseAnalysisPlan, ReviewPlan
 
@@ -230,7 +231,12 @@ class TestLLMIntegration:
     async def test_react_disabled_uses_hardcoded(self, monkeypatch):
         monkeypatch.setattr(
             "contract_review.graph.builder.get_settings",
-            lambda: SimpleNamespace(use_react_agent=False, react_max_iterations=5, react_temperature=0.1),
+            lambda: SimpleNamespace(
+                execution_mode="legacy",
+                react_max_iterations=5,
+                react_temperature=0.1,
+                refly=SimpleNamespace(enabled=False, api_key="", base_url="", timeout=30, poll_interval=1, max_poll_attempts=3),
+            ),
         )
         called = {"react": False}
 
@@ -265,10 +271,15 @@ class TestLLMIntegration:
         assert called["react"] is False
 
     @pytest.mark.asyncio
-    async def test_react_failure_falls_back(self, monkeypatch):
+    async def test_gen3_react_failure_returns_error(self, monkeypatch):
         monkeypatch.setattr(
             "contract_review.graph.builder.get_settings",
-            lambda: SimpleNamespace(use_react_agent=True, react_max_iterations=5, react_temperature=0.1),
+            lambda: SimpleNamespace(
+                execution_mode="gen3",
+                react_max_iterations=5,
+                react_temperature=0.1,
+                refly=SimpleNamespace(enabled=False, api_key="", base_url="", timeout=30, poll_interval=1, max_poll_attempts=3),
+            ),
         )
         monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
 
@@ -285,6 +296,21 @@ class TestLLMIntegration:
             "material_type": "contract",
             "language": "zh-CN",
             "documents": [],
+            "primary_structure": {
+                "document_id": "d1",
+                "structure_type": "generic",
+                "definitions": {},
+                "cross_references": [],
+                "total_clauses": 1,
+                "clauses": [
+                    {
+                        "clause_id": "14.2",
+                        "title": "预付款",
+                        "text": "预付款为合同总价的30%",
+                        "children": [],
+                    }
+                ],
+            },
             "review_checklist": [
                 {
                     "clause_id": "14.2",
@@ -295,17 +321,16 @@ class TestLLMIntegration:
                 }
             ],
         }
-        config = {"configurable": {"thread_id": "test_react_fallback"}}
+        config = {"configurable": {"thread_id": "test_gen3_react_error"}}
         result = await graph.ainvoke(initial_state, config)
         assert result["is_complete"] is True
-        assert "14.2" in result.get("findings", {})
+        assert "ReAct Agent 失败" in result.get("error", "")
 
 
 class TestOrchestratorGraph:
-    def _settings(self, *, use_orchestrator: bool, use_react: bool = False):
+    def _settings(self, *, execution_mode: str):
         return SimpleNamespace(
-            use_orchestrator=use_orchestrator,
-            use_react_agent=use_react,
+            execution_mode=execution_mode,
             react_max_iterations=5,
             react_temperature=0.1,
             refly=SimpleNamespace(
@@ -320,7 +345,10 @@ class TestOrchestratorGraph:
 
     @pytest.mark.asyncio
     async def test_orchestrator_disabled_keeps_existing_behavior(self, monkeypatch):
-        monkeypatch.setattr("contract_review.graph.builder.get_settings", lambda: self._settings(use_orchestrator=False))
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: self._settings(execution_mode="legacy"),
+        )
         monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
 
         graph = build_review_graph(interrupt_before=[])
@@ -359,7 +387,10 @@ class TestOrchestratorGraph:
 
     @pytest.mark.asyncio
     async def test_orchestrator_enabled_plan_fallback(self, monkeypatch):
-        monkeypatch.setattr("contract_review.graph.builder.get_settings", lambda: self._settings(use_orchestrator=True))
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: self._settings(execution_mode="gen3"),
+        )
         monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient(mode="fail"))
 
         graph = build_review_graph(interrupt_before=[])
@@ -387,7 +418,10 @@ class TestOrchestratorGraph:
 
     @pytest.mark.asyncio
     async def test_orchestrator_route_skip_diffs(self, monkeypatch):
-        monkeypatch.setattr("contract_review.graph.builder.get_settings", lambda: self._settings(use_orchestrator=True))
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: self._settings(execution_mode="gen3"),
+        )
         monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
 
         async def _fake_generate_review_plan(*args, **kwargs):
@@ -434,7 +468,7 @@ class TestOrchestratorGraph:
     async def test_orchestrator_and_react_enabled(self, monkeypatch):
         monkeypatch.setattr(
             "contract_review.graph.builder.get_settings",
-            lambda: self._settings(use_orchestrator=True, use_react=True),
+            lambda: self._settings(execution_mode="gen3"),
         )
         monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
         called = {"react": False}
@@ -534,7 +568,7 @@ class TestClauseAnalyzeDispatcher:
 
         monkeypatch.setattr(
             "contract_review.graph.builder.get_settings",
-            lambda: SimpleNamespace(use_react_agent=False, react_max_iterations=5, react_temperature=0.1),
+            lambda: SimpleNamespace(execution_mode="legacy", react_max_iterations=5, react_temperature=0.1),
         )
         monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: None)
 
@@ -576,3 +610,79 @@ class TestClauseAnalyzeDispatcher:
             dict(state),
         )
         assert result["current_skill_context"]["get_clause_context"]["context_text"] == "Clause text from skill"
+
+
+class TestExecutionModeSwitch:
+    @pytest.mark.asyncio
+    async def test_legacy_mode_dispatches_to_analyze_legacy(self, monkeypatch):
+        from contract_review.graph.builder import node_clause_analyze
+
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(execution_mode="legacy", react_max_iterations=5, react_temperature=0.1),
+        )
+        called = {"legacy": 0}
+
+        async def _fake_legacy(**kwargs):
+            _ = kwargs
+            called["legacy"] += 1
+            return {
+                "current_clause_id": "4.1",
+                "current_clause_text": "x",
+                "current_risks": [],
+                "current_diffs": [],
+                "current_skill_context": {},
+                "agent_messages": None,
+                "clause_retry_count": 0,
+            }
+
+        monkeypatch.setattr("contract_review.graph.builder._analyze_legacy", _fake_legacy)
+        state = {
+            "review_checklist": [
+                {"clause_id": "4.1", "clause_name": "x", "description": "x", "priority": "high", "required_skills": []}
+            ],
+            "current_clause_index": 0,
+            "primary_structure": {"clauses": []},
+        }
+        result = await node_clause_analyze(state, dispatcher=None)
+        assert result["current_clause_id"] == "4.1"
+        assert called["legacy"] == 1
+
+    @pytest.mark.asyncio
+    async def test_gen3_mode_dispatches_to_analyze_gen3(self, monkeypatch):
+        from contract_review.graph.builder import node_clause_analyze
+
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(execution_mode="gen3", react_max_iterations=5, react_temperature=0.1),
+        )
+        called = {"gen3": 0}
+
+        async def _fake_gen3(**kwargs):
+            _ = kwargs
+            called["gen3"] += 1
+            return {
+                "current_clause_id": "4.1",
+                "current_clause_text": "x",
+                "current_risks": [],
+                "current_diffs": [],
+                "current_skill_context": {},
+                "agent_messages": [],
+                "clause_retry_count": 0,
+            }
+
+        monkeypatch.setattr("contract_review.graph.builder._analyze_gen3", _fake_gen3)
+        state = {
+            "review_checklist": [
+                {"clause_id": "4.1", "clause_name": "x", "description": "x", "priority": "high", "required_skills": []}
+            ],
+            "current_clause_index": 0,
+            "primary_structure": {"clauses": []},
+        }
+        result = await node_clause_analyze(state, dispatcher=object())
+        assert result["current_clause_id"] == "4.1"
+        assert called["gen3"] == 1
+
+    def test_explicit_mode_overrides_old_bools(self):
+        settings = SimpleNamespace(execution_mode="gen3", use_orchestrator=False, use_react_agent=False)
+        assert get_execution_mode(settings) == ExecutionMode.GEN3

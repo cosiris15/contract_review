@@ -9,7 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel
 
-from ..config import get_settings
+from ..config import ExecutionMode, get_execution_mode, get_settings
 from ..llm_client import LLMClient
 from ..models import generate_id
 from ..plugins.registry import get_domain_plugin
@@ -332,11 +332,11 @@ def _get_clause_plan(state: ReviewGraphState, clause_id: str) -> ClauseAnalysisP
 
 async def node_plan_review(state: ReviewGraphState, dispatcher: SkillDispatcher | None = None) -> Dict[str, Any]:
     settings = get_settings()
-    use_orchestrator = bool(getattr(settings, "use_orchestrator", False))
+    mode = get_execution_mode(settings)
     checklist = state.get("review_checklist", [])
     if not checklist:
         return {"review_plan": {"clause_plans": [], "plan_version": 1}, "plan_version": 1}
-    if not use_orchestrator:
+    if mode != ExecutionMode.GEN3:
         # Defensive fallback: node_plan_review is normally not mounted when orchestrator is disabled.
         plan = _build_default_plan(checklist)
         return {"review_plan": plan.model_dump(), "plan_version": plan.plan_version}
@@ -449,52 +449,19 @@ async def _run_react_branch(
     }
 
 
-async def node_clause_analyze(
-    state: ReviewGraphState, dispatcher: SkillDispatcher | None = None
+async def _analyze_legacy(
+    *,
+    state: ReviewGraphState,
+    dispatcher: SkillDispatcher | None,
+    clause_id: str,
+    clause_name: str,
+    description: str,
+    priority: str,
+    our_party: str,
+    language: str,
+    primary_structure: Any,
+    required_skills: list[str],
 ) -> Dict[str, Any]:
-    checklist = state.get("review_checklist", [])
-    index = state.get("current_clause_index", 0)
-    if index >= len(checklist):
-        return {}
-
-    item = _as_dict(checklist[index])
-    clause_id = item.get("clause_id", "")
-    clause_name = item.get("clause_name", "")
-    description = item.get("description", "")
-    priority = item.get("priority", "medium")
-    our_party = state.get("our_party", "")
-    language = state.get("language", "en")
-    required_skills = list(item.get("required_skills", []) or [])
-    clause_plan = _get_clause_plan(state, clause_id)
-    suggested_skills = clause_plan.suggested_tools if clause_plan and clause_plan.suggested_tools else required_skills
-
-    primary_structure = state.get("primary_structure")
-    settings = get_settings()
-    use_react = bool(getattr(settings, "use_react_agent", False))
-    react_max_iterations = int(getattr(settings, "react_max_iterations", 5) or 5)
-    max_iterations = clause_plan.max_iterations if clause_plan else react_max_iterations
-    llm_client = _get_llm_client()
-
-    if use_react and llm_client and dispatcher and primary_structure:
-        try:
-            return await _run_react_branch(
-                llm_client=llm_client,
-                dispatcher=dispatcher,
-                clause_id=clause_id,
-                clause_name=clause_name,
-                description=description,
-                priority=priority,
-                our_party=our_party,
-                language=language,
-                primary_structure=primary_structure,
-                state=state,
-                suggested_skills=suggested_skills,
-                max_iterations=max_iterations,
-                temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
-            )
-        except Exception as exc:
-            logger.warning("ReAct Agent 失败 (clause=%s)，回退到硬编码模式: %s", clause_id, exc)
-
     skill_context: Dict[str, Any] = {}
 
     if dispatcher and primary_structure:
@@ -526,6 +493,7 @@ async def node_clause_analyze(
         clause_text = f"{clause_name}\n{description}".strip() or clause_id
 
     risks: List[Dict[str, Any]] = []
+    llm_client = _get_llm_client()
     if llm_client:
         try:
             messages = build_clause_analyze_messages(
@@ -568,6 +536,121 @@ async def node_clause_analyze(
         "agent_messages": None,
         "clause_retry_count": 0,
     }
+
+
+async def _analyze_gen3(
+    *,
+    state: ReviewGraphState,
+    dispatcher: SkillDispatcher | None,
+    clause_id: str,
+    clause_name: str,
+    description: str,
+    priority: str,
+    our_party: str,
+    language: str,
+    primary_structure: Any,
+    required_skills: list[str],
+) -> Dict[str, Any]:
+    llm_client = _get_llm_client()
+    if not llm_client or not dispatcher or not primary_structure:
+        logger.warning(
+            "gen3 模式缺少必要组件 (llm=%s, dispatcher=%s, structure=%s)，返回空结果",
+            bool(llm_client),
+            bool(dispatcher),
+            bool(primary_structure),
+        )
+        return {
+            "current_clause_id": clause_id,
+            "current_clause_text": "",
+            "current_risks": [],
+            "current_skill_context": {},
+            "current_diffs": [],
+            "agent_messages": None,
+            "clause_retry_count": 0,
+        }
+
+    settings = get_settings()
+    clause_plan = _get_clause_plan(state, clause_id)
+    suggested_tools = required_skills
+    max_iterations = int(getattr(settings, "react_max_iterations", 5) or 5)
+    if clause_plan:
+        suggested_tools = clause_plan.suggested_tools or required_skills
+        max_iterations = int(clause_plan.max_iterations or max_iterations)
+
+    try:
+        return await _run_react_branch(
+            llm_client=llm_client,
+            dispatcher=dispatcher,
+            clause_id=clause_id,
+            clause_name=clause_name,
+            description=description,
+            priority=priority,
+            our_party=our_party,
+            language=language,
+            primary_structure=primary_structure,
+            state=state,
+            suggested_skills=suggested_tools,
+            max_iterations=max_iterations,
+            temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
+        )
+    except Exception as exc:
+        logger.error("gen3 ReAct Agent 执行失败 (clause=%s): %s", clause_id, exc)
+        return {
+            "current_clause_id": clause_id,
+            "current_clause_text": "",
+            "current_risks": [],
+            "current_skill_context": {},
+            "current_diffs": [],
+            "agent_messages": None,
+            "clause_retry_count": 0,
+            "error": f"ReAct Agent 失败: {exc}",
+        }
+
+
+async def node_clause_analyze(
+    state: ReviewGraphState, dispatcher: SkillDispatcher | None = None
+) -> Dict[str, Any]:
+    checklist = state.get("review_checklist", [])
+    index = state.get("current_clause_index", 0)
+    if index >= len(checklist):
+        return {}
+
+    item = _as_dict(checklist[index])
+    clause_id = item.get("clause_id", "")
+    clause_name = item.get("clause_name", "")
+    description = item.get("description", "")
+    priority = item.get("priority", "medium")
+    our_party = state.get("our_party", "")
+    language = state.get("language", "en")
+    required_skills = list(item.get("required_skills", []) or [])
+    primary_structure = state.get("primary_structure")
+    settings = get_settings()
+    mode = get_execution_mode(settings)
+    if mode == ExecutionMode.GEN3:
+        return await _analyze_gen3(
+            state=state,
+            dispatcher=dispatcher,
+            clause_id=clause_id,
+            clause_name=clause_name,
+            description=description,
+            priority=priority,
+            our_party=our_party,
+            language=language,
+            primary_structure=primary_structure,
+            required_skills=required_skills,
+        )
+    return await _analyze_legacy(
+        state=state,
+        dispatcher=dispatcher,
+        clause_id=clause_id,
+        clause_name=clause_name,
+        description=description,
+        priority=priority,
+        our_party=our_party,
+        language=language,
+        primary_structure=primary_structure,
+        required_skills=required_skills,
+    )
 
 
 async def node_clause_generate_diffs(state: ReviewGraphState) -> Dict[str, Any]:
@@ -706,9 +789,9 @@ async def node_save_clause(state: ReviewGraphState) -> Dict[str, Any]:
     }
 
     settings = get_settings()
-    use_orchestrator = bool(getattr(settings, "use_orchestrator", False))
+    mode = get_execution_mode(settings)
     review_plan_raw = state.get("review_plan")
-    if use_orchestrator and isinstance(review_plan_raw, dict):
+    if mode == ExecutionMode.GEN3 and isinstance(review_plan_raw, dict):
         llm_client = _get_llm_client()
         try:
             plan = ReviewPlan.model_validate(review_plan_raw)
@@ -851,7 +934,7 @@ def build_review_graph(
 
     dispatcher = _create_dispatcher(domain_id=domain_id)
     settings = get_settings()
-    use_orchestrator = bool(getattr(settings, "use_orchestrator", False))
+    mode = get_execution_mode(settings)
 
     async def _node_clause_analyze(state: ReviewGraphState):
         return await node_clause_analyze(state, dispatcher=dispatcher)
@@ -863,7 +946,7 @@ def build_review_graph(
 
     graph.add_node("init", node_init)
     graph.add_node("parse_document", node_parse_document)
-    if use_orchestrator:
+    if mode == ExecutionMode.GEN3:
         graph.add_node("plan_review", _node_plan_review)
     graph.add_node("clause_analyze", _node_clause_analyze)
     graph.add_node("clause_generate_diffs", node_clause_generate_diffs)
@@ -874,7 +957,7 @@ def build_review_graph(
 
     graph.set_entry_point("init")
     graph.add_edge("init", "parse_document")
-    if use_orchestrator:
+    if mode == ExecutionMode.GEN3:
         graph.add_edge("parse_document", "plan_review")
         graph.add_conditional_edges(
             "plan_review",
@@ -887,7 +970,7 @@ def build_review_graph(
             route_next_clause_or_end,
             {"clause_analyze": "clause_analyze", "summarize": "summarize"},
         )
-    if use_orchestrator:
+    if mode == ExecutionMode.GEN3:
         graph.add_conditional_edges(
             "clause_analyze",
             route_after_analyze,
