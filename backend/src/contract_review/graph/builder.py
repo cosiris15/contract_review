@@ -151,7 +151,22 @@ def _get_llm_client() -> LLMClient | None:
 
 def _create_dispatcher(domain_id: str | None = None) -> SkillDispatcher | None:
     try:
-        dispatcher = SkillDispatcher()
+        settings = get_settings()
+        refly_client = None
+        if settings.refly.enabled and settings.refly.api_key:
+            from ..skills.refly_client import ReflyClient, ReflyClientConfig
+
+            refly_client = ReflyClient(
+                ReflyClientConfig(
+                    base_url=settings.refly.base_url,
+                    api_key=settings.refly.api_key,
+                    timeout=settings.refly.timeout,
+                    poll_interval=settings.refly.poll_interval,
+                    max_poll_attempts=settings.refly.max_poll_attempts,
+                )
+            )
+
+        dispatcher = SkillDispatcher(refly_client=refly_client)
         for skill in _GENERIC_SKILLS:
             try:
                 dispatcher.register(skill)
@@ -162,6 +177,9 @@ def _create_dispatcher(domain_id: str | None = None) -> SkillDispatcher | None:
             plugin = get_domain_plugin(domain_id)
             if plugin and plugin.domain_skills:
                 for skill in plugin.domain_skills:
+                    if skill.backend == SkillBackend.REFLY and not refly_client:
+                        logger.debug("跳过 Refly Skill '%s'（Refly 未启用）", skill.skill_id)
+                        continue
                     try:
                         dispatcher.register(skill)
                     except Exception as exc:
@@ -225,6 +243,122 @@ def _build_skill_input(
         return ExtractFinancialTermsInput(
             clause_id=clause_id,
             document_structure=primary_structure,
+        )
+
+    if skill_id == "fidic_merge_gc_pc":
+        from ..skills.fidic.merge_gc_pc import MergeGcPcInput
+
+        gc_baseline = get_baseline_text(state.get("domain_id", ""), clause_id) or ""
+        return MergeGcPcInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            gc_baseline=gc_baseline,
+        )
+
+    if skill_id == "fidic_calculate_time_bar":
+        from ..skills.fidic.time_bar import CalculateTimeBarInput
+
+        return CalculateTimeBarInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
+
+    if skill_id == "fidic_check_pc_consistency":
+        findings = state.get("findings", {})
+        pc_clauses = []
+        for cid, finding in findings.items():
+            row = _as_dict(finding)
+            skills_data = row.get("skill_context", {})
+            merge_data = _as_dict(skills_data.get("fidic_merge_gc_pc"))
+            mod_type = merge_data.get("modification_type", "")
+            if mod_type in {"modified", "added"}:
+                pc_clauses.append(
+                    {
+                        "clause_id": cid,
+                        "text": merge_data.get("pc_text", ""),
+                        "modification_type": mod_type,
+                    }
+                )
+        return GenericSkillInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            state_snapshot={
+                "pc_clauses": pc_clauses,
+                "focus_clause_id": clause_id,
+                "domain_id": state.get("domain_id", ""),
+            },
+        )
+
+    if skill_id == "fidic_search_er":
+        clause_text = _extract_clause_text(primary_structure, clause_id)
+        query = " ".join(
+            part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
+            if part
+        )
+        return GenericSkillInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            state_snapshot={
+                "query": query or clause_id,
+                "top_k": 5,
+                "domain_id": state.get("domain_id", ""),
+            },
+        )
+
+    if skill_id == "spa_extract_conditions":
+        from ..skills.sha_spa.extract_conditions import ExtractConditionsInput
+
+        return ExtractConditionsInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
+
+    if skill_id == "spa_extract_reps_warranties":
+        from ..skills.sha_spa.extract_reps_warranties import ExtractRepsWarrantiesInput
+
+        return ExtractRepsWarrantiesInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
+
+    if skill_id == "spa_indemnity_analysis":
+        from ..skills.sha_spa.indemnity_analysis import IndemnityAnalysisInput
+
+        return IndemnityAnalysisInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+        )
+
+    if skill_id == "sha_governance_check":
+        clause_text = _extract_clause_text(primary_structure, clause_id)
+        return GenericSkillInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            state_snapshot={
+                "primary_clause": {
+                    "clause_id": clause_id,
+                    "text": clause_text,
+                    "document_type": "SHA",
+                },
+                "our_party": state.get("our_party", ""),
+                "domain_id": state.get("domain_id", ""),
+            },
+        )
+
+    if skill_id == "transaction_doc_cross_check":
+        clause_text = _extract_clause_text(primary_structure, clause_id)
+        return GenericSkillInput(
+            clause_id=clause_id,
+            document_structure=primary_structure,
+            state_snapshot={
+                "primary_clause": {
+                    "clause_id": clause_id,
+                    "text": clause_text,
+                    "document_type": state.get("domain_subtype", "SPA").upper(),
+                },
+                "check_type": "rw_vs_disclosure",
+                "domain_id": state.get("domain_id", ""),
+            },
         )
 
     return GenericSkillInput(
@@ -332,6 +466,7 @@ async def node_clause_analyze(
                 priority=priority,
                 clause_text=clause_text,
                 skill_context=skill_context,
+                domain_id=state.get("domain_id"),
             )
             response = await llm_client.chat(messages)
             raw_risks = parse_json_response(response, expect_list=True)
@@ -358,6 +493,7 @@ async def node_clause_analyze(
         "current_clause_text": clause_text,
         "current_risks": risks,
         "current_diffs": [],
+        "current_skill_context": skill_context,
         "clause_retry_count": 0,
     }
 
@@ -467,6 +603,7 @@ async def node_save_clause(state: ReviewGraphState) -> Dict[str, Any]:
     clause_id = state.get("current_clause_id", "")
     risks = state.get("current_risks", [])
     diffs = state.get("current_diffs", [])
+    skill_context = state.get("current_skill_context", {})
     user_decisions = state.get("user_decisions", {})
 
     approved_diffs = []
@@ -481,6 +618,7 @@ async def node_save_clause(state: ReviewGraphState) -> Dict[str, Any]:
         "clause_id": clause_id,
         "risks": risks,
         "diffs": approved_diffs,
+        "skill_context": skill_context,
         "completed": True,
     }
 

@@ -36,6 +36,7 @@ class GeminiSettings(BaseModel):
 class ReflySettings(BaseModel):
     """Refly API 配置"""
 
+    enabled: bool = False
     base_url: str = "https://api.refly.ai"
     api_key: str = ""
     timeout: int = 120
@@ -104,6 +105,9 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
     data["gemini"] = gemini_cfg
 
     refly_cfg = data.get("refly", {})
+    refly_enabled = os.getenv("REFLY_ENABLED", None)
+    if refly_enabled is not None:
+        refly_cfg["enabled"] = str(refly_enabled).strip().lower() in {"1", "true", "yes", "on"}
     refly_api_key = os.getenv("REFLY_API_KEY", refly_cfg.get("api_key", ""))
     if refly_api_key:
         refly_cfg["api_key"] = refly_api_key

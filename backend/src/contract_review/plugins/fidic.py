@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..models import DocumentParserConfig, ReviewChecklistItem
+from ..skills.fidic.baseline_silver_book import FIDIC_SILVER_BOOK_2017_BASELINE
 from ..skills.schema import SkillBackend, SkillRegistration
 from .registry import DomainPlugin
 
@@ -23,6 +24,8 @@ FIDIC_DOMAIN_SKILLS: list[SkillRegistration] = [
         output_schema=None,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.fidic.merge_gc_pc.merge",
+        domain="fidic",
+        category="comparison",
     ),
     SkillRegistration(
         skill_id="fidic_calculate_time_bar",
@@ -32,6 +35,8 @@ FIDIC_DOMAIN_SKILLS: list[SkillRegistration] = [
         output_schema=None,
         backend=SkillBackend.LOCAL,
         local_handler="contract_review.skills.fidic.time_bar.calculate",
+        domain="fidic",
+        category="extraction",
     ),
     SkillRegistration(
         skill_id="fidic_search_er",
@@ -41,6 +46,19 @@ FIDIC_DOMAIN_SKILLS: list[SkillRegistration] = [
         output_schema=None,
         backend=SkillBackend.REFLY,
         refly_workflow_id="refly_wf_fidic_search_er",
+        domain="fidic",
+        category="validation",
+    ),
+    SkillRegistration(
+        skill_id="fidic_check_pc_consistency",
+        name="PC 一致性检查",
+        description="检查 PC 各条款之间的内在一致性",
+        input_schema=None,
+        output_schema=None,
+        backend=SkillBackend.REFLY,
+        refly_workflow_id="refly_wf_fidic_pc_consistency",
+        domain="fidic",
+        category="validation",
     ),
 ]
 
@@ -67,7 +85,7 @@ FIDIC_PLUGIN = DomainPlugin(
     domain_skills=FIDIC_DOMAIN_SKILLS,
     review_checklist=FIDIC_SILVER_BOOK_CHECKLIST,
     document_parser_config=FIDIC_PARSER_CONFIG,
-    baseline_texts={},
+    baseline_texts=FIDIC_SILVER_BOOK_2017_BASELINE,
 )
 
 

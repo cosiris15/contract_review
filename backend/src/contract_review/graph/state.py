@@ -37,6 +37,7 @@ class ReviewGraphState(TypedDict, total=False):
     current_clause_text: Optional[str]
     current_risks: List[RiskPoint]
     current_diffs: List[DocumentDiff]
+    current_skill_context: Dict[str, dict]
 
     validation_result: Optional[str]
     clause_retry_count: int

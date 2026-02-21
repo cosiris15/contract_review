@@ -64,3 +64,13 @@ class TestBuildSkillInput:
             {},
         )
         assert result is None
+
+    def test_refly_skill_specific_input_snapshot(self):
+        result = _build_skill_input(
+            "fidic_search_er",
+            "20.1",
+            {"clauses": [{"clause_id": "20.1", "text": "within 28 days", "children": []}]},
+            {"domain_id": "fidic", "material_type": "contract"},
+        )
+        assert isinstance(result, GenericSkillInput)
+        assert "query" in result.state_snapshot

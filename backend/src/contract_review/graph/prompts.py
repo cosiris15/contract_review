@@ -61,6 +61,32 @@ SUMMARIZE_SYSTEM = """你是一位法务审阅专家，请基于审查结果生�
 4. 后续建议
 """
 
+FIDIC_DOMAIN_INSTRUCTION = """
+【FIDIC 专项审查指引】
+请重点关注：
+1. PC 是否删除或弱化 GC 中对我方有利条款；
+2. 时效（Time Bar）是否过短、是否存在逾期丧权；
+3. 风险分配是否明显向我方转移；
+4. 付款、索赔、责任限制与争议条款是否形成不利联动。
+
+{merge_context}
+{time_bar_context}
+{er_context}
+"""
+
+SHA_SPA_DOMAIN_INSTRUCTION = """
+【SHA/SPA 专项审查指引】
+请重点关注：
+1. 先决条件是否可控，是否包含不合理 MAC 门槛；
+2. 陈述与保证是否被过度限定（knowledge/materiality/disclosure）；
+3. 赔偿机制（cap、basket、survival）是否显著不利；
+4. 治理结构与退出机制是否保障我方核心权利。
+
+{conditions_context}
+{rw_context}
+{indemnity_context}
+"""
+
 
 def _jurisdiction_instruction(language: str) -> str:
     return JURISDICTION_INSTRUCTIONS.get(language, JURISDICTION_INSTRUCTIONS.get("en", ""))
@@ -87,6 +113,85 @@ def _format_skill_context(skill_context: Dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
+def _build_fidic_instruction(skill_context: Dict[str, Any]) -> str:
+    merge_data = skill_context.get("fidic_merge_gc_pc", {})
+    time_bar_data = skill_context.get("fidic_calculate_time_bar", {})
+    er_data = skill_context.get("fidic_search_er", {})
+
+    merge_context = ""
+    if isinstance(merge_data, dict):
+        modification_type = merge_data.get("modification_type", "")
+        if modification_type == "modified":
+            merge_context = (
+                "【GC/PC 对比】该条款已被 PC 修改。"
+                f"变更摘要：{merge_data.get('changes_summary', '')}"
+            )
+        elif modification_type == "deleted":
+            merge_context = "【GC/PC 对比】该条款在 PC 中被删除。"
+
+    time_bar_context = ""
+    if isinstance(time_bar_data, dict) and time_bar_data.get("total_time_bars", 0) > 0:
+        has_strict = "⚠️ 检出严格时效（逾期丧权）" if time_bar_data.get("has_strict_time_bar") else ""
+        time_bar_context = (
+            f"【时效分析】共识别 {time_bar_data.get('total_time_bars', 0)} 个时效要求。{has_strict}"
+        )
+
+    er_context = ""
+    if isinstance(er_data, dict) and er_data.get("relevant_sections"):
+        er_context = f"【ER 检索】关联段落数量：{len(er_data.get('relevant_sections', []))}"
+
+    return FIDIC_DOMAIN_INSTRUCTION.format(
+        merge_context=merge_context,
+        time_bar_context=time_bar_context,
+        er_context=er_context,
+    ).strip()
+
+
+def _build_sha_spa_instruction(skill_context: Dict[str, Any]) -> str:
+    conditions_data = skill_context.get("spa_extract_conditions", {})
+    rw_data = skill_context.get("spa_extract_reps_warranties", {})
+    indemnity_data = skill_context.get("spa_indemnity_analysis", {})
+
+    conditions_context = ""
+    if isinstance(conditions_data, dict) and conditions_data.get("total_conditions", 0) > 0:
+        conditions_context = (
+            "【先决条件】"
+            f"总计 {conditions_data.get('total_conditions', 0)} 项，"
+            f"买方 {conditions_data.get('buyer_conditions', 0)} 项，"
+            f"卖方 {conditions_data.get('seller_conditions', 0)} 项。"
+        )
+
+    rw_context = ""
+    if isinstance(rw_data, dict) and rw_data.get("total_items", 0) > 0:
+        rw_context = (
+            "【R&W】"
+            f"共 {rw_data.get('total_items', 0)} 项，"
+            f"knowledge 限定 {rw_data.get('knowledge_qualified_count', 0)} 项，"
+            f"materiality 限定 {rw_data.get('materiality_qualified_count', 0)} 项。"
+        )
+
+    indemnity_context = ""
+    if isinstance(indemnity_data, dict):
+        parts = []
+        if indemnity_data.get("has_cap"):
+            cap = indemnity_data.get("cap_amount") or indemnity_data.get("cap_percentage", "")
+            parts.append(f"cap={cap}")
+        if indemnity_data.get("has_basket"):
+            parts.append(
+                f"basket={indemnity_data.get('basket_amount', '')}({indemnity_data.get('basket_type', '')})"
+            )
+        if indemnity_data.get("survival_period"):
+            parts.append(f"survival={indemnity_data.get('survival_period', '')}")
+        if parts:
+            indemnity_context = f"【赔偿参数】{'；'.join(parts)}"
+
+    return SHA_SPA_DOMAIN_INSTRUCTION.format(
+        conditions_context=conditions_context,
+        rw_context=rw_context,
+        indemnity_context=indemnity_context,
+    ).strip()
+
+
 def build_clause_analyze_messages(
     *,
     language: str,
@@ -97,12 +202,17 @@ def build_clause_analyze_messages(
     priority: str,
     clause_text: str,
     skill_context: Dict[str, Any] | None = None,
+    domain_id: str | None = None,
 ) -> List[Dict[str, str]]:
     system = CLAUSE_ANALYZE_SYSTEM.format(
         anti_injection=_anti_injection_instruction(language, our_party),
         jurisdiction_instruction=_jurisdiction_instruction(language),
         our_party=our_party,
     )
+    if domain_id == "fidic":
+        system = f"{system}\n\n{_build_fidic_instruction(skill_context or {})}"
+    elif domain_id == "sha_spa":
+        system = f"{system}\n\n{_build_sha_spa_instruction(skill_context or {})}"
     user = (
         f"【条款信息】\n"
         f"- 条款编号：{clause_id}\n"
