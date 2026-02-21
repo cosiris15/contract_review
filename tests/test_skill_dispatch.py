@@ -1,9 +1,11 @@
 import pytest
+from pydantic import BaseModel
 
 pytest.importorskip("langgraph")
 
-from contract_review.graph.builder import _build_skill_input, _create_dispatcher
-from contract_review.skills.schema import GenericSkillInput
+from contract_review.graph.builder import _create_dispatcher
+from contract_review.skills.dispatcher import _import_handler
+from contract_review.skills.schema import SkillBackend, SkillRegistration
 
 
 class TestCreateDispatcher:
@@ -30,201 +32,159 @@ class TestCreateDispatcher:
         assert "get_clause_context" in dispatcher.skill_ids
 
 
-class TestBuildSkillInput:
-    def test_get_clause_context_input(self):
-        result = _build_skill_input(
-            "get_clause_context",
-            "14.2",
-            {
-                "clauses": [],
-                "document_id": "test",
-                "structure_type": "generic",
-                "definitions": {},
-                "cross_references": [],
-                "total_clauses": 0,
+class TestPrepareAndCallAllSkills:
+    @pytest.mark.parametrize("domain_id", [None, "fidic", "sha_spa"])
+    def test_all_registered_skills_have_prepare_input_fn(self, domain_id):
+        dispatcher = _create_dispatcher(domain_id=domain_id)
+        assert dispatcher is not None
+        for skill_id in dispatcher.skill_ids:
+            reg = dispatcher.get_registration(skill_id)
+            assert reg is not None
+            if reg.status == "active":
+                assert reg.prepare_input_fn, f"Skill '{skill_id}' 缺少 prepare_input_fn"
+
+    @pytest.mark.parametrize("domain_id", [None, "fidic", "sha_spa"])
+    def test_prepare_input_callable_for_all_registered_skills(self, domain_id):
+        dispatcher = _create_dispatcher(domain_id=domain_id)
+        assert dispatcher is not None
+
+        primary_structure = {
+            "document_id": "d1",
+            "structure_type": "generic",
+            "definitions": {},
+            "cross_references": [],
+            "total_clauses": 1,
+            "clauses": [
+                {
+                    "clause_id": "4.1",
+                    "title": "承包商义务",
+                    "text": "承包商应按照合同要求完成工程。",
+                    "children": [],
+                }
+            ]
+        }
+        base_state = {
+            "task_id": "test_001",
+            "our_party": "承包商",
+            "language": "zh-CN",
+            "domain_id": domain_id or "",
+            "domain_subtype": "yellow_book",
+            "material_type": "contract",
+            "documents": [
+                {
+                    "role": "reference",
+                    "filename": "ER_requirements.docx",
+                    "structure": {
+                        "clauses": [{"clause_id": "ER-1", "text": "notice requirement", "children": []}]
+                    },
+                }
+            ],
+            "findings": {
+                "4.1": {
+                    "skill_context": {
+                        "fidic_merge_gc_pc": {
+                            "modification_type": "modified",
+                            "pc_text": "updated obligation",
+                        }
+                    }
+                }
             },
-            {"our_party": "承包商", "language": "zh-CN"},
-        )
-        assert result is not None
-        assert result.clause_id == "14.2"
+            "criteria_data": [{"criterion_id": "RC-1", "clause_ref": "4.1", "review_point": "义务范围"}],
+            "criteria_file_path": "/tmp/criteria.xlsx",
+        }
 
-    def test_unknown_skill_returns_generic_input(self):
-        result = _build_skill_input(
-            "some_future_skill",
-            "1.1",
+        for skill_id in dispatcher.skill_ids:
+            reg = dispatcher.get_registration(skill_id)
+            assert reg is not None
+            if not reg.prepare_input_fn:
+                continue
+            prepare_fn = _import_handler(reg.prepare_input_fn)
+            input_data = prepare_fn("4.1", primary_structure, base_state)
+            assert input_data is not None, f"Skill '{skill_id}' prepare_input 返回 None"
+            assert isinstance(input_data, BaseModel), f"Skill '{skill_id}' prepare_input 未返回 BaseModel"
+            assert getattr(input_data, "clause_id", None) == "4.1"
+
+    @pytest.mark.asyncio
+    async def test_prepare_and_call_generic_fallback_does_not_crash(self):
+        dispatcher = _create_dispatcher()
+        assert dispatcher is not None
+
+        fake_reg = SkillRegistration(
+            skill_id="fake_skill",
+            name="Fake",
+            description="测试用",
+            backend=SkillBackend.LOCAL,
+            local_handler="contract_review.skills.local.clause_context.get_clause_context",
+            prepare_input_fn=None,
+        )
+        dispatcher.register(fake_reg)
+
+        result = await dispatcher.prepare_and_call(
+            "fake_skill",
+            "4.1",
             {"clauses": []},
-            {"our_party": "承包商"},
-        )
-        assert isinstance(result, GenericSkillInput)
-        assert result.clause_id == "1.1"
-
-    def test_invalid_structure_returns_none(self):
-        result = _build_skill_input(
-            "get_clause_context",
-            "1.1",
-            "not_a_dict",
             {},
         )
-        assert result is None
+        assert result is not None
+        assert result.skill_id == "fake_skill"
 
-    def test_refly_skill_specific_input_snapshot(self):
-        from contract_review.skills.fidic.search_er import SearchErInput
+    def test_sha_spa_prepare_inputs_cover_all_domain_skills(self):
+        from contract_review.plugins.sha_spa import register_sha_spa_plugin
 
-        result = _build_skill_input(
-            "fidic_search_er",
-            "20.1",
-            {"clauses": [{"clause_id": "20.1", "text": "within 28 days", "children": []}]},
-            {
-                "domain_id": "fidic",
-                "material_type": "contract",
-                "documents": [
-                    {
-                        "role": "reference",
-                        "filename": "ER_requirements.docx",
-                        "structure": {"clauses": [{"clause_id": "ER-1", "text": "notice requirement", "children": []}]},
-                    }
-                ],
-            },
-        )
-        assert isinstance(result, SearchErInput)
-        assert result.query
-        assert result.er_structure is not None
+        register_sha_spa_plugin()
+        dispatcher = _create_dispatcher(domain_id="sha_spa")
+        assert dispatcher is not None
 
-    def test_transaction_cross_check_uses_semantic_search_input(self):
-        from contract_review.skills.local.semantic_search import SearchReferenceDocInput
-
-        result = _build_skill_input(
+        required_local_skills = [
+            "spa_extract_conditions",
+            "spa_extract_reps_warranties",
+            "spa_indemnity_analysis",
             "transaction_doc_cross_check",
-            "4",
-            {"clauses": [{"clause_id": "4", "text": "representations and warranties", "children": []}]},
-            {
-                "domain_id": "sha_spa",
-                "material_type": "spa",
-                "documents": [
-                    {
-                        "role": "reference",
-                        "filename": "Disclosure Letter.docx",
-                        "structure": {"clauses": [{"clause_id": "DL-1", "text": "litigation disclosure", "children": []}]},
-                    }
-                ],
-            },
-        )
-        assert isinstance(result, SearchReferenceDocInput)
-        assert result.reference_structure is not None
-        assert result.query
-
-    def test_load_review_criteria_input(self):
-        from contract_review.skills.local.load_review_criteria import LoadReviewCriteriaInput
-
-        result = _build_skill_input(
-            "load_review_criteria",
-            "4.1",
-            {"clauses": [{"clause_id": "4.1", "text": "obligations", "children": []}]},
-            {
-                "criteria_data": [{"criterion_id": "RC-1", "review_point": "义务范围不应超出原文"}],
-                "criteria_file_path": "/tmp/criteria.xlsx",
-            },
-        )
-        assert isinstance(result, LoadReviewCriteriaInput)
-        assert result.criteria_file_path.endswith("criteria.xlsx")
-        assert len(result.criteria_data) == 1
-
-    def test_assess_deviation_input(self):
-        from contract_review.skills.local.assess_deviation import AssessDeviationInput
-
-        result = _build_skill_input(
-            "assess_deviation",
-            "4.1",
-            {"clauses": [{"clause_id": "4.1", "text": "contractor obligations", "children": []}]},
-            {
-                "domain_id": "fidic",
-                "criteria_data": [
-                    {"criterion_id": "RC-1", "clause_ref": "4.1", "review_point": "义务范围不应扩张"}
-                ],
-            },
-        )
-        assert isinstance(result, AssessDeviationInput)
-        assert result.clause_id == "4.1"
-        assert result.clause_text
-        assert result.domain_id == "fidic"
-        assert len(result.review_criteria) == 1
-
-
-class TestPrepareInputFallback:
-    def test_prepare_input_fn_takes_priority(self, monkeypatch):
-        dispatcher = _create_dispatcher()
-        assert dispatcher is not None
-        reg = dispatcher.get_registration("get_clause_context")
-        assert reg is not None
-
-        monkeypatch.setattr(reg, "prepare_input_fn", "x.y.prepare")
-
-        class _Mod:
-            @staticmethod
-            def prepare(_clause_id, _primary_structure, _state):
-                return GenericSkillInput(
-                    clause_id="from_prepare",
-                    document_structure={},
-                    state_snapshot={"source": "prepare"},
-                )
-
-        monkeypatch.setattr("contract_review.graph.builder.importlib.import_module", lambda _path: _Mod())
-        result = _build_skill_input(
-            "get_clause_context",
-            "4.1",
-            {"clauses": [{"clause_id": "4.1", "text": "test", "children": []}]},
-            {"our_party": "承包商", "language": "zh-CN"},
-            dispatcher=dispatcher,
-        )
-        assert isinstance(result, GenericSkillInput)
-        assert result.clause_id == "from_prepare"
-
-    def test_fallback_when_no_prepare_input(self):
+        ]
+        optional_refly_skills = ["sha_governance_check"]
+        state = {
+            "our_party": "买方",
+            "domain_id": "sha_spa",
+            "material_type": "sha",
+            "documents": [
+                {
+                    "role": "reference",
+                    "filename": "disclosure_letter.docx",
+                    "structure": {
+                        "clauses": [{"clause_id": "D-1", "text": "pending litigation", "children": []}]
+                    },
+                }
+            ],
+        }
         structure = {
-            "clauses": [{"clause_id": "4.1", "title": "Test", "text": "test", "children": []}],
-            "document_id": "test",
+            "document_id": "d1",
             "structure_type": "generic",
             "definitions": {},
             "cross_references": [],
             "total_clauses": 1,
+            "clauses": [
+                {"clause_id": "5.1", "title": "先决条件", "text": "交割先决条件如下", "children": []}
+            ]
         }
-        result = _build_skill_input(
-            "get_clause_context",
-            "4.1",
-            structure,
-            {"our_party": "承包商", "language": "zh-CN"},
-        )
-        assert result is not None
-        assert result.clause_id == "4.1"
 
-    def test_fallback_when_prepare_input_fails(self, monkeypatch):
-        dispatcher = _create_dispatcher()
-        assert dispatcher is not None
-        reg = dispatcher.get_registration("get_clause_context")
-        assert reg is not None
-        monkeypatch.setattr(reg, "prepare_input_fn", "x.y.prepare")
+        for skill_id in required_local_skills:
+            reg = dispatcher.get_registration(skill_id)
+            assert reg is not None, f"Skill '{skill_id}' 未注册"
+            assert reg.prepare_input_fn, f"Skill '{skill_id}' 缺少 prepare_input_fn"
+            prepare_fn = _import_handler(reg.prepare_input_fn)
+            input_data = prepare_fn("5.1", structure, state)
+            assert input_data is not None
+            assert getattr(input_data, "clause_id", None) == "5.1"
 
-        def _raise(_path):
-            raise ImportError("boom")
-
-        monkeypatch.setattr("contract_review.graph.builder.importlib.import_module", _raise)
-        structure = {
-            "clauses": [{"clause_id": "4.1", "title": "Test", "text": "test", "children": []}],
-            "document_id": "test",
-            "structure_type": "generic",
-            "definitions": {},
-            "cross_references": [],
-            "total_clauses": 1,
-        }
-        result = _build_skill_input(
-            "get_clause_context",
-            "4.1",
-            structure,
-            {"our_party": "承包商", "language": "zh-CN"},
-            dispatcher=dispatcher,
-        )
-        assert result is not None
-        assert result.clause_id == "4.1"
+        for skill_id in optional_refly_skills:
+            reg = dispatcher.get_registration(skill_id)
+            if reg is None:
+                continue
+            assert reg.prepare_input_fn, f"Skill '{skill_id}' 缺少 prepare_input_fn"
+            prepare_fn = _import_handler(reg.prepare_input_fn)
+            input_data = prepare_fn("5.1", structure, state)
+            assert input_data is not None
+            assert getattr(input_data, "clause_id", None) == "5.1"
 
 
 class TestDispatcherToolDefinitions:
@@ -279,6 +239,7 @@ class TestDispatcherPrepareAndCall:
         reg = dispatcher.get_registration("cross_reference_check")
         assert reg is not None
         monkeypatch.setattr(reg, "prepare_input_fn", "x.y.prepare")
+
         def _raise(_path):
             raise ImportError("boom")
 

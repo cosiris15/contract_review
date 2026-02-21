@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -524,3 +525,54 @@ class TestRouteAfterAnalyze:
     def test_route_no_plan_defaults_to_diffs(self):
         state = {"current_clause_id": "1.1"}
         assert route_after_analyze(state) == "clause_generate_diffs"
+
+
+class TestClauseAnalyzeDispatcher:
+    @pytest.mark.asyncio
+    async def test_non_react_path_uses_prepare_and_call(self, monkeypatch):
+        from contract_review.graph.builder import node_clause_analyze
+
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(use_react_agent=False, react_max_iterations=5, react_temperature=0.1),
+        )
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: None)
+
+        class _Dispatcher:
+            def __init__(self):
+                self.skill_ids = ["get_clause_context", "resolve_definition"]
+                self.prepare_and_call = AsyncMock(
+                    side_effect=[
+                        SimpleNamespace(success=True, data={"context_text": "Clause text from skill"}),
+                        SimpleNamespace(success=True, data={"resolved_terms": []}),
+                    ]
+                )
+
+        dispatcher = _Dispatcher()
+        state = {
+            "review_checklist": [
+                {
+                    "clause_id": "4.1",
+                    "clause_name": "承包商义务",
+                    "description": "核查义务范围",
+                    "priority": "high",
+                    "required_skills": ["get_clause_context", "resolve_definition"],
+                }
+            ],
+            "current_clause_index": 0,
+            "our_party": "承包商",
+            "language": "zh-CN",
+            "primary_structure": {
+                "clauses": [{"clause_id": "4.1", "text": "contractor obligations", "children": []}]
+            },
+        }
+
+        result = await node_clause_analyze(state, dispatcher=dispatcher)
+        assert dispatcher.prepare_and_call.await_count == 2
+        dispatcher.prepare_and_call.assert_any_await(
+            "get_clause_context",
+            "4.1",
+            state["primary_structure"],
+            dict(state),
+        )
+        assert result["current_skill_context"]["get_clause_context"]["context_text"] == "Clause text from skill"

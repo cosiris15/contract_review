@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -13,7 +12,7 @@ from pydantic import BaseModel
 from ..config import get_settings
 from ..llm_client import LLMClient
 from ..models import generate_id
-from ..plugins.registry import get_baseline_text, get_domain_plugin
+from ..plugins.registry import get_domain_plugin
 from ..skills.dispatcher import SkillDispatcher
 from ..skills.local.assess_deviation import AssessDeviationInput
 from ..skills.local.clause_context import ClauseContextInput, ClauseContextOutput
@@ -23,7 +22,7 @@ from ..skills.local.extract_financial_terms import ExtractFinancialTermsInput
 from ..skills.local.load_review_criteria import LoadReviewCriteriaInput
 from ..skills.local.resolve_definition import ResolveDefinitionInput
 from ..skills.local.semantic_search import SearchReferenceDocInput
-from ..skills.schema import GenericSkillInput, SkillBackend, SkillRegistration
+from ..skills.schema import SkillBackend, SkillRegistration
 from .llm_utils import parse_json_response
 from .orchestrator import (
     ClauseAnalysisPlan,
@@ -219,26 +218,6 @@ def _normalize_risk_level(level: str | None) -> str:
     return "medium"
 
 
-def _match_criteria_for_clause(criteria_data: Any, clause_id: str) -> list[dict]:
-    if not isinstance(criteria_data, list):
-        return []
-
-    current = str(clause_id or "").strip()
-    if not current:
-        return []
-
-    matched: list[dict] = []
-    for row in criteria_data:
-        if not isinstance(row, dict):
-            continue
-        candidate = str(row.get("clause_ref", "") or "").strip()
-        if not candidate:
-            continue
-        if candidate == current or current.startswith(f"{candidate}.") or candidate.startswith(f"{current}."):
-            matched.append(row)
-    return matched
-
-
 def _get_llm_client() -> LLMClient | None:
     global _llm_client, _llm_init_warned
     if _llm_client is not None:
@@ -294,266 +273,6 @@ def _create_dispatcher(domain_id: str | None = None) -> SkillDispatcher | None:
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("创建 SkillDispatcher 失败，将跳过技能调用: %s", exc)
         return None
-
-
-def _build_skill_input(
-    skill_id: str,
-    clause_id: str,
-    primary_structure: Any,
-    state: ReviewGraphState,
-    dispatcher: SkillDispatcher | None = None,
-) -> BaseModel | None:
-    """Build per-skill input payload. Return None if input cannot be constructed."""
-    if dispatcher:
-        registration = dispatcher.get_registration(skill_id)
-        if registration and registration.prepare_input_fn:
-            try:
-                module_path, func_name = registration.prepare_input_fn.rsplit(".", 1)
-                prepare_fn = getattr(importlib.import_module(module_path), func_name)
-                prepared = prepare_fn(clause_id, primary_structure, dict(state))
-                if isinstance(prepared, BaseModel):
-                    return prepared
-            except Exception as exc:
-                logger.warning("prepare_input 调用失败 (skill=%s)，回退 fallback: %s", skill_id, exc)
-
-    if skill_id == "get_clause_context":
-        try:
-            return ClauseContextInput(
-                clause_id=clause_id,
-                document_structure=primary_structure,
-            )
-        except Exception:
-            return None
-
-    if skill_id == "resolve_definition":
-        from ..skills.local.resolve_definition import ResolveDefinitionInput
-
-        return ResolveDefinitionInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "compare_with_baseline":
-        from ..skills.local.compare_with_baseline import CompareWithBaselineInput
-
-        baseline_text = get_baseline_text(state.get("domain_id", ""), clause_id) or ""
-        return CompareWithBaselineInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            baseline_text=baseline_text,
-            state_snapshot={
-                "our_party": state.get("our_party", ""),
-                "language": state.get("language", "en"),
-                "domain_id": state.get("domain_id", ""),
-            },
-        )
-
-    if skill_id == "cross_reference_check":
-        from ..skills.local.cross_reference_check import CrossReferenceCheckInput
-
-        return CrossReferenceCheckInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "extract_financial_terms":
-        from ..skills.local.extract_financial_terms import ExtractFinancialTermsInput
-
-        return ExtractFinancialTermsInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "fidic_merge_gc_pc":
-        from ..skills.fidic.merge_gc_pc import MergeGcPcInput
-
-        gc_baseline = get_baseline_text(state.get("domain_id", ""), clause_id) or ""
-        return MergeGcPcInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            gc_baseline=gc_baseline,
-        )
-
-    if skill_id == "fidic_calculate_time_bar":
-        from ..skills.fidic.time_bar import CalculateTimeBarInput
-
-        return CalculateTimeBarInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "fidic_check_pc_consistency":
-        from ..skills.fidic.check_pc_consistency import CheckPcConsistencyInput, PcClause
-
-        findings = state.get("findings", {})
-        pc_clauses: list[PcClause] = []
-        for cid, finding in findings.items():
-            row = _as_dict(finding)
-            skills_data = row.get("skill_context", {})
-            merge_data = _as_dict(skills_data.get("fidic_merge_gc_pc"))
-            mod_type = merge_data.get("modification_type", "")
-            if mod_type in {"modified", "added"}:
-                pc_clauses.append(
-                    PcClause(
-                        clause_id=cid,
-                        text=merge_data.get("pc_text", ""),
-                        modification_type=mod_type,
-                    )
-                )
-        return CheckPcConsistencyInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            pc_clauses=pc_clauses,
-            focus_clause_id=clause_id,
-        )
-
-    if skill_id == "fidic_search_er":
-        from ..skills.fidic.search_er import SearchErInput
-
-        clause_text = _extract_clause_text(primary_structure, clause_id)
-        query = " ".join(
-            part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
-            if part
-        )
-        er_structure = None
-        for doc in state.get("documents", []):
-            doc_dict = _as_dict(doc)
-            role = str(doc_dict.get("role", "") or "").lower()
-            filename = str(doc_dict.get("filename", "") or "")
-            if role == "reference" and "er" in filename.lower():
-                er_structure = doc_dict.get("structure")
-                break
-
-        return SearchErInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            er_structure=er_structure,
-            query=query or clause_id,
-            top_k=5,
-        )
-
-    if skill_id == "search_reference_doc":
-        from ..skills.local.semantic_search import SearchReferenceDocInput
-
-        clause_text = _extract_clause_text(primary_structure, clause_id)
-        query = " ".join(
-            part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
-            if part
-        )
-        reference_structure = None
-        for doc in state.get("documents", []):
-            doc_dict = _as_dict(doc)
-            role = str(doc_dict.get("role", "") or "").lower()
-            if role == "reference":
-                reference_structure = doc_dict.get("structure")
-                break
-
-        return SearchReferenceDocInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            reference_structure=reference_structure,
-            query=query or clause_id,
-            top_k=5,
-        )
-
-    if skill_id == "load_review_criteria":
-        from ..skills.local.load_review_criteria import LoadReviewCriteriaInput
-
-        return LoadReviewCriteriaInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            criteria_data=state.get("criteria_data", []),
-            criteria_file_path=state.get("criteria_file_path", ""),
-        )
-
-    if skill_id == "assess_deviation":
-        from ..skills.local.assess_deviation import AssessDeviationInput
-
-        clause_text = _extract_clause_text(primary_structure, clause_id)
-        baseline_text = get_baseline_text(state.get("domain_id", ""), clause_id) or ""
-        review_criteria = _match_criteria_for_clause(state.get("criteria_data", []), clause_id)
-
-        return AssessDeviationInput(
-            clause_id=clause_id,
-            clause_text=clause_text,
-            baseline_text=baseline_text,
-            review_criteria=review_criteria,
-            domain_id=state.get("domain_id", ""),
-        )
-
-    if skill_id == "spa_extract_conditions":
-        from ..skills.sha_spa.extract_conditions import ExtractConditionsInput
-
-        return ExtractConditionsInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "spa_extract_reps_warranties":
-        from ..skills.sha_spa.extract_reps_warranties import ExtractRepsWarrantiesInput
-
-        return ExtractRepsWarrantiesInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "spa_indemnity_analysis":
-        from ..skills.sha_spa.indemnity_analysis import IndemnityAnalysisInput
-
-        return IndemnityAnalysisInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-        )
-
-    if skill_id == "sha_governance_check":
-        clause_text = _extract_clause_text(primary_structure, clause_id)
-        return GenericSkillInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            state_snapshot={
-                "primary_clause": {
-                    "clause_id": clause_id,
-                    "text": clause_text,
-                    "document_type": "SHA",
-                },
-                "our_party": state.get("our_party", ""),
-                "domain_id": state.get("domain_id", ""),
-            },
-        )
-
-    if skill_id == "transaction_doc_cross_check":
-        from ..skills.local.semantic_search import SearchReferenceDocInput
-
-        clause_text = _extract_clause_text(primary_structure, clause_id)
-        query = " ".join(
-            part for part in [clause_text[:500], state.get("material_type", "")]
-            if part
-        )
-        reference_structure = None
-        for doc in state.get("documents", []):
-            doc_dict = _as_dict(doc)
-            role = str(doc_dict.get("role", "") or "").lower()
-            if role == "reference":
-                reference_structure = doc_dict.get("structure")
-                break
-
-        return SearchReferenceDocInput(
-            clause_id=clause_id,
-            document_structure=primary_structure,
-            reference_structure=reference_structure,
-            query=query or clause_id,
-            top_k=5,
-        )
-
-    return GenericSkillInput(
-        clause_id=clause_id,
-        document_structure=primary_structure,
-        state_snapshot={
-            "our_party": state.get("our_party", ""),
-            "language": state.get("language", "en"),
-            "domain_id": state.get("domain_id", ""),
-        },
-    )
 
 
 async def node_init(state: ReviewGraphState) -> Dict[str, Any]:
@@ -784,16 +503,12 @@ async def node_clause_analyze(
                 logger.debug("Skill '%s' 未注册，跳过", skill_id)
                 continue
             try:
-                skill_input = _build_skill_input(
+                skill_result = await dispatcher.prepare_and_call(
                     skill_id,
                     clause_id,
                     primary_structure,
-                    state,
-                    dispatcher=dispatcher,
+                    dict(state),
                 )
-                if skill_input is None:
-                    continue
-                skill_result = await dispatcher.call(skill_id, skill_input)
                 if skill_result.success and skill_result.data:
                     skill_context[skill_id] = skill_result.data
             except Exception as exc:
