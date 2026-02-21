@@ -264,8 +264,10 @@ def _build_skill_input(
         )
 
     if skill_id == "fidic_check_pc_consistency":
+        from ..skills.fidic.check_pc_consistency import CheckPcConsistencyInput, PcClause
+
         findings = state.get("findings", {})
-        pc_clauses = []
+        pc_clauses: list[PcClause] = []
         for cid, finding in findings.items():
             row = _as_dict(finding)
             skills_data = row.get("skill_context", {})
@@ -273,36 +275,42 @@ def _build_skill_input(
             mod_type = merge_data.get("modification_type", "")
             if mod_type in {"modified", "added"}:
                 pc_clauses.append(
-                    {
-                        "clause_id": cid,
-                        "text": merge_data.get("pc_text", ""),
-                        "modification_type": mod_type,
-                    }
+                    PcClause(
+                        clause_id=cid,
+                        text=merge_data.get("pc_text", ""),
+                        modification_type=mod_type,
+                    )
                 )
-        return GenericSkillInput(
+        return CheckPcConsistencyInput(
             clause_id=clause_id,
             document_structure=primary_structure,
-            state_snapshot={
-                "pc_clauses": pc_clauses,
-                "focus_clause_id": clause_id,
-                "domain_id": state.get("domain_id", ""),
-            },
+            pc_clauses=pc_clauses,
+            focus_clause_id=clause_id,
         )
 
     if skill_id == "fidic_search_er":
+        from ..skills.fidic.search_er import SearchErInput
+
         clause_text = _extract_clause_text(primary_structure, clause_id)
         query = " ".join(
             part for part in [clause_text[:500], state.get("material_type", ""), state.get("domain_subtype", "")]
             if part
         )
-        return GenericSkillInput(
+        er_structure = None
+        for doc in state.get("documents", []):
+            doc_dict = _as_dict(doc)
+            role = str(doc_dict.get("role", "") or "").lower()
+            filename = str(doc_dict.get("filename", "") or "")
+            if role == "reference" and "er" in filename.lower():
+                er_structure = doc_dict.get("structure")
+                break
+
+        return SearchErInput(
             clause_id=clause_id,
             document_structure=primary_structure,
-            state_snapshot={
-                "query": query or clause_id,
-                "top_k": 5,
-                "domain_id": state.get("domain_id", ""),
-            },
+            er_structure=er_structure,
+            query=query or clause_id,
+            top_k=5,
         )
 
     if skill_id == "spa_extract_conditions":

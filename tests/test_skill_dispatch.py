@@ -66,11 +66,24 @@ class TestBuildSkillInput:
         assert result is None
 
     def test_refly_skill_specific_input_snapshot(self):
+        from contract_review.skills.fidic.search_er import SearchErInput
+
         result = _build_skill_input(
             "fidic_search_er",
             "20.1",
             {"clauses": [{"clause_id": "20.1", "text": "within 28 days", "children": []}]},
-            {"domain_id": "fidic", "material_type": "contract"},
+            {
+                "domain_id": "fidic",
+                "material_type": "contract",
+                "documents": [
+                    {
+                        "role": "reference",
+                        "filename": "ER_requirements.docx",
+                        "structure": {"clauses": [{"clause_id": "ER-1", "text": "notice requirement", "children": []}]},
+                    }
+                ],
+            },
         )
-        assert isinstance(result, GenericSkillInput)
-        assert "query" in result.state_snapshot
+        assert isinstance(result, SearchErInput)
+        assert result.query
+        assert result.er_structure is not None

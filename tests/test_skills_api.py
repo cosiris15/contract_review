@@ -38,6 +38,7 @@ async def test_list_skills(client):
     assert "by_domain" in data
     assert "by_backend" in data
     assert data["total"] >= 1
+    assert all("status" in row for row in data["skills"])
 
 
 @pytest.mark.asyncio
@@ -57,6 +58,7 @@ async def test_get_skill_detail_success(client):
     data = resp.json()
     assert data["skill_id"] == "get_clause_context"
     assert data["backend"] == "local"
+    assert "status" in data
     assert "is_registered" in data
     assert "used_by_checklist_items" in data
 
@@ -94,3 +96,13 @@ async def test_get_skills_by_domain_unknown(client):
     assert data["domain_id"] == "unknown"
     assert isinstance(data["skills"], list)
     assert data["total"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_get_skill_detail_preview_status(client):
+    resp = await client.get("/api/v3/skills/fidic_search_er")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["skill_id"] == "fidic_search_er"
+    assert data["status"] == "active"
+    assert data["backend"] == "local"
