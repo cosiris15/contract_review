@@ -61,6 +61,39 @@ SUMMARIZE_SYSTEM = """你是一位法务审阅专家，请基于审查结果生�
 4. 后续建议
 """
 
+REACT_AGENT_SYSTEM = """你是一位资深法务审阅专家，正在逐条审查合同条款。
+
+{anti_injection}
+
+{jurisdiction_instruction}
+
+{domain_instruction}
+
+【你的任务】
+分析以下条款，从我方（{our_party}）的角度识别风险点。
+
+【工作方式】
+你可以使用工具来辅助分析，请根据条款内容自主判断需要调用哪些工具。
+{suggested_skills_hint}
+
+【工具使用规则】
+1. 每次可以调用一个或多个工具
+2. 工具的 clause_id 参数使用当前条款编号：{clause_id}
+3. 不需要填写 document_structure 和 state_snapshot 等内部参数，系统会自动注入
+4. 当你认为信息足够时，直接输出最终结果，不要再调用工具
+
+【最终输出要求】
+以 JSON 数组格式输出风险点列表，字段必须包含：
+- risk_level: high|medium|low
+- risk_type
+- description
+- reason
+- analysis
+- original_text
+
+如果该条款无风险，返回 []。
+最终输出只包含 JSON，不要输出其他内容。"""
+
 FIDIC_DOMAIN_INSTRUCTION = """
 【FIDIC 专项审查指引】
 请重点关注：
@@ -231,6 +264,63 @@ def _build_sha_spa_instruction(skill_context: Dict[str, Any]) -> str:
         rw_context=rw_context,
         indemnity_context=indemnity_context,
     ).strip()
+
+
+def _build_suggested_skills_hint(suggested_skills: list[str] | None, dispatcher: Any) -> str:
+    if not suggested_skills or dispatcher is None:
+        return ""
+    lines = ["【建议工具】以下工具可能对本条款分析有帮助（仅供参考）："]
+    for skill_id in suggested_skills:
+        reg = dispatcher.get_registration(skill_id) if hasattr(dispatcher, "get_registration") else None
+        if reg:
+            lines.append(f"- {skill_id}: {reg.description}")
+    return "\n".join(lines)
+
+
+def build_react_agent_messages(
+    *,
+    language: str,
+    our_party: str,
+    clause_id: str,
+    clause_name: str,
+    description: str,
+    priority: str,
+    clause_text: str,
+    domain_id: str | None = None,
+    suggested_skills: list[str] | None = None,
+    dispatcher: Any = None,
+) -> List[Dict[str, str]]:
+    domain_instruction = ""
+    if domain_id == "fidic":
+        domain_instruction = FIDIC_DOMAIN_INSTRUCTION.format(
+            merge_context="（请使用 fidic_merge_gc_pc 工具获取）",
+            time_bar_context="（请使用 fidic_calculate_time_bar 工具获取）",
+            er_context="（请使用 fidic_search_er 工具获取）",
+        )
+    elif domain_id == "sha_spa":
+        domain_instruction = SHA_SPA_DOMAIN_INSTRUCTION.format(
+            conditions_context="（请使用 spa_extract_conditions 工具获取）",
+            rw_context="（请使用 spa_extract_reps_warranties 工具获取）",
+            indemnity_context="（请使用 spa_indemnity_analysis 工具获取）",
+        )
+
+    system = REACT_AGENT_SYSTEM.format(
+        anti_injection=_anti_injection_instruction(language, our_party),
+        jurisdiction_instruction=_jurisdiction_instruction(language),
+        domain_instruction=domain_instruction,
+        our_party=our_party,
+        suggested_skills_hint=_build_suggested_skills_hint(suggested_skills, dispatcher),
+        clause_id=clause_id,
+    )
+    user = (
+        f"【条款信息】\n"
+        f"- 条款编号：{clause_id}\n"
+        f"- 条款名称：{clause_name}\n"
+        f"- 审查重点：{description}\n"
+        f"- 优先级：{priority}\n\n"
+        f"【条款原文】\n<<<CLAUSE_START>>>\n{clause_text}\n<<<CLAUSE_END>>>"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def build_clause_analyze_messages(

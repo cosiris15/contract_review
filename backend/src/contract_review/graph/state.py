@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 
 from ..models import (
@@ -40,6 +40,7 @@ class ReviewGraphState(TypedDict, total=False):
     current_risks: List[RiskPoint]
     current_diffs: List[DocumentDiff]
     current_skill_context: Dict[str, dict]
+    agent_messages: Optional[List[Dict[str, Any]]]
 
     validation_result: Optional[str]
     clause_retry_count: int

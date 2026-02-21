@@ -2,6 +2,7 @@ from contract_review.graph.prompts import (
     CLAUSE_ANALYZE_SYSTEM,
     build_clause_analyze_messages,
     build_clause_generate_diffs_messages,
+    build_react_agent_messages,
     build_clause_validate_messages,
     build_summarize_messages,
 )
@@ -60,3 +61,53 @@ class TestPromptFormatting:
         )
         assert len(messages) == 2
         assert "Party A" in messages[0]["content"]
+
+    def test_build_react_agent_messages_basic(self):
+        msgs = build_react_agent_messages(
+            language="zh-CN",
+            our_party="甲方",
+            clause_id="4.1",
+            clause_name="义务",
+            description="检查义务范围",
+            priority="critical",
+            clause_text="The Contractor shall ...",
+        )
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+        assert msgs[1]["role"] == "user"
+        assert "工具使用规则" in msgs[0]["content"]
+
+    def test_build_react_agent_messages_suggested_skills(self):
+        class _Dispatcher:
+            @staticmethod
+            def get_registration(skill_id):
+                class _R:
+                    description = f"desc-{skill_id}"
+                return _R()
+
+        msgs = build_react_agent_messages(
+            language="zh-CN",
+            our_party="甲方",
+            clause_id="4.1",
+            clause_name="义务",
+            description="检查义务范围",
+            priority="critical",
+            clause_text="The Contractor shall ...",
+            suggested_skills=["compare_with_baseline"],
+            dispatcher=_Dispatcher(),
+        )
+        assert "建议工具" in msgs[0]["content"]
+        assert "compare_with_baseline" in msgs[0]["content"]
+
+    def test_build_react_agent_messages_fidic(self):
+        msgs = build_react_agent_messages(
+            language="zh-CN",
+            our_party="甲方",
+            clause_id="20.1",
+            clause_name="索赔",
+            description="检查时效",
+            priority="critical",
+            clause_text="within 28 days...",
+            domain_id="fidic",
+        )
+        assert "FIDIC 专项审查指引" in msgs[0]["content"]

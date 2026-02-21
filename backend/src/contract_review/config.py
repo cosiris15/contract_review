@@ -65,6 +65,9 @@ class Settings(BaseModel):
     review: ReviewSettings = Field(default_factory=ReviewSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     refly: ReflySettings = Field(default_factory=ReflySettings)
+    use_react_agent: bool = False
+    react_max_iterations: int = 5
+    react_temperature: float = 0.1
 
 
 def load_settings(config_path: Optional[Path] = None) -> Settings:
@@ -116,6 +119,22 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
         refly_cfg["base_url"] = refly_base_url
     data["refly"] = refly_cfg
 
+    react_enabled = os.getenv("USE_REACT_AGENT", None)
+    if react_enabled is not None:
+        data["use_react_agent"] = str(react_enabled).strip().lower() in {"1", "true", "yes", "on"}
+    react_iters = os.getenv("REACT_MAX_ITERATIONS", None)
+    if react_iters is not None:
+        try:
+            data["react_max_iterations"] = int(react_iters)
+        except ValueError:
+            pass
+    react_temp = os.getenv("REACT_TEMPERATURE", None)
+    if react_temp is not None:
+        try:
+            data["react_temperature"] = float(react_temp)
+        except ValueError:
+            pass
+
     settings = Settings(**data)
 
     # 解析相对路径
@@ -127,6 +146,9 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
         review=resolved_review,
         gemini=settings.gemini,
         refly=settings.refly,
+        use_react_agent=settings.use_react_agent,
+        react_max_iterations=settings.react_max_iterations,
+        react_temperature=settings.react_temperature,
     )
 
 

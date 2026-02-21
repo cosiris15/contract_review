@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -222,3 +223,77 @@ class TestLLMIntegration:
 
         assert result["is_complete"] is True
         assert result.get("clause_retry_count", 0) >= 1
+
+    @pytest.mark.asyncio
+    async def test_react_disabled_uses_hardcoded(self, monkeypatch):
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(use_react_agent=False, react_max_iterations=5, react_temperature=0.1),
+        )
+        called = {"react": False}
+
+        async def _fake_run(**kwargs):
+            _ = kwargs
+            called["react"] = True
+            return {}
+
+        monkeypatch.setattr("contract_review.graph.builder._run_react_branch", _fake_run)
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
+
+        graph = build_review_graph(interrupt_before=[])
+        initial_state = {
+            "task_id": "test_react_off",
+            "our_party": "承包商",
+            "material_type": "contract",
+            "language": "zh-CN",
+            "documents": [],
+            "review_checklist": [
+                {
+                    "clause_id": "14.2",
+                    "clause_name": "预付款",
+                    "priority": "high",
+                    "required_skills": [],
+                    "description": "核查预付款条款",
+                }
+            ],
+        }
+        config = {"configurable": {"thread_id": "test_react_off"}}
+        result = await graph.ainvoke(initial_state, config)
+        assert result["is_complete"] is True
+        assert called["react"] is False
+
+    @pytest.mark.asyncio
+    async def test_react_failure_falls_back(self, monkeypatch):
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(use_react_agent=True, react_max_iterations=5, react_temperature=0.1),
+        )
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
+
+        async def _fake_run(**kwargs):
+            _ = kwargs
+            raise RuntimeError("react failed")
+
+        monkeypatch.setattr("contract_review.graph.builder._run_react_branch", _fake_run)
+
+        graph = build_review_graph(interrupt_before=[])
+        initial_state = {
+            "task_id": "test_react_fallback",
+            "our_party": "承包商",
+            "material_type": "contract",
+            "language": "zh-CN",
+            "documents": [],
+            "review_checklist": [
+                {
+                    "clause_id": "14.2",
+                    "clause_name": "预付款",
+                    "priority": "high",
+                    "required_skills": [],
+                    "description": "核查预付款条款",
+                }
+            ],
+        }
+        config = {"configurable": {"thread_id": "test_react_fallback"}}
+        result = await graph.ainvoke(initial_state, config)
+        assert result["is_complete"] is True
+        assert "14.2" in result.get("findings", {})

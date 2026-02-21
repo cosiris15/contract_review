@@ -26,11 +26,13 @@ from ..skills.local.semantic_search import SearchReferenceDocInput
 from ..skills.schema import GenericSkillInput, SkillBackend, SkillRegistration
 from .llm_utils import parse_json_response
 from .prompts import (
+    build_react_agent_messages,
     build_clause_analyze_messages,
     build_clause_generate_diffs_messages,
     build_clause_validate_messages,
     build_summarize_messages,
 )
+from .react_agent import react_agent_loop
 from .state import ReviewGraphState
 
 logger = logging.getLogger(__name__)
@@ -580,6 +582,76 @@ async def node_parse_document(state: ReviewGraphState) -> Dict[str, Any]:
     return {"primary_structure": primary_structure, "review_checklist": checklist}
 
 
+async def _run_react_branch(
+    *,
+    llm_client: LLMClient,
+    dispatcher: SkillDispatcher,
+    clause_id: str,
+    clause_name: str,
+    description: str,
+    priority: str,
+    our_party: str,
+    language: str,
+    primary_structure: Any,
+    state: ReviewGraphState,
+    suggested_skills: list[str] | None = None,
+) -> Dict[str, Any]:
+    clause_text = _extract_clause_text(primary_structure, clause_id)
+    if not clause_text:
+        clause_text = f"{clause_name}\n{description}".strip() or clause_id
+
+    messages = build_react_agent_messages(
+        language=language,
+        our_party=our_party,
+        clause_id=clause_id,
+        clause_name=clause_name,
+        description=description,
+        priority=priority,
+        clause_text=clause_text,
+        domain_id=state.get("domain_id"),
+        suggested_skills=suggested_skills,
+        dispatcher=dispatcher,
+    )
+
+    settings = get_settings()
+    risks_raw, skill_context, final_messages = await react_agent_loop(
+        llm_client=llm_client,
+        dispatcher=dispatcher,
+        messages=messages,
+        clause_id=clause_id,
+        primary_structure=primary_structure,
+        state=dict(state),
+        max_iterations=max(1, int(getattr(settings, "react_max_iterations", 5) or 5)),
+        temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
+    )
+
+    risks: List[Dict[str, Any]] = []
+    for raw in risks_raw:
+        row = _as_dict(raw)
+        original_text = row.get("original_text", "")
+        risks.append(
+            {
+                "id": generate_id(),
+                "risk_level": _normalize_risk_level(row.get("risk_level")),
+                "risk_type": row.get("risk_type", "未分类风险"),
+                "description": row.get("description", ""),
+                "reason": row.get("reason", ""),
+                "analysis": row.get("analysis", ""),
+                "location": {"original_text": original_text} if original_text else None,
+            }
+        )
+
+    return {
+        "current_clause_id": clause_id,
+        "current_clause_text": clause_text,
+        "current_risks": risks,
+        "current_diffs": [],
+        "current_skill_context": skill_context,
+        "agent_messages": final_messages,
+        "clause_retry_count": 0,
+    }
+
+
 async def node_clause_analyze(
     state: ReviewGraphState, dispatcher: SkillDispatcher | None = None
 ) -> Dict[str, Any]:
@@ -598,6 +670,28 @@ async def node_clause_analyze(
     required_skills = item.get("required_skills", [])
 
     primary_structure = state.get("primary_structure")
+    settings = get_settings()
+    use_react = bool(getattr(settings, "use_react_agent", False))
+    llm_client = _get_llm_client()
+
+    if use_react and llm_client and dispatcher and primary_structure:
+        try:
+            return await _run_react_branch(
+                llm_client=llm_client,
+                dispatcher=dispatcher,
+                clause_id=clause_id,
+                clause_name=clause_name,
+                description=description,
+                priority=priority,
+                our_party=our_party,
+                language=language,
+                primary_structure=primary_structure,
+                state=state,
+                suggested_skills=required_skills,
+            )
+        except Exception as exc:
+            logger.warning("ReAct Agent 失败 (clause=%s)，回退到硬编码模式: %s", clause_id, exc)
+
     skill_context: Dict[str, Any] = {}
 
     if dispatcher and primary_structure:
@@ -633,7 +727,6 @@ async def node_clause_analyze(
         clause_text = f"{clause_name}\n{description}".strip() or clause_id
 
     risks: List[Dict[str, Any]] = []
-    llm_client = _get_llm_client()
     if llm_client:
         try:
             messages = build_clause_analyze_messages(
@@ -673,6 +766,7 @@ async def node_clause_analyze(
         "current_risks": risks,
         "current_diffs": [],
         "current_skill_context": skill_context,
+        "agent_messages": None,
         "clause_retry_count": 0,
     }
 
