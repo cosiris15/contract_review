@@ -41,6 +41,8 @@ class ReviewGraphState(TypedDict, total=False):
     current_diffs: List[DocumentDiff]
     current_skill_context: Dict[str, dict]
     agent_messages: Optional[List[Dict[str, Any]]]
+    review_plan: Optional[Dict[str, Any]]
+    plan_version: int
 
     validation_result: Optional[str]
     clause_retry_count: int

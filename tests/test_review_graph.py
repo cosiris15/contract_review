@@ -5,7 +5,8 @@ import pytest
 
 langgraph = pytest.importorskip("langgraph")
 
-from contract_review.graph.builder import build_review_graph
+from contract_review.graph.builder import build_review_graph, route_after_analyze
+from contract_review.graph.orchestrator import ClauseAnalysisPlan, ReviewPlan
 
 
 class _MockLLMClient:
@@ -297,3 +298,229 @@ class TestLLMIntegration:
         result = await graph.ainvoke(initial_state, config)
         assert result["is_complete"] is True
         assert "14.2" in result.get("findings", {})
+
+
+class TestOrchestratorGraph:
+    def _settings(self, *, use_orchestrator: bool, use_react: bool = False):
+        return SimpleNamespace(
+            use_orchestrator=use_orchestrator,
+            use_react_agent=use_react,
+            react_max_iterations=5,
+            react_temperature=0.1,
+            refly=SimpleNamespace(
+                enabled=False,
+                api_key="",
+                base_url="https://api.refly.ai",
+                timeout=30,
+                poll_interval=1,
+                max_poll_attempts=3,
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_disabled_keeps_existing_behavior(self, monkeypatch):
+        monkeypatch.setattr("contract_review.graph.builder.get_settings", lambda: self._settings(use_orchestrator=False))
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
+
+        graph = build_review_graph(interrupt_before=[])
+        initial_state = {
+            "task_id": "test_orch_off",
+            "our_party": "承包商",
+            "material_type": "contract",
+            "language": "zh-CN",
+            "documents": [],
+            "review_plan": {
+                "clause_plans": [
+                    {
+                        "clause_id": "14.2",
+                        "analysis_depth": "quick",
+                        "skip_diffs": True,
+                        "max_iterations": 1,
+                        "priority_order": 0,
+                    }
+                ],
+                "plan_version": 1,
+            },
+            "review_checklist": [
+                {
+                    "clause_id": "14.2",
+                    "clause_name": "预付款",
+                    "priority": "high",
+                    "required_skills": [],
+                    "description": "核查预付款条款",
+                }
+            ],
+        }
+        config = {"configurable": {"thread_id": "test_orch_off"}}
+        result = await graph.ainvoke(initial_state, config)
+        assert result["is_complete"] is True
+        assert len(result.get("all_diffs", [])) >= 1
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_enabled_plan_fallback(self, monkeypatch):
+        monkeypatch.setattr("contract_review.graph.builder.get_settings", lambda: self._settings(use_orchestrator=True))
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient(mode="fail"))
+
+        graph = build_review_graph(interrupt_before=[])
+        initial_state = {
+            "task_id": "test_orch_fallback",
+            "our_party": "承包商",
+            "material_type": "contract",
+            "language": "zh-CN",
+            "documents": [],
+            "review_checklist": [
+                {
+                    "clause_id": "17.6",
+                    "clause_name": "责任限制",
+                    "priority": "critical",
+                    "required_skills": [],
+                    "description": "核查责任限制",
+                }
+            ],
+        }
+        config = {"configurable": {"thread_id": "test_orch_fallback"}}
+        result = await graph.ainvoke(initial_state, config)
+        assert result["is_complete"] is True
+        assert isinstance(result.get("review_plan"), dict)
+        assert result.get("plan_version", 0) >= 1
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_route_skip_diffs(self, monkeypatch):
+        monkeypatch.setattr("contract_review.graph.builder.get_settings", lambda: self._settings(use_orchestrator=True))
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
+
+        async def _fake_generate_review_plan(*args, **kwargs):
+            _ = args, kwargs
+            return ReviewPlan(
+                clause_plans=[
+                    ClauseAnalysisPlan(
+                        clause_id="14.2",
+                        analysis_depth="quick",
+                        suggested_tools=[],
+                        max_iterations=1,
+                        priority_order=0,
+                        skip_diffs=True,
+                    )
+                ],
+                plan_version=1,
+            )
+
+        monkeypatch.setattr("contract_review.graph.builder.generate_review_plan", _fake_generate_review_plan)
+
+        graph = build_review_graph(interrupt_before=[])
+        initial_state = {
+            "task_id": "test_orch_skip_diffs",
+            "our_party": "承包商",
+            "material_type": "contract",
+            "language": "zh-CN",
+            "documents": [],
+            "review_checklist": [
+                {
+                    "clause_id": "14.2",
+                    "clause_name": "预付款",
+                    "priority": "high",
+                    "required_skills": [],
+                    "description": "核查预付款条款",
+                }
+            ],
+        }
+        config = {"configurable": {"thread_id": "test_orch_skip_diffs"}}
+        result = await graph.ainvoke(initial_state, config)
+        assert result["is_complete"] is True
+        assert result.get("all_diffs", []) == []
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_and_react_enabled(self, monkeypatch):
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: self._settings(use_orchestrator=True, use_react=True),
+        )
+        monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
+        called = {"react": False}
+
+        async def _fake_run(**kwargs):
+            _ = kwargs
+            called["react"] = True
+            return {
+                "current_clause_id": "14.2",
+                "current_clause_text": "预付款为合同总价的30%",
+                "current_risks": [],
+                "current_diffs": [],
+                "current_skill_context": {},
+                "agent_messages": [],
+                "clause_retry_count": 0,
+            }
+
+        monkeypatch.setattr("contract_review.graph.builder._run_react_branch", _fake_run)
+
+        graph = build_review_graph(interrupt_before=[])
+        initial_state = {
+            "task_id": "test_orch_react",
+            "our_party": "承包商",
+            "material_type": "contract",
+            "language": "zh-CN",
+            "documents": [],
+            "primary_structure": {
+                "clauses": [
+                    {
+                        "clause_id": "14.2",
+                        "title": "预付款",
+                        "text": "预付款为合同总价的30%",
+                        "children": [],
+                    }
+                ]
+            },
+            "review_checklist": [
+                {
+                    "clause_id": "14.2",
+                    "clause_name": "预付款",
+                    "priority": "high",
+                    "required_skills": [],
+                    "description": "核查预付款条款",
+                }
+            ],
+        }
+        config = {"configurable": {"thread_id": "test_orch_react"}}
+        result = await graph.ainvoke(initial_state, config)
+        assert result["is_complete"] is True
+        assert called["react"] is True
+
+
+class TestRouteAfterAnalyze:
+    def test_route_skip_diffs_true(self):
+        state = {
+            "current_clause_id": "1.1",
+            "review_plan": {
+                "clause_plans": [
+                    {
+                        "clause_id": "1.1",
+                        "analysis_depth": "quick",
+                        "skip_diffs": True,
+                        "max_iterations": 1,
+                        "priority_order": 0,
+                    }
+                ]
+            },
+        }
+        assert route_after_analyze(state) == "save_clause"
+
+    def test_route_skip_diffs_false(self):
+        state = {
+            "current_clause_id": "1.1",
+            "review_plan": {
+                "clause_plans": [
+                    {
+                        "clause_id": "1.1",
+                        "analysis_depth": "standard",
+                        "skip_diffs": False,
+                        "max_iterations": 3,
+                        "priority_order": 0,
+                    }
+                ]
+            },
+        }
+        assert route_after_analyze(state) == "clause_generate_diffs"
+
+    def test_route_no_plan_defaults_to_diffs(self):
+        state = {"current_clause_id": "1.1"}
+        assert route_after_analyze(state) == "clause_generate_diffs"

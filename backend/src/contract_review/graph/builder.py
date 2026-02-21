@@ -25,6 +25,15 @@ from ..skills.local.resolve_definition import ResolveDefinitionInput
 from ..skills.local.semantic_search import SearchReferenceDocInput
 from ..skills.schema import GenericSkillInput, SkillBackend, SkillRegistration
 from .llm_utils import parse_json_response
+from .orchestrator import (
+    ClauseAnalysisPlan,
+    PlanAdjustment,
+    ReviewPlan,
+    apply_adjustment,
+    generate_review_plan,
+    maybe_adjust_plan,
+    _build_default_plan,
+)
 from .prompts import (
     build_react_agent_messages,
     build_clause_analyze_messages,
@@ -557,6 +566,8 @@ async def node_init(state: ReviewGraphState) -> Dict[str, Any]:
         "all_actions": [],
         "clause_retry_count": 0,
         "max_retries": state.get("max_retries", 2),
+        "review_plan": state.get("review_plan"),
+        "plan_version": int(state.get("plan_version", 1) or 1),
         "is_complete": False,
         "error": None,
     }
@@ -582,6 +593,72 @@ async def node_parse_document(state: ReviewGraphState) -> Dict[str, Any]:
     return {"primary_structure": primary_structure, "review_checklist": checklist}
 
 
+def _get_clause_plan(state: ReviewGraphState, clause_id: str) -> ClauseAnalysisPlan | None:
+    review_plan = state.get("review_plan")
+    if not isinstance(review_plan, dict):
+        return None
+    clause_plans = review_plan.get("clause_plans", [])
+    if not isinstance(clause_plans, list):
+        return None
+    for raw in clause_plans:
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("clause_id", "") or "") == str(clause_id or ""):
+            try:
+                return ClauseAnalysisPlan.model_validate(raw)
+            except Exception:
+                return None
+    return None
+
+
+async def node_plan_review(state: ReviewGraphState, dispatcher: SkillDispatcher | None = None) -> Dict[str, Any]:
+    settings = get_settings()
+    use_orchestrator = bool(getattr(settings, "use_orchestrator", False))
+    checklist = state.get("review_checklist", [])
+    if not checklist:
+        return {"review_plan": {"clause_plans": [], "plan_version": 1}, "plan_version": 1}
+    if not use_orchestrator:
+        # Defensive fallback: node_plan_review is normally not mounted when orchestrator is disabled.
+        plan = _build_default_plan(checklist)
+        return {"review_plan": plan.model_dump(), "plan_version": plan.plan_version}
+
+    llm_client = _get_llm_client()
+    tools = dispatcher.get_tool_definitions(domain_filter=state.get("domain_id")) if dispatcher else []
+    tool_names = []
+    for tool in tools:
+        function = tool.get("function", {}) if isinstance(tool, dict) else {}
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            tool_names.append(name)
+
+    if not llm_client:
+        plan = _build_default_plan(checklist)
+    else:
+        plan = await generate_review_plan(
+            llm_client,
+            checklist,
+            domain_id=state.get("domain_id") or "",
+            material_type=state.get("material_type") or "",
+            available_tools=tool_names,
+        )
+
+    ordered_ids = [cp.clause_id for cp in sorted(plan.clause_plans, key=lambda x: x.priority_order) if cp.clause_id]
+    if ordered_ids:
+        item_map = {str(_as_dict(item).get("clause_id", "") or ""): item for item in checklist}
+        reordered = [item_map[cid] for cid in ordered_ids if cid in item_map]
+        for item in checklist:
+            cid = str(_as_dict(item).get("clause_id", "") or "")
+            if cid not in ordered_ids:
+                reordered.append(item)
+        checklist = reordered
+
+    return {
+        "review_plan": plan.model_dump(),
+        "plan_version": int(plan.plan_version or 1),
+        "review_checklist": checklist,
+    }
+
+
 async def _run_react_branch(
     *,
     llm_client: LLMClient,
@@ -595,6 +672,8 @@ async def _run_react_branch(
     primary_structure: Any,
     state: ReviewGraphState,
     suggested_skills: list[str] | None = None,
+    max_iterations: int = 5,
+    temperature: float = 0.1,
 ) -> Dict[str, Any]:
     clause_text = _extract_clause_text(primary_structure, clause_id)
     if not clause_text:
@@ -613,7 +692,6 @@ async def _run_react_branch(
         dispatcher=dispatcher,
     )
 
-    settings = get_settings()
     risks_raw, skill_context, final_messages = await react_agent_loop(
         llm_client=llm_client,
         dispatcher=dispatcher,
@@ -621,8 +699,8 @@ async def _run_react_branch(
         clause_id=clause_id,
         primary_structure=primary_structure,
         state=dict(state),
-        max_iterations=max(1, int(getattr(settings, "react_max_iterations", 5) or 5)),
-        temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
+        max_iterations=max(1, int(max_iterations or 5)),
+        temperature=float(temperature or 0.1),
     )
 
     risks: List[Dict[str, Any]] = []
@@ -667,11 +745,15 @@ async def node_clause_analyze(
     priority = item.get("priority", "medium")
     our_party = state.get("our_party", "")
     language = state.get("language", "en")
-    required_skills = item.get("required_skills", [])
+    required_skills = list(item.get("required_skills", []) or [])
+    clause_plan = _get_clause_plan(state, clause_id)
+    suggested_skills = clause_plan.suggested_tools if clause_plan and clause_plan.suggested_tools else required_skills
 
     primary_structure = state.get("primary_structure")
     settings = get_settings()
     use_react = bool(getattr(settings, "use_react_agent", False))
+    react_max_iterations = int(getattr(settings, "react_max_iterations", 5) or 5)
+    max_iterations = clause_plan.max_iterations if clause_plan else react_max_iterations
     llm_client = _get_llm_client()
 
     if use_react and llm_client and dispatcher and primary_structure:
@@ -687,7 +769,9 @@ async def node_clause_analyze(
                 language=language,
                 primary_structure=primary_structure,
                 state=state,
-                suggested_skills=required_skills,
+                suggested_skills=suggested_skills,
+                max_iterations=max_iterations,
+                temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
             )
         except Exception as exc:
             logger.warning("ReAct Agent 失败 (clause=%s)，回退到硬编码模式: %s", clause_id, exc)
@@ -899,13 +983,47 @@ async def node_save_clause(state: ReviewGraphState) -> Dict[str, Any]:
     all_risks.extend(risks)
     all_diffs = list(state.get("all_diffs", []))
     all_diffs.extend(approved_diffs)
-
-    return {
+    payload: Dict[str, Any] = {
         "findings": findings,
         "all_risks": all_risks,
         "all_diffs": all_diffs,
         "current_clause_index": state.get("current_clause_index", 0) + 1,
     }
+
+    settings = get_settings()
+    use_orchestrator = bool(getattr(settings, "use_orchestrator", False))
+    review_plan_raw = state.get("review_plan")
+    if use_orchestrator and isinstance(review_plan_raw, dict):
+        llm_client = _get_llm_client()
+        try:
+            plan = ReviewPlan.model_validate(review_plan_raw)
+            completed_count = int(payload["current_clause_index"])
+            total_count = len(state.get("review_checklist", []))
+            remaining_plan = []
+            completed_ids = set(findings.keys())
+            for cp in plan.clause_plans:
+                if cp.clause_id and cp.clause_id not in completed_ids:
+                    remaining_plan.append(cp)
+
+            adjustment = PlanAdjustment(should_adjust=False, reason="无 LLM 客户端")
+            if llm_client:
+                adjustment = await maybe_adjust_plan(
+                    llm_client,
+                    clause_id,
+                    [_as_dict(r) for r in risks],
+                    remaining_plan,
+                    completed_count,
+                    total_count,
+                )
+
+            if adjustment.should_adjust:
+                updated_plan = apply_adjustment(plan, adjustment)
+                payload["review_plan"] = updated_plan.model_dump()
+                payload["plan_version"] = updated_plan.plan_version
+        except Exception as exc:
+            logger.warning("Orchestrator 计划调整失败，继续主流程: %s", exc)
+
+    return payload
 
 
 def _fallback_summary(state: ReviewGraphState) -> str:
@@ -975,6 +1093,16 @@ def route_validation(state: ReviewGraphState) -> str:
     return "save_clause"
 
 
+def route_after_analyze(state: ReviewGraphState) -> str:
+    clause_id = state.get("current_clause_id") or ""
+    if not clause_id:
+        return "clause_generate_diffs"
+    clause_plan = _get_clause_plan(state, str(clause_id))
+    if clause_plan and clause_plan.skip_diffs:
+        return "save_clause"
+    return "clause_generate_diffs"
+
+
 def route_after_approval(state: ReviewGraphState) -> str:
     _ = state
     return "save_clause"
@@ -1007,14 +1135,21 @@ def build_review_graph(
         interrupt_before = ["human_approval"]
 
     dispatcher = _create_dispatcher(domain_id=domain_id)
+    settings = get_settings()
+    use_orchestrator = bool(getattr(settings, "use_orchestrator", False))
 
     async def _node_clause_analyze(state: ReviewGraphState):
         return await node_clause_analyze(state, dispatcher=dispatcher)
+
+    async def _node_plan_review(state: ReviewGraphState):
+        return await node_plan_review(state, dispatcher=dispatcher)
 
     graph = StateGraph(ReviewGraphState)
 
     graph.add_node("init", node_init)
     graph.add_node("parse_document", node_parse_document)
+    if use_orchestrator:
+        graph.add_node("plan_review", _node_plan_review)
     graph.add_node("clause_analyze", _node_clause_analyze)
     graph.add_node("clause_generate_diffs", node_clause_generate_diffs)
     graph.add_node("clause_validate", node_clause_validate)
@@ -1024,12 +1159,27 @@ def build_review_graph(
 
     graph.set_entry_point("init")
     graph.add_edge("init", "parse_document")
-    graph.add_conditional_edges(
-        "parse_document",
-        route_next_clause_or_end,
-        {"clause_analyze": "clause_analyze", "summarize": "summarize"},
-    )
-    graph.add_edge("clause_analyze", "clause_generate_diffs")
+    if use_orchestrator:
+        graph.add_edge("parse_document", "plan_review")
+        graph.add_conditional_edges(
+            "plan_review",
+            route_next_clause_or_end,
+            {"clause_analyze": "clause_analyze", "summarize": "summarize"},
+        )
+    else:
+        graph.add_conditional_edges(
+            "parse_document",
+            route_next_clause_or_end,
+            {"clause_analyze": "clause_analyze", "summarize": "summarize"},
+        )
+    if use_orchestrator:
+        graph.add_conditional_edges(
+            "clause_analyze",
+            route_after_analyze,
+            {"clause_generate_diffs": "clause_generate_diffs", "save_clause": "save_clause"},
+        )
+    else:
+        graph.add_edge("clause_analyze", "clause_generate_diffs")
     graph.add_edge("clause_generate_diffs", "clause_validate")
     graph.add_conditional_edges(
         "clause_validate",

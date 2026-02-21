@@ -68,6 +68,7 @@ class Settings(BaseModel):
     use_react_agent: bool = False
     react_max_iterations: int = 5
     react_temperature: float = 0.1
+    use_orchestrator: bool = False
 
 
 def load_settings(config_path: Optional[Path] = None) -> Settings:
@@ -134,6 +135,9 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
             data["react_temperature"] = float(react_temp)
         except ValueError:
             pass
+    orchestrator_enabled = os.getenv("USE_ORCHESTRATOR", None)
+    if orchestrator_enabled is not None:
+        data["use_orchestrator"] = str(orchestrator_enabled).strip().lower() in {"1", "true", "yes", "on"}
 
     settings = Settings(**data)
 
@@ -149,6 +153,7 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
         use_react_agent=settings.use_react_agent,
         react_max_iterations=settings.react_max_iterations,
         react_temperature=settings.react_temperature,
+        use_orchestrator=settings.use_orchestrator,
     )
 
 
