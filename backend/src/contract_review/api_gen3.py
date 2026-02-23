@@ -78,6 +78,22 @@ def _find_clause_in_dict(clauses: list[dict] | None, clause_id: str) -> dict | N
     return None
 
 
+def _find_clause_in_structure(structure: Any, clause_id: str) -> dict | None:
+    data = _as_dict(structure)
+    clauses = data.get("clauses", []) if isinstance(data, dict) else []
+    return _find_clause_in_dict(clauses if isinstance(clauses, list) else None, clause_id)
+
+
+def _collect_node_text(node: dict) -> str:
+    texts = [str(node.get("text", "") or "")]
+    children = node.get("children", [])
+    if isinstance(children, list):
+        for child in children:
+            if isinstance(child, dict):
+                texts.append(_collect_node_text(child))
+    return "\n".join([t for t in texts if t])
+
+
 def _priority_from_risk_level(level: Any) -> str:
     normalized = str(level or "").lower()
     if normalized in {"high", "critical"}:
@@ -341,9 +357,48 @@ async def upload_document(
             raise HTTPException(422, "无法从文档中提取文本内容")
 
         domain_id = entry.get("domain_id")
-        parser_config = get_parser_config(domain_id) if domain_id else None
+        preset_config = get_parser_config(domain_id) if domain_id else None
+        parser_config = preset_config
+        llm_client = None
+        try:
+            from .config import get_settings
+            from .llm_client import LLMClient
+            from .smart_parser import detect_clause_pattern
+
+            llm_client = LLMClient(get_settings().llm)
+            parser_config = await detect_clause_pattern(
+                llm_client=llm_client,
+                document_text=loaded.text,
+                existing_config=preset_config,
+            )
+        except Exception:
+            logger.warning("LLM 模式检测跳过，使用预设/默认配置", exc_info=True)
+            parser_config = preset_config
+
         parser = StructureParser(config=parser_config)
         structure = parser.parse(loaded)
+        try:
+            from .definition_extractor import build_definitions_dict, extract_definitions_hybrid
+
+            def_section_text = ""
+            def_section_id = getattr(parser_config, "definitions_section_id", None) if parser_config else None
+            if def_section_id and structure:
+                def_node = _find_clause_in_structure(structure, str(def_section_id))
+                if def_node:
+                    def_section_text = _collect_node_text(def_node)
+
+            definitions_v2 = await extract_definitions_hybrid(
+                llm_client=llm_client,
+                document_text=loaded.text,
+                definitions_section_text=def_section_text,
+                parser_config=parser_config,
+            )
+            if definitions_v2:
+                structure.definitions_v2 = definitions_v2
+                structure.definitions.update(build_definitions_dict(definitions_v2))
+        except Exception:
+            logger.warning("SPEC-29 定义提取增强跳过", exc_info=True)
+
         total_clauses = structure.total_clauses
         structure_type = structure.structure_type
 

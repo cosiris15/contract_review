@@ -448,6 +448,26 @@ class CrossReference(BaseModel):
     is_valid: Optional[bool] = None
 
 
+class DefinitionSource(str, Enum):
+    """定义提取来源。"""
+
+    REGEX = "regex"
+    LLM = "llm"
+    MANUAL = "manual"
+
+
+class DefinitionEntry(BaseModel):
+    """单条定义术语（增强结构）。"""
+
+    term: str
+    definition_text: str
+    source: DefinitionSource = DefinitionSource.REGEX
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_clause_id: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
+    category: Optional[str] = None
+
+
 class DocumentParserConfig(BaseModel):
     """文档解析器配置。"""
 
@@ -465,6 +485,7 @@ class DocumentStructure(BaseModel):
     structure_type: str = "generic_numbered"
     clauses: List[ClauseNode] = Field(default_factory=list)
     definitions: Dict[str, str] = Field(default_factory=dict)
+    definitions_v2: List[DefinitionEntry] = Field(default_factory=list)
     cross_references: List[CrossReference] = Field(default_factory=list)
     total_clauses: int = 0
     parsed_at: datetime = Field(default_factory=datetime.now)

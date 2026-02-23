@@ -38,7 +38,20 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       ? Math.round((state.currentClauseIndex / state.totalClauses) * 100)
       : 0),
     isOperationInProgress: (state) => state.operationState.isLoading,
-    currentOperationMessage: (state) => state.operationState.operationMessage
+    currentOperationMessage: (state) => state.operationState.operationMessage,
+    groupedPendingDiffs: (state) => {
+      const groups = {}
+      for (const diff of state.pendingDiffs) {
+        const key = diff.clause_id || '未知条款'
+        if (!groups[key]) groups[key] = []
+        groups[key].push(diff)
+      }
+      return Object.entries(groups).map(([clauseId, diffs]) => ({ clauseId, diffs }))
+    },
+    handledDiffs: (state) => {
+      return [...state.approvedDiffs, ...state.rejectedDiffs]
+        .sort((a, b) => (b._handledAt || 0) - (a._handledAt || 0))
+    }
   },
 
   actions: {
@@ -78,6 +91,7 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       }
       const diff = this.pendingDiffs[index]
       this.pendingDiffs.splice(index, 1)
+      diff._handledAt = Date.now()
       if (decision === 'approve') {
         diff.status = 'approved'
         this.approvedDiffs.push(diff)

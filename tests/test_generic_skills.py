@@ -59,6 +59,29 @@ class TestResolveDefinition:
         )
         assert result.definitions_found == {}
 
+    @pytest.mark.asyncio
+    async def test_definitions_v2_alias_lookup(self):
+        from contract_review.skills.local.resolve_definition import (
+            ResolveDefinitionInput,
+            resolve_definition,
+        )
+
+        structure = {
+            "definitions": {},
+            "definitions_v2": [
+                {
+                    "term": "Employer",
+                    "definition_text": "The party named as employer in the Contract Data.",
+                    "aliases": ["业主"],
+                }
+            ],
+            "clauses": [{"clause_id": "1.1", "text": '“业主”应当提供现场准入。', "children": []}],
+        }
+        result = await resolve_definition(
+            ResolveDefinitionInput(clause_id="1.1", document_structure=structure, terms=["业主"])
+        )
+        assert result.definitions_found.get("业主")
+
 
 class TestCompareWithBaseline:
     @pytest.mark.asyncio

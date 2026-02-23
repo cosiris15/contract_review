@@ -286,6 +286,7 @@ def build_react_agent_messages(
     description: str,
     priority: str,
     clause_text: str,
+    cross_ref_context: str = "",
     domain_id: str | None = None,
     suggested_skills: list[str] | None = None,
     dispatcher: Any = None,
@@ -320,6 +321,12 @@ def build_react_agent_messages(
         f"- 优先级：{priority}\n\n"
         f"【条款原文】\n<<<CLAUSE_START>>>\n{clause_text}\n<<<CLAUSE_END>>>"
     )
+    if cross_ref_context:
+        user += (
+            "\n\n【交叉引用条款】\n"
+            "以下是本条款引用的其他条款原文，请在分析时综合考虑这些引用关系：\n"
+            f"<<<CROSSREF_START>>>\n{cross_ref_context}\n<<<CROSSREF_END>>>"
+        )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

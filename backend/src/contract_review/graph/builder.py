@@ -212,6 +212,66 @@ def _extract_clause_text(structure: Any, clause_id: str) -> str:
     return _search_clauses(clauses, clause_id)
 
 
+MAX_CROSS_REF_INJECT = 3
+MAX_REF_CLAUSE_CHARS = 2000
+
+
+def _build_cross_reference_context(structure: Any, clause_id: str) -> str:
+    """Build cross-reference text snippets for the current clause."""
+    if not structure:
+        return ""
+    struct_dict = structure
+    if not isinstance(struct_dict, dict):
+        if hasattr(struct_dict, "model_dump"):
+            struct_dict = struct_dict.model_dump()
+        else:
+            return ""
+
+    refs = struct_dict.get("cross_references", [])
+    if not isinstance(refs, list):
+        return ""
+
+    targets: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for ref in refs:
+        ref_dict = ref if isinstance(ref, dict) else {}
+        if str(ref_dict.get("source_clause_id", "") or "") != str(clause_id):
+            continue
+        if not bool(ref_dict.get("is_valid", False)):
+            continue
+        target_id = str(ref_dict.get("target_clause_id", "") or "")
+        if not target_id or target_id in seen:
+            continue
+        seen.add(target_id)
+        targets.append((target_id, str(ref_dict.get("reference_text", "") or "")))
+        if len(targets) >= MAX_CROSS_REF_INJECT:
+            break
+
+    if not targets:
+        return ""
+
+    clauses = struct_dict.get("clauses", [])
+    if not isinstance(clauses, list):
+        return ""
+
+    lines: list[str] = []
+    for target_id, ref_text in targets:
+        target_text = _search_clauses(clauses, target_id)
+        if not target_text:
+            continue
+        if len(target_text) > MAX_REF_CLAUSE_CHARS:
+            target_text = target_text[:MAX_REF_CLAUSE_CHARS] + "...(已截断)"
+        lines.append(f"--- 被引用条款 {target_id} ---")
+        if ref_text:
+            lines.append(f"引用方式：{ref_text}")
+        lines.append(target_text)
+        lines.append("")
+
+    if not lines:
+        return ""
+    return "\n".join(lines)
+
+
 def _normalize_risk_level(level: str | None) -> str:
     if level in {"high", "medium", "low"}:
         return level
@@ -398,6 +458,8 @@ async def _run_react_branch(
     if not clause_text:
         clause_text = f"{clause_name}\n{description}".strip() or clause_id
 
+    cross_ref_context = _build_cross_reference_context(primary_structure, clause_id)
+
     messages = build_react_agent_messages(
         language=language,
         our_party=our_party,
@@ -406,6 +468,7 @@ async def _run_react_branch(
         description=description,
         priority=priority,
         clause_text=clause_text,
+        cross_ref_context=cross_ref_context,
         domain_id=state.get("domain_id"),
         suggested_skills=suggested_skills,
         dispatcher=dispatcher,

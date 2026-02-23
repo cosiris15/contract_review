@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
+from .definition_patterns import extract_by_patterns
 from .models import ClauseNode, CrossReference, DocumentParserConfig, DocumentStructure, LoadedDocument
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class StructureParser:
 
         definitions = {}
         if self.config.definitions_section_id:
-            definitions = self._extract_definitions(clause_tree, self.config.definitions_section_id)
+            definitions = self._extract_definitions_v2(clause_tree, self.config.definitions_section_id)
 
         cross_refs = self._extract_cross_references(clause_tree)
 
@@ -114,7 +115,7 @@ class StructureParser:
             count += self._count_clauses(node.children)
         return count
 
-    def _extract_definitions(self, clause_tree: List[ClauseNode], section_id: str) -> Dict[str, str]:
+    def _extract_definitions_legacy(self, clause_tree: List[ClauseNode], section_id: str) -> Dict[str, str]:
         definitions: Dict[str, str] = {}
         target_node = self._find_clause(clause_tree, section_id)
         if not target_node:
@@ -133,6 +134,18 @@ class StructureParser:
                 definition = match.group(2).strip()
                 if term and definition:
                     definitions[term] = definition
+        return definitions
+
+    def _extract_definitions_v2(self, clause_tree: List[ClauseNode], section_id: str) -> Dict[str, str]:
+        """Extract definitions with expanded pattern set (sync path)."""
+        definitions: Dict[str, str] = {}
+        target_node = self._find_clause(clause_tree, section_id)
+        if not target_node:
+            return definitions
+        full_text = self._collect_text(target_node)
+        for term, definition, _pattern in extract_by_patterns(full_text):
+            if term not in definitions:
+                definitions[term] = definition
         return definitions
 
     def _extract_cross_references(self, clause_tree: List[ClauseNode]) -> List[CrossReference]:

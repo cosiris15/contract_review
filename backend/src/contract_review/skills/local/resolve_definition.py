@@ -58,8 +58,27 @@ def _find_term(term: str, definitions: Dict[str, str]) -> str | None:
 
 async def resolve_definition(input_data: ResolveDefinitionInput) -> ResolveDefinitionOutput:
     structure = ensure_dict(input_data.document_structure)
+
+    definitions_v2_map: Dict[str, str] = {}
+    raw_v2 = structure.get("definitions_v2", [])
+    if isinstance(raw_v2, list):
+        for item in raw_v2:
+            if not isinstance(item, dict):
+                continue
+            term = str(item.get("term", "") or "").strip()
+            definition = str(item.get("definition_text", "") or "").strip()
+            if term and definition and term not in definitions_v2_map:
+                definitions_v2_map[term] = definition
+            aliases = item.get("aliases", [])
+            if definition and isinstance(aliases, list):
+                for alias in aliases:
+                    alias_term = str(alias or "").strip()
+                    if alias_term and alias_term not in definitions_v2_map:
+                        definitions_v2_map[alias_term] = definition
+
     raw_definitions = structure.get("definitions", {})
     definitions = raw_definitions if isinstance(raw_definitions, dict) else {}
+    merged_definitions = {**definitions, **definitions_v2_map}
 
     terms = input_data.terms
     if not terms:
@@ -68,7 +87,7 @@ async def resolve_definition(input_data: ResolveDefinitionInput) -> ResolveDefin
     found: Dict[str, str] = {}
     not_found: List[str] = []
     for term in terms:
-        matched = _find_term(term, definitions)
+        matched = _find_term(term, merged_definitions)
         if matched is not None:
             found[term] = matched
         else:

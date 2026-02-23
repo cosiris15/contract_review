@@ -105,15 +105,61 @@
           </div>
         </div>
 
-        <el-empty v-if="store.pendingDiffs.length === 0" description="当前无待审批 diff" />
-        <DiffCard
-          v-for="item in store.pendingDiffs"
-          :key="item.diff_id"
-          :diff="item"
-          :task-id="store.taskId"
-          @approve="(id, feedback, userModifiedText) => approveSingle(id, 'approve', feedback, userModifiedText)"
-          @reject="(id, feedback) => approveSingle(id, 'reject', feedback)"
+        <div v-if="store.phase === 'reviewing'" class="processing-banner">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>{{ store.progressMessage || '正在分析合同条款...' }}</span>
+          <el-tag v-if="store.currentClauseId" size="small" effect="plain">
+            {{ store.currentClauseId }}
+          </el-tag>
+        </div>
+
+        <el-alert
+          v-if="store.pendingDiffs.length === 0 && store.phase === 'interrupted'"
+          type="info"
+          :closable="false"
+          show-icon
+          title="所有修改建议已处理完毕"
+          description="点击「继续审阅」让系统继续分析下一批条款。"
         />
+        <el-empty
+          v-else-if="store.pendingDiffs.length === 0 && store.phase === 'reviewing'"
+          description="等待系统生成修改建议..."
+          :image-size="60"
+        />
+        <div v-for="group in store.groupedPendingDiffs" :key="group.clauseId" class="clause-group">
+          <div class="clause-group-header">
+            <span class="clause-group-id">{{ group.clauseId }}</span>
+            <el-tag size="small" effect="plain">{{ group.diffs.length }} 项修改</el-tag>
+          </div>
+          <DiffCard
+            v-for="item in group.diffs"
+            :key="item.diff_id"
+            :diff="item"
+            :task-id="store.taskId"
+            @approve="(id, feedback, userModifiedText) => approveSingle(id, 'approve', feedback, userModifiedText)"
+            @reject="(id, feedback) => approveSingle(id, 'reject', feedback)"
+          />
+        </div>
+        <el-collapse v-if="store.handledDiffs.length > 0" class="history-collapse">
+          <el-collapse-item>
+            <template #title>
+              <span>决策历史</span>
+              <el-tag size="small" type="success" effect="plain" style="margin-left: 8px;">
+                {{ store.approvedDiffs.length }} 批准
+              </el-tag>
+              <el-tag size="small" type="danger" effect="plain" style="margin-left: 4px;">
+                {{ store.rejectedDiffs.length }} 拒绝
+              </el-tag>
+            </template>
+            <div v-for="item in store.handledDiffs" :key="item.diff_id" class="history-item">
+              <el-tag :type="item.status === 'approved' ? 'success' : 'danger'" size="small">
+                {{ item.status === 'approved' ? '批准' : '拒绝' }}
+              </el-tag>
+              <span class="history-clause">{{ item.clause_id || '未知' }}</span>
+              <span class="history-reason">{{ item.reason || '' }}</span>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
       </div>
     </div>
 
@@ -133,7 +179,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, Loading } from '@element-plus/icons-vue'
 import gen3Api from '@/api/gen3'
 import { useGen3ReviewStore } from '@/store/gen3Review'
 import UploadPanel from '@/components/gen3/UploadPanel.vue'
@@ -303,6 +349,60 @@ onUnmounted(() => {
 .bulk-actions {
   display: flex;
   gap: 8px;
+}
+
+.processing-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--el-color-primary-light-9);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  color: var(--el-color-primary);
+  font-size: 14px;
+}
+
+.clause-group {
+  margin-bottom: 16px;
+}
+
+.clause-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.clause-group-id {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.history-collapse {
+  margin-top: 16px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.history-clause {
+  font-weight: 500;
+  min-width: 60px;
+}
+
+.history-reason {
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 1200px) {
