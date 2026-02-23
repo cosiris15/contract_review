@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 import gen3Api from '@/api/gen3'
 
 export const useGen3ReviewStore = defineStore('gen3Review', {
@@ -194,13 +195,13 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       }
     },
 
-    async approveDiff(diffId, decision, feedback = '') {
+    async approveDiff(diffId, decision, feedback = '', userModifiedText = undefined) {
       if (!this.taskId) {
         throw new Error('任务不存在')
       }
       this._startOperation('approve_diff', '正在提交审批...')
       try {
-        await gen3Api.approveDiff(this.taskId, { diffId, decision, feedback })
+        await gen3Api.approveDiff(this.taskId, { diffId, decision, feedback, userModifiedText })
         this._moveDiff(diffId, decision)
         this._endOperation()
       } catch (error) {
@@ -249,6 +250,11 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
         this.phase = 'reviewing'
         this._endOperation()
       } catch (error) {
+        if (error.response?.status === 400) {
+          ElMessage.warning(error.response?.data?.detail || '请先完成所有审批再恢复')
+          this._endOperation(error, { setErrorPhase: false })
+          return
+        }
         this._endOperation(error, { setErrorPhase: false })
         throw error
       }

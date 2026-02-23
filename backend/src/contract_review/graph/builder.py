@@ -750,8 +750,8 @@ async def node_clause_validate(state: ReviewGraphState) -> Dict[str, Any]:
 async def node_human_approval(state: ReviewGraphState) -> Dict[str, Any]:
     diffs = state.get("current_diffs", [])
     if not diffs:
-        return {"pending_diffs": [], "user_decisions": {}}
-    return {"pending_diffs": diffs}
+        return {"pending_diffs": [], "user_decisions": {}, "user_feedback": {}}
+    return {"pending_diffs": diffs, "user_decisions": {}, "user_feedback": {}}
 
 
 async def node_save_clause(state: ReviewGraphState) -> Dict[str, Any]:
@@ -902,7 +902,27 @@ def route_after_analyze(state: ReviewGraphState) -> str:
 
 
 def route_after_approval(state: ReviewGraphState) -> str:
-    _ = state
+    user_decisions = state.get("user_decisions", {}) or {}
+    pending_diffs = state.get("pending_diffs", []) or []
+
+    if not pending_diffs or not user_decisions:
+        return "save_clause"
+
+    pending_ids = set()
+    for diff in pending_diffs:
+        if hasattr(diff, "diff_id"):
+            did = getattr(diff, "diff_id", "")
+            if did:
+                pending_ids.add(did)
+            continue
+        if isinstance(diff, dict):
+            did = diff.get("diff_id")
+            if did:
+                pending_ids.add(did)
+
+    if pending_ids and all(user_decisions.get(did) == "reject" for did in pending_ids):
+        return "clause_generate_diffs"
+
     return "save_clause"
 
 
@@ -928,13 +948,14 @@ def build_review_graph(
     checkpointer=None,
     interrupt_before: List[str] | None = None,
     domain_id: str | None = None,
+    force_mode: ExecutionMode | None = None,
 ):
     if interrupt_before is None:
         interrupt_before = ["human_approval"]
 
     dispatcher = _create_dispatcher(domain_id=domain_id)
     settings = get_settings()
-    mode = get_execution_mode(settings)
+    mode = force_mode if force_mode is not None else get_execution_mode(settings)
 
     async def _node_clause_analyze(state: ReviewGraphState):
         return await node_clause_analyze(state, dispatcher=dispatcher)
@@ -988,7 +1009,11 @@ def build_review_graph(
             "save_clause": "save_clause",
         },
     )
-    graph.add_conditional_edges("human_approval", route_after_approval, {"save_clause": "save_clause"})
+    graph.add_conditional_edges(
+        "human_approval",
+        route_after_approval,
+        {"save_clause": "save_clause", "clause_generate_diffs": "clause_generate_diffs"},
+    )
     graph.add_conditional_edges(
         "save_clause",
         route_next_clause_or_end,

@@ -15,3 +15,8 @@ review:
   tasks_dir: "tasks"  # 任务存储目录
   templates_dir: "templates"  # 默认模板目录
   max_document_chars: 50000  # 最大文档字符数
+
+# 执行模式：
+# - gen3: 默认推荐，启用统一执行管线（Orchestrator + ReAct + Skills）
+# - legacy: 兼容旧流程，仅用于应急回退
+execution_mode: gen3

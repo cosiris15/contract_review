@@ -110,7 +110,8 @@
           v-for="item in store.pendingDiffs"
           :key="item.diff_id"
           :diff="item"
-          @approve="(id, feedback) => approveSingle(id, 'approve', feedback)"
+          :task-id="store.taskId"
+          @approve="(id, feedback, userModifiedText) => approveSingle(id, 'approve', feedback, userModifiedText)"
           @reject="(id, feedback) => approveSingle(id, 'reject', feedback)"
         />
       </div>
@@ -196,9 +197,9 @@ async function startReview() {
   }
 }
 
-async function approveSingle(diffId, decision, feedback = '') {
+async function approveSingle(diffId, decision, feedback = '', userModifiedText = undefined) {
   try {
-    await store.approveDiff(diffId, decision, feedback)
+    await store.approveDiff(diffId, decision, feedback, userModifiedText)
   } catch (error) {
     ElMessage.error(error.message || '审批失败')
   }

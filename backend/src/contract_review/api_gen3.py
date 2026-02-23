@@ -15,6 +15,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from .config import ExecutionMode
 from .document_loader import load_document
 from .models import (
     ApprovalRequest,
@@ -60,6 +61,21 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     return {}
+
+
+def _find_clause_in_dict(clauses: list[dict] | None, clause_id: str) -> dict | None:
+    if not clauses:
+        return None
+    for node in clauses:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("clause_id", "")) == clause_id:
+            return node
+        children = node.get("children")
+        found = _find_clause_in_dict(children if isinstance(children, list) else None, clause_id)
+        if found:
+            return found
+    return None
 
 
 def _priority_from_risk_level(level: Any) -> str:
@@ -136,7 +152,7 @@ async def start_review(request: StartReviewRequest):
 
     from .graph.builder import build_review_graph
 
-    graph = build_review_graph(domain_id=request.domain_id)
+    graph = build_review_graph(domain_id=request.domain_id, force_mode=ExecutionMode.GEN3)
     config = {"configurable": {"thread_id": task_id}}
     initial_state = {
         "task_id": task_id,
@@ -236,6 +252,38 @@ async def get_pending_diffs(task_id: str):
         "task_id": task_id,
         "pending_diffs": snapshot.values.get("pending_diffs", []),
         "clause_id": snapshot.values.get("current_clause_id"),
+    }
+
+
+@router.get("/review/{task_id}/clause/{clause_id}/context")
+async def get_clause_context(task_id: str, clause_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    _touch_entry(entry)
+    primary_structure = _as_dict(entry.get("primary_structure"))
+    if not primary_structure:
+        docs = entry.get("documents", [])
+        for raw_doc in docs:
+            doc = _as_dict(raw_doc)
+            role = _role_to_str(doc.get("role", "")).lower()
+            if role == "primary":
+                primary_structure = _as_dict(doc.get("structure"))
+                if primary_structure:
+                    break
+    clauses = primary_structure.get("clauses", []) if isinstance(primary_structure, dict) else []
+    clause = _find_clause_in_dict(clauses if isinstance(clauses, list) else None, clause_id)
+    if not clause:
+        raise HTTPException(404, f"未找到条款 {clause_id}")
+    return {
+        "clause_id": clause_id,
+        "title": str(clause.get("title", "") or ""),
+        "text": str(clause.get("text", "") or ""),
+        "level": clause.get("level"),
+        "start_offset": clause.get("start_offset"),
+        "end_offset": clause.get("end_offset"),
     }
 
 
@@ -437,6 +485,27 @@ async def resume_review(task_id: str):
     entry = _active_graphs.get(task_id)
     if not entry:
         raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    graph = entry["graph"]
+    config = entry["config"]
+    snapshot = graph.get_state(config)
+    state = snapshot.values
+    pending = state.get("pending_diffs", []) or []
+    decisions = state.get("user_decisions", {}) or {}
+    pending_ids = set()
+    for diff in pending:
+        if hasattr(diff, "diff_id"):
+            did = getattr(diff, "diff_id", "")
+            if did:
+                pending_ids.add(did)
+            continue
+        if isinstance(diff, dict):
+            did = diff.get("diff_id")
+            if did:
+                pending_ids.add(did)
+    missing = pending_ids - set(decisions.keys())
+    if missing:
+        raise HTTPException(400, f"以下 diff 尚未做出决策: {', '.join(sorted(missing))}。请先完成所有审批再恢复。")
 
     resume_task = entry.get("resume_task")
     if resume_task and not resume_task.done():
@@ -742,6 +811,7 @@ async def review_events(task_id: str):
 
             pending = state.get("pending_diffs", [])
             if pending and snapshot.next:
+                new_diffs_pushed = False
                 for diff in pending:
                     if hasattr(diff, "model_dump"):
                         payload = diff.model_dump()
@@ -753,7 +823,13 @@ async def review_events(task_id: str):
                         continue
                     if diff_id:
                         pushed_diff_ids.add(diff_id)
+                        new_diffs_pushed = True
                     yield _format_gen3_sse("diff_proposed", payload)
+                if new_diffs_pushed and snapshot.next:
+                    yield _format_gen3_sse(
+                        "approval_required",
+                        {"task_id": task_id, "pending_count": len(pending), "type": "approval_required"},
+                    )
 
             if state.get("is_complete"):
                 yield _format_gen3_sse("review_complete", {"task_id": task_id, "summary": state.get("summary_notes", "")})

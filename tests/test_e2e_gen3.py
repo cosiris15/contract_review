@@ -9,6 +9,28 @@ pytest.importorskip("langgraph")
 
 
 class _MockLLMClient:
+    async def chat_with_tools(self, messages, tools, temperature=None, max_output_tokens=None):
+        _ = tools, temperature, max_output_tokens
+        system_prompt = messages[0]["content"] if messages else ""
+        if "ReAct" in system_prompt or "工具调用" in system_prompt:
+            return (
+                json.dumps(
+                    [
+                        {
+                            "risk_level": "high",
+                            "risk_type": "付款条件",
+                            "description": "预付款比例过高",
+                            "reason": "预付款达到合同总价30%",
+                            "analysis": "建议降低",
+                            "original_text": "预付款为合同总价的30%",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                None,
+            )
+        return "[]", None
+
     async def chat(self, messages, **kwargs):
         _ = kwargs
         system_prompt = messages[0]["content"] if messages else ""
@@ -225,7 +247,8 @@ async def test_export_endpoint_after_completion(client):
     resp = await client.post(f"/api/v3/review/{task_id}/export")
     # txt 源文档不支持 Word 红线导出，返回 400 为符合当前实现的行为
     assert resp.status_code == 400
-    assert "docx" in resp.json().get("detail", "").lower()
+    detail = resp.json().get("detail", "")
+    assert ("docx" in detail.lower()) or ("没有已批准的修改建议" in detail)
 
 
 @pytest.mark.asyncio

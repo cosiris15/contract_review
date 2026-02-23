@@ -66,6 +66,15 @@ class _MockLLMClient:
 @pytest.fixture
 def mock_llm_client(monkeypatch):
     monkeypatch.setattr("contract_review.graph.builder._get_llm_client", lambda: _MockLLMClient())
+    monkeypatch.setattr(
+        "contract_review.graph.builder.get_settings",
+        lambda: SimpleNamespace(
+            execution_mode="legacy",
+            react_max_iterations=5,
+            react_temperature=0.1,
+            refly=SimpleNamespace(enabled=False, api_key="", base_url="", timeout=30, poll_interval=1, max_poll_attempts=3),
+        ),
+    )
 
 
 class TestReviewGraph:
@@ -202,6 +211,15 @@ class TestLLMIntegration:
         monkeypatch.setattr(
             "contract_review.graph.builder._get_llm_client",
             lambda: _MockLLMClient(mode="validate_fail"),
+        )
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(
+                execution_mode="legacy",
+                react_max_iterations=5,
+                react_temperature=0.1,
+                refly=SimpleNamespace(enabled=False, api_key="", base_url="", timeout=30, poll_interval=1, max_poll_attempts=3),
+            ),
         )
 
         graph = build_review_graph(interrupt_before=[])
@@ -686,3 +704,23 @@ class TestExecutionModeSwitch:
     def test_explicit_mode_overrides_old_bools(self):
         settings = SimpleNamespace(execution_mode="gen3", use_orchestrator=False, use_react_agent=False)
         assert get_execution_mode(settings) == ExecutionMode.GEN3
+
+
+class TestForceMode:
+    def test_force_gen3_overrides_legacy_config(self, monkeypatch):
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(execution_mode="legacy"),
+        )
+        graph = build_review_graph(interrupt_before=[], force_mode=ExecutionMode.GEN3)
+        nodes = set(graph.get_graph().nodes.keys())
+        assert "plan_review" in nodes
+
+    def test_force_legacy_overrides_gen3_config(self, monkeypatch):
+        monkeypatch.setattr(
+            "contract_review.graph.builder.get_settings",
+            lambda: SimpleNamespace(execution_mode="gen3"),
+        )
+        graph = build_review_graph(interrupt_before=[], force_mode=ExecutionMode.LEGACY)
+        nodes = set(graph.get_graph().nodes.keys())
+        assert "plan_review" not in nodes

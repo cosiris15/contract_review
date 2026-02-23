@@ -121,6 +121,10 @@ const gen3Api = {
     return api.get(`/review/${taskId}/pending-diffs`)
   },
 
+  getClauseContext(taskId, clauseId) {
+    return api.get(`/review/${taskId}/clause/${clauseId}/context`)
+  },
+
   approveDiff(taskId, payload) {
     return api.post(`/review/${taskId}/approve`, {
       diff_id: payload.diffId,

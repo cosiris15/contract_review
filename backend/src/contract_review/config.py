@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from enum import Enum
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class LLMSettings(BaseModel):
@@ -66,11 +69,11 @@ class Settings(BaseModel):
     review: ReviewSettings = Field(default_factory=ReviewSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     refly: ReflySettings = Field(default_factory=ReflySettings)
-    execution_mode: str = "legacy"
-    use_react_agent: bool = False
+    execution_mode: str = "gen3"
+    use_react_agent: bool = False  # Deprecated since SPEC-24, use execution_mode instead
     react_max_iterations: int = 5
     react_temperature: float = 0.1
-    use_orchestrator: bool = False
+    use_orchestrator: bool = False  # Deprecated since SPEC-24, use execution_mode instead
 
 
 class ExecutionMode(str, Enum):
@@ -79,17 +82,24 @@ class ExecutionMode(str, Enum):
 
 
 def get_execution_mode(settings: Settings) -> ExecutionMode:
-    mode_str = str(getattr(settings, "execution_mode", "legacy") or "legacy").strip().lower()
+    """Resolve execution mode with compatibility fallback for deprecated bool flags."""
+    raw_mode = getattr(settings, "execution_mode", None)
+    mode_str = str(raw_mode or "").strip().lower()
+    if not mode_str:
+        mode_str = "gen3"
     if mode_str != ExecutionMode.LEGACY.value:
         try:
             return ExecutionMode(mode_str)
         except ValueError:
-            return ExecutionMode.LEGACY
+            return ExecutionMode.GEN3
 
     if getattr(settings, "use_orchestrator", False) or getattr(settings, "use_react_agent", False):
+        logger.warning(
+            "use_orchestrator / use_react_agent 已废弃，请改用 execution_mode='gen3'。这些字段将在未来版本中移除。"
+        )
         return ExecutionMode.GEN3
 
-    return ExecutionMode.LEGACY
+    return ExecutionMode.LEGACY if raw_mode is not None else ExecutionMode.GEN3
 
 
 def load_settings(config_path: Optional[Path] = None) -> Settings:
@@ -147,6 +157,9 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
 
     react_enabled = os.getenv("USE_REACT_AGENT", None)
     if react_enabled is not None:
+        logger.warning(
+            "环境变量 USE_REACT_AGENT 已废弃，请改用 EXECUTION_MODE=gen3。该变量将在未来版本中移除。"
+        )
         data["use_react_agent"] = str(react_enabled).strip().lower() in {"1", "true", "yes", "on"}
     react_iters = os.getenv("REACT_MAX_ITERATIONS", None)
     if react_iters is not None:
@@ -162,6 +175,9 @@ def load_settings(config_path: Optional[Path] = None) -> Settings:
             pass
     orchestrator_enabled = os.getenv("USE_ORCHESTRATOR", None)
     if orchestrator_enabled is not None:
+        logger.warning(
+            "环境变量 USE_ORCHESTRATOR 已废弃，请改用 EXECUTION_MODE=gen3。该变量将在未来版本中移除。"
+        )
         data["use_orchestrator"] = str(orchestrator_enabled).strip().lower() in {"1", "true", "yes", "on"}
 
     settings = Settings(**data)

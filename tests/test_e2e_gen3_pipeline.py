@@ -1,4 +1,5 @@
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -215,12 +216,20 @@ class TestGen3EndToEnd:
 
 
 class TestGetExecutionMode:
-    def test_default_is_legacy(self):
+    def test_default_is_gen3(self):
+        settings = SimpleNamespace(use_orchestrator=False, use_react_agent=False)
+        assert get_execution_mode(settings) == ExecutionMode.GEN3
+
+    def test_explicit_legacy(self):
         settings = SimpleNamespace(execution_mode="legacy", use_orchestrator=False, use_react_agent=False)
         assert get_execution_mode(settings) == ExecutionMode.LEGACY
 
     def test_explicit_gen3(self):
         settings = SimpleNamespace(execution_mode="gen3", use_orchestrator=False, use_react_agent=False)
+        assert get_execution_mode(settings) == ExecutionMode.GEN3
+
+    def test_missing_execution_mode_defaults_to_gen3(self):
+        settings = SimpleNamespace(use_orchestrator=False, use_react_agent=False)
         assert get_execution_mode(settings) == ExecutionMode.GEN3
 
     def test_use_orchestrator_infers_gen3(self):
@@ -234,3 +243,9 @@ class TestGetExecutionMode:
     def test_legacy_with_old_flags_true_still_infers_gen3(self):
         settings = SimpleNamespace(execution_mode="legacy", use_orchestrator=True, use_react_agent=False)
         assert get_execution_mode(settings) == ExecutionMode.GEN3
+
+    def test_deprecated_bool_logs_warning(self, caplog):
+        caplog.set_level(logging.WARNING)
+        settings = SimpleNamespace(execution_mode="legacy", use_orchestrator=True, use_react_agent=False)
+        assert get_execution_mode(settings) == ExecutionMode.GEN3
+        assert "已废弃" in caplog.text
