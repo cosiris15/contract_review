@@ -399,6 +399,31 @@ async def upload_document(
         except Exception:
             logger.warning("SPEC-29 定义提取增强跳过", exc_info=True)
 
+        try:
+            from .cross_reference_extractor import extract_all_cross_refs_hybrid
+
+            all_clause_ids: set[str] = set()
+
+            def _collect_ids(nodes):
+                for node in nodes or []:
+                    clause_id = getattr(node, "clause_id", None)
+                    if clause_id:
+                        all_clause_ids.add(str(clause_id))
+                    children = getattr(node, "children", []) if node is not None else []
+                    _collect_ids(children)
+
+            _collect_ids(structure.clauses if structure else [])
+            enhanced_refs = await extract_all_cross_refs_hybrid(
+                llm_client=llm_client,
+                clause_tree=structure.clauses if structure else [],
+                all_clause_ids=all_clause_ids,
+                extra_patterns=getattr(parser_config, "cross_reference_patterns", None),
+            )
+            if enhanced_refs:
+                structure.cross_references = enhanced_refs
+        except Exception:
+            logger.warning("SPEC-30 交叉引用增强跳过", exc_info=True)
+
         total_clauses = structure.total_clauses
         structure_type = structure.structure_type
 

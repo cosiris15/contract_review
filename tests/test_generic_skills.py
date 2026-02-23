@@ -175,6 +175,8 @@ class TestCrossReferenceCheck:
         assert result.total_references == 2
         assert result.total_invalid == 1
         assert result.invalid_references[0]["target_clause_id"] == "99.9"
+        assert "reference_type" in result.references[0]
+        assert "source" in result.references[0]
 
     @pytest.mark.asyncio
     async def test_no_references(self):

@@ -439,6 +439,13 @@ class ClauseNode(BaseModel):
 ClauseNode.model_rebuild()
 
 
+class CrossReferenceSource(str, Enum):
+    """交叉引用检测来源。"""
+
+    REGEX = "regex"
+    LLM = "llm"
+
+
 class CrossReference(BaseModel):
     """条款间交叉引用。"""
 
@@ -446,6 +453,9 @@ class CrossReference(BaseModel):
     target_clause_id: str
     reference_text: str = ""
     is_valid: Optional[bool] = None
+    source: CrossReferenceSource = CrossReferenceSource.REGEX
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    reference_type: Optional[str] = None
 
 
 class DefinitionSource(str, Enum):
@@ -476,6 +486,7 @@ class DocumentParserConfig(BaseModel):
     definitions_section_id: Optional[str] = None
     max_depth: int = 4
     structure_type: str = "generic_numbered"
+    cross_reference_patterns: List[str] = Field(default_factory=list)
 
 
 class DocumentStructure(BaseModel):

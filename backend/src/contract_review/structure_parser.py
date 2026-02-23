@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
+from .cross_reference_patterns import ALL_XREF_PATTERNS, CrossRefPattern, extract_cross_refs_by_patterns
 from .definition_patterns import extract_by_patterns
 from .models import ClauseNode, CrossReference, DocumentParserConfig, DocumentStructure, LoadedDocument
 
@@ -149,28 +150,35 @@ class StructureParser:
         return definitions
 
     def _extract_cross_references(self, clause_tree: List[ClauseNode]) -> List[CrossReference]:
-        refs: List[CrossReference] = []
         all_clause_ids = set(self._collect_all_ids(clause_tree))
-        patterns = [
-            r"[Cc]lause\s+(\d+(?:\.\d+)*)",
-            r"[Ss]ub-[Cc]lause\s+(\d+(?:\.\d+)*)",
-            r"第\s*(\d+(?:\.\d+)*)\s*条",
-            r"(?:见|参见|依据|根据)\s*(\d+(?:\.\d+)*)\s*条",
-        ]
+        refs: List[CrossReference] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        extra_patterns: List[CrossRefPattern] = []
+        if self.config.cross_reference_patterns:
+            for idx, pattern in enumerate(self.config.cross_reference_patterns):
+                extra_patterns.append(
+                    CrossRefPattern(
+                        name=f"llm_extra_{idx}",
+                        regex=str(pattern),
+                        reference_type="clause",
+                        language="any",
+                    )
+                )
+        patterns = list(ALL_XREF_PATTERNS) + extra_patterns
 
         def scan_node(node: ClauseNode):
-            for pattern in patterns:
-                for match in re.finditer(pattern, node.text):
-                    target_id = match.group(1)
-                    if target_id != node.clause_id:
-                        refs.append(
-                            CrossReference(
-                                source_clause_id=node.clause_id,
-                                target_clause_id=target_id,
-                                reference_text=match.group(0),
-                                is_valid=target_id in all_clause_ids,
-                            )
-                        )
+            node_refs = extract_cross_refs_by_patterns(
+                text=node.text,
+                source_clause_id=node.clause_id,
+                all_clause_ids=all_clause_ids,
+                patterns=patterns,
+            )
+            for ref in node_refs:
+                key = (ref.source_clause_id, ref.target_clause_id, ref.reference_text)
+                if key not in seen:
+                    seen.add(key)
+                    refs.append(ref)
             for child in node.children:
                 scan_node(child)
 

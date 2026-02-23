@@ -49,6 +49,8 @@ async def cross_reference_check(input_data: CrossReferenceCheckInput) -> CrossRe
             "target_clause_id": str(ref.get("target_clause_id", "") or ""),
             "reference_text": str(ref.get("reference_text", "") or ""),
             "is_valid": bool(ref.get("is_valid", False)),
+            "reference_type": str(ref.get("reference_type", "") or ""),
+            "source": str(ref.get("source", "regex") or "regex"),
         }
         references.append(entry)
         if not entry["is_valid"]:
