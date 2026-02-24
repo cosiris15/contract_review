@@ -128,7 +128,7 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
 
     async uploadDocument(file, role = 'primary') {
       if (!this.taskId) {
-        throw new Error('请先初始化审阅任务')
+        throw new Error('请先创建审阅任务')
       }
       this._startOperation('upload_document', `正在上传 ${file.name}...`)
       try {

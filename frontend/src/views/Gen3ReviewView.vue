@@ -56,7 +56,7 @@
           :disabled="store.phase === 'uploading'"
           @click="initSession"
         >
-          初始化审阅
+          创建任务
         </el-button>
       </el-card>
 
@@ -219,9 +219,9 @@ async function initSession() {
       language: language.value
     })
     router.replace(`/gen3/${store.taskId}`)
-    ElMessage.success('初始化成功，请上传主合同')
+    ElMessage.success('任务创建成功，请上传主合同')
   } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+    ElMessage.error(error.message || '创建任务失败')
   }
 }
 
