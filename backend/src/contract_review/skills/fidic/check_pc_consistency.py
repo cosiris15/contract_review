@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+from ..local._utils import get_llm_client
 
 
 class PcClause(BaseModel):
@@ -28,6 +31,9 @@ class ConsistencyIssue(BaseModel):
     issue: str
     severity: str
     rule_id: str
+    source: str = "rule"
+    reasoning: str = ""
+    confidence: float = 1.0
 
 
 class CheckPcConsistencyOutput(BaseModel):
@@ -35,6 +41,7 @@ class CheckPcConsistencyOutput(BaseModel):
     consistency_issues: List[ConsistencyIssue] = Field(default_factory=list)
     total_issues: int = 0
     clauses_checked: int = 0
+    llm_used: bool = False
 
 
 CheckFn = Callable[[str, str, str, str], Optional[str]]
@@ -198,22 +205,152 @@ CONSISTENCY_RULES: list[ConsistencyRule] = [
     ),
 ]
 
+_SEVERITY_LEVELS = {"high", "medium", "low"}
+CONSISTENCY_SYSTEM_PROMPT = (
+    "你是 FIDIC 合同一致性审查专家。"
+    "请分析焦点条款与其他已修改条款之间是否存在一致性问题。\n"
+    "请重点关注：\n"
+    "1. 权责不对等：一方义务扩大但对应权利/保障未联动\n"
+    "2. 时间/程序矛盾：时限与程序要求不匹配\n"
+    "3. 定义不一致：同一术语在不同条款中含义不同\n"
+    "4. 隐含冲突：条款间逻辑上互相矛盾\n"
+    "已由规则引擎发现的问题会提供给你，请勿重复。\n"
+    "只返回 JSON 数组，不得输出额外文本。\n"
+    "每项字段：clause_a, clause_b, issue, severity(high|medium|low), reasoning, confidence(0-1)"
+)
+
 
 def _pair_matches(focus_id: str, other_id: str, pair: tuple[str, str]) -> bool:
     return (focus_id == pair[0] and other_id == pair[1]) or (focus_id == pair[1] and other_id == pair[0])
 
 
-async def check_pc_consistency(input_data: CheckPcConsistencyInput) -> CheckPcConsistencyOutput:
-    clauses = [c for c in input_data.pc_clauses if c.modification_type in {"modified", "added"}]
-    if len(clauses) <= 1:
-        return CheckPcConsistencyOutput(clause_id=input_data.clause_id, clauses_checked=len(clauses))
+def _clamp_confidence(value: Any) -> float:
+    try:
+        score = float(value)
+    except Exception:
+        return 0.0
+    return max(0.0, min(1.0, score))
 
-    by_id = {c.clause_id: c for c in clauses if c.clause_id}
-    focus_id = input_data.focus_clause_id or input_data.clause_id
-    focus = by_id.get(focus_id)
-    if focus is None:
-        return CheckPcConsistencyOutput(clause_id=input_data.clause_id, clauses_checked=len(clauses))
 
+def _normalize_severity(value: Any) -> str:
+    lowered = str(value or "").strip().lower()
+    return lowered if lowered in _SEVERITY_LEVELS else "medium"
+
+
+def _parse_json_array(raw_text: str) -> Any:
+    payload = (raw_text or "").strip()
+    if not payload:
+        return None
+
+    candidates = [payload]
+    block = re.search(r"```(?:json)?\s*(.*?)```", payload, re.DOTALL | re.IGNORECASE)
+    if block:
+        candidates.append(block.group(1).strip())
+
+    bracket_match = re.search(r"\[.*\]", payload, re.DOTALL)
+    if bracket_match:
+        candidates.append(bracket_match.group(0).strip())
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return parsed
+    return None
+
+
+def _build_consistency_prompt(
+    focus: PcClause,
+    others: List[PcClause],
+    rule_issues: List[ConsistencyIssue],
+) -> List[Dict[str, str]]:
+    others_text = "\n\n".join(f"[{c.clause_id}]:\n{c.text[:2000]}" for c in others[:8])
+    existing = "\n".join(f"- {i.clause_a} vs {i.clause_b}: {i.issue}" for i in rule_issues) or "（无）"
+    user_msg = (
+        f"焦点条款 [{focus.clause_id}]:\n{focus.text[:2000]}\n\n"
+        f"其他已修改条款:\n{others_text}\n\n"
+        f"已发现的问题（请勿重复）:\n{existing}"
+    )
+    return [
+        {"role": "system", "content": CONSISTENCY_SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+
+
+def _normalize_llm_issues(parsed_rows: List[Dict[str, Any]]) -> List[ConsistencyIssue]:
+    issues: List[ConsistencyIssue] = []
+    for row in parsed_rows:
+        clause_a = str(row.get("clause_a", "") or "").strip()
+        clause_b = str(row.get("clause_b", "") or "").strip()
+        issue = str(row.get("issue", "") or "").strip()
+        if not clause_a or not clause_b or not issue:
+            continue
+        issues.append(
+            ConsistencyIssue(
+                clause_a=clause_a,
+                clause_b=clause_b,
+                issue=issue,
+                severity=_normalize_severity(row.get("severity", "medium")),
+                rule_id="llm_semantic",
+                source="llm",
+                reasoning=str(row.get("reasoning", "") or ""),
+                confidence=_clamp_confidence(row.get("confidence", 0.0)),
+            )
+        )
+    return issues
+
+
+async def _llm_consistency_check(
+    focus: PcClause,
+    clauses: List[PcClause],
+    rule_issues: List[ConsistencyIssue],
+) -> tuple[List[ConsistencyIssue], bool]:
+    llm_client = get_llm_client()
+    if llm_client is None:
+        return [], False
+
+    others = [c for c in clauses if c.clause_id != focus.clause_id][:8]
+    if not others:
+        return [], False
+
+    try:
+        response = await llm_client.chat(
+            _build_consistency_prompt(focus, others, rule_issues),
+            max_output_tokens=1200,
+        )
+    except Exception:  # pragma: no cover - defensive
+        return [], False
+
+    parsed_payload = _parse_json_array(str(response))
+    if not isinstance(parsed_payload, list):
+        return [], False
+
+    parsed_rows = [row for row in parsed_payload if isinstance(row, dict)]
+    return _normalize_llm_issues(parsed_rows), True
+
+
+def _merge_issues(
+    rule_issues: List[ConsistencyIssue],
+    llm_issues: List[ConsistencyIssue],
+) -> List[ConsistencyIssue]:
+    covered_pairs = {(i.clause_a, i.clause_b) for i in rule_issues} | {
+        (i.clause_b, i.clause_a) for i in rule_issues
+    }
+    merged = list(rule_issues)
+    for issue in llm_issues:
+        pair = (issue.clause_a, issue.clause_b)
+        reverse_pair = (issue.clause_b, issue.clause_a)
+        if pair in covered_pairs or reverse_pair in covered_pairs:
+            continue
+        merged.append(issue)
+        covered_pairs.add(pair)
+        covered_pairs.add(reverse_pair)
+    return merged
+
+
+def _rule_based_check(focus: PcClause, clauses: List[PcClause]) -> List[ConsistencyIssue]:
     issues: list[ConsistencyIssue] = []
     seen: set[tuple[str, str, str]] = set()
     for other in clauses:
@@ -236,14 +373,43 @@ async def check_pc_consistency(input_data: CheckPcConsistencyInput) -> CheckPcCo
                     issue=detail,
                     severity=rule.severity,
                     rule_id=rule.rule_id,
+                    source="rule",
+                    reasoning="",
+                    confidence=1.0,
                 )
             )
+    return issues
+
+
+async def check_pc_consistency(input_data: CheckPcConsistencyInput) -> CheckPcConsistencyOutput:
+    clauses = [c for c in input_data.pc_clauses if c.modification_type in {"modified", "added"}]
+    if len(clauses) <= 1:
+        return CheckPcConsistencyOutput(
+            clause_id=input_data.clause_id,
+            clauses_checked=len(clauses),
+            llm_used=False,
+        )
+
+    by_id = {c.clause_id: c for c in clauses if c.clause_id}
+    focus_id = input_data.focus_clause_id or input_data.clause_id
+    focus = by_id.get(focus_id)
+    if focus is None:
+        return CheckPcConsistencyOutput(
+            clause_id=input_data.clause_id,
+            clauses_checked=len(clauses),
+            llm_used=False,
+        )
+
+    rule_issues = _rule_based_check(focus, clauses)
+    llm_issues, llm_used = await _llm_consistency_check(focus, clauses, rule_issues)
+    issues = _merge_issues(rule_issues, llm_issues)
 
     return CheckPcConsistencyOutput(
         clause_id=input_data.clause_id,
         consistency_issues=issues,
         total_issues=len(issues),
         clauses_checked=len(clauses),
+        llm_used=llm_used,
     )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ...criteria_parser import parse_criteria_excel
 from ...models import ReviewCriterion
-from ._utils import get_clause_text
+from ._utils import get_clause_text, get_llm_client
 from .semantic_search import _cosine_similarity, _embed_texts
 
 
@@ -29,6 +30,8 @@ class MatchedCriterion(BaseModel):
     suggested_action: str
     match_type: str
     match_score: float = 1.0
+    applicable: bool = True
+    applicability_reason: str = ""
 
 
 class LoadReviewCriteriaOutput(BaseModel):
@@ -36,6 +39,16 @@ class LoadReviewCriteriaOutput(BaseModel):
     matched_criteria: List[MatchedCriterion] = Field(default_factory=list)
     total_matched: int = 0
     has_criteria: bool = False
+    llm_filtered: bool = False
+
+
+FILTER_SYSTEM_PROMPT = (
+    "你是合同审查标准匹配专家。请判断以下审查标准是否适用于当前条款。\n"
+    "适用 = 该标准的审查角度与条款内容直接相关，可以用来评估条款的合规性或风险。\n"
+    "不适用 = 虽然文字相似，但审查角度与条款内容无关。\n"
+    "只返回 JSON 数组，不得输出额外文本。\n"
+    "每项：{\"criterion_id\": \"...\", \"applicable\": true/false, \"reason\": \"一句话理由\"}"
+)
 
 
 def _as_criterion(row: Dict[str, Any]) -> ReviewCriterion | None:
@@ -68,6 +81,83 @@ def _build_semantic_candidates(criteria: List[ReviewCriterion]) -> list[str]:
     return [row.review_point for row in criteria]
 
 
+def _parse_json_array(raw_text: str) -> Any:
+    payload = (raw_text or "").strip()
+    if not payload:
+        return None
+
+    candidates = [payload]
+    block = re.search(r"```(?:json)?\s*(.*?)```", payload, re.DOTALL | re.IGNORECASE)
+    if block:
+        candidates.append(block.group(1).strip())
+
+    bracket_match = re.search(r"\[.*\]", payload, re.DOTALL)
+    if bracket_match:
+        candidates.append(bracket_match.group(0).strip())
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return parsed
+    return None
+
+
+def _build_filter_prompt(clause_text: str, candidates: List[MatchedCriterion]) -> List[Dict[str, str]]:
+    criteria_text = "\n".join(
+        f"- criterion_id={criterion.criterion_id}, review_point={criterion.review_point}"
+        for criterion in candidates
+    )
+    user_msg = (
+        f"条款文本：\n{clause_text[:2000]}\n\n"
+        f"候选审查标准：\n{criteria_text}"
+    )
+    return [
+        {"role": "system", "content": FILTER_SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+
+
+async def _llm_filter_applicability(
+    clause_text: str,
+    candidates: List[MatchedCriterion],
+) -> tuple[dict[str, tuple[bool, str]], bool]:
+    llm_client = get_llm_client()
+    if llm_client is None:
+        return {}, False
+    try:
+        response = await llm_client.chat(
+            _build_filter_prompt(clause_text, candidates),
+            max_output_tokens=600,
+        )
+    except Exception:  # pragma: no cover - defensive
+        return {}, False
+
+    parsed = _parse_json_array(str(response))
+    if not isinstance(parsed, list):
+        return {}, False
+
+    mapped: dict[str, tuple[bool, str]] = {}
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        criterion_id = str(row.get("criterion_id", "") or "").strip()
+        if not criterion_id:
+            continue
+        raw_applicable = row.get("applicable", True)
+        if isinstance(raw_applicable, bool):
+            applicable = raw_applicable
+        elif isinstance(raw_applicable, str):
+            applicable = raw_applicable.strip().lower() in {"true", "1", "yes", "y"}
+        else:
+            applicable = bool(raw_applicable)
+        reason = str(row.get("reason", "") or "")
+        mapped[criterion_id] = (applicable, reason)
+    return mapped, True
+
+
 async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadReviewCriteriaOutput:
     criteria_rows: list[ReviewCriterion] = []
     for row in input_data.criteria_data:
@@ -82,6 +172,7 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
         return LoadReviewCriteriaOutput(
             clause_id=input_data.clause_id,
             has_criteria=False,
+            llm_filtered=False,
         )
 
     current_clause = _normalize_clause_ref(input_data.clause_id)
@@ -108,9 +199,11 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
             matched_criteria=matched,
             total_matched=len(matched),
             has_criteria=True,
+            llm_filtered=False,
         )
 
-    query = _extract_clause_text(input_data.document_structure, input_data.clause_id)[:300].strip()
+    clause_text = _extract_clause_text(input_data.document_structure, input_data.clause_id)
+    query = clause_text[:300].strip() if clause_text else ""
     if not query:
         query = input_data.clause_id
     candidates = _build_semantic_candidates(criteria_rows)
@@ -121,6 +214,7 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
             matched_criteria=[],
             total_matched=0,
             has_criteria=True,
+            llm_filtered=False,
         )
 
     scores = _cosine_similarity(vectors[0], vectors[1:])
@@ -130,6 +224,7 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
             matched_criteria=[],
             total_matched=0,
             has_criteria=True,
+            llm_filtered=False,
         )
 
     ranked = sorted(
@@ -137,12 +232,12 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
         key=lambda x: x[0],
         reverse=True,
     )
-    semantic_matches: list[MatchedCriterion] = []
+    semantic_candidates: list[MatchedCriterion] = []
     for score, idx in ranked:
         if score < 0.5:
             continue
         row = criteria_rows[idx]
-        semantic_matches.append(
+        semantic_candidates.append(
             MatchedCriterion(
                 criterion_id=row.criterion_id,
                 clause_ref=row.clause_ref,
@@ -154,14 +249,40 @@ async def load_review_criteria(input_data: LoadReviewCriteriaInput) -> LoadRevie
                 match_score=round(score, 4),
             )
         )
-        if len(semantic_matches) >= 3:
+        if len(semantic_candidates) >= 5:
             break
+
+    if not semantic_candidates:
+        return LoadReviewCriteriaOutput(
+            clause_id=input_data.clause_id,
+            matched_criteria=[],
+            total_matched=0,
+            has_criteria=True,
+            llm_filtered=False,
+        )
+
+    applicability_map, llm_filtered = await _llm_filter_applicability(clause_text or query, semantic_candidates)
+    if llm_filtered:
+        for candidate in semantic_candidates:
+            applicable, reason = applicability_map.get(candidate.criterion_id, (True, ""))
+            candidate.applicable = applicable
+            candidate.applicability_reason = reason
+        semantic_matches = [candidate for candidate in semantic_candidates if candidate.applicable]
+    else:
+        semantic_matches = semantic_candidates
+
+    semantic_matches = sorted(
+        semantic_matches,
+        key=lambda item: item.match_score,
+        reverse=True,
+    )[:3]
 
     return LoadReviewCriteriaOutput(
         clause_id=input_data.clause_id,
         matched_criteria=semantic_matches,
         total_matched=len(semantic_matches),
         has_criteria=True,
+        llm_filtered=llm_filtered,
     )
 
 

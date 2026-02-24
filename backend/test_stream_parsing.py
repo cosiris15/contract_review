@@ -11,6 +11,8 @@ import sys
 import os
 from pathlib import Path
 
+import pytest
+
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -140,8 +142,11 @@ class IncrementalRiskParser:
         return f"...{self.buffer[-length:]}"
 
 
+@pytest.mark.asyncio
 async def test_stream_parsing():
     """测试流式解析"""
+    if os.getenv("RUN_STREAM_PARSING_TEST", "").strip() != "1":
+        pytest.skip("integration prototype; set RUN_STREAM_PARSING_TEST=1 to enable")
 
     settings = load_settings()
     llm = LLMClient(settings.llm)
