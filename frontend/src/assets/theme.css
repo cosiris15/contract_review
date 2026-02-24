@@ -1,0 +1,239 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --el-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Helvetica, Arial, sans-serif;
+  --el-font-size-extra-large: 20px;
+  --el-font-size-large: 16px;
+  --el-font-size-medium: 14px;
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-font-size-extra-small: 12px;
+}
+
+:root {
+  /* Linear indigo */
+  --el-color-primary: #5e6ad2;
+  --el-color-primary-light-3: #8b8fe0;
+  --el-color-primary-light-5: #aeb1e8;
+  --el-color-primary-light-7: #d1d3f1;
+  --el-color-primary-light-8: #e3e4f6;
+  --el-color-primary-light-9: #f1f1fa;
+  --el-color-primary-dark-2: #4b55a8;
+
+  /* Notion-style semantic */
+  --el-color-success: #0f7b6c;
+  --el-color-success-light-3: #4fa89d;
+  --el-color-success-light-5: #87c5be;
+  --el-color-success-light-9: #e6f5f3;
+
+  --el-color-warning: #d9730d;
+  --el-color-warning-light-3: #e5a04d;
+  --el-color-warning-light-5: #ecc08a;
+  --el-color-warning-light-9: #fdf4e7;
+
+  --el-color-danger: #e03e3e;
+  --el-color-danger-light-3: #e97474;
+  --el-color-danger-light-5: #f0a3a3;
+  --el-color-danger-light-9: #fce8e8;
+
+  --el-color-info: #787774;
+  --el-color-info-light-3: #a3a29f;
+  --el-color-info-light-5: #c4c3c1;
+  --el-color-info-light-9: #f0efee;
+
+  /* Text */
+  --el-text-color-primary: #37352f;
+  --el-text-color-regular: #37352f;
+  --el-text-color-secondary: #787774;
+  --el-text-color-placeholder: #9b9a97;
+  --el-text-color-disabled: #c0bfbd;
+
+  /* Background */
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f7f6f3;
+  --el-bg-color-overlay: #ffffff;
+
+  /* Border */
+  --el-border-color: rgba(55, 53, 47, 0.12);
+  --el-border-color-light: rgba(55, 53, 47, 0.09);
+  --el-border-color-lighter: rgba(55, 53, 47, 0.06);
+  --el-border-color-extra-light: rgba(55, 53, 47, 0.04);
+  --el-border-color-dark: rgba(55, 53, 47, 0.16);
+
+  /* Fill */
+  --el-fill-color: rgba(55, 53, 47, 0.06);
+  --el-fill-color-light: rgba(55, 53, 47, 0.03);
+  --el-fill-color-lighter: rgba(55, 53, 47, 0.02);
+  --el-fill-color-blank: #ffffff;
+
+  /* Radius */
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 16px;
+
+  /* Shadow */
+  --el-box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(55, 53, 47, 0.06);
+  --el-box-shadow-light: 0 0 0 1px rgba(55, 53, 47, 0.06);
+  --el-box-shadow-lighter: none;
+  --el-box-shadow-dark: rgba(15, 15, 15, 0.05) 0px 0px 0px 1px,
+    rgba(15, 15, 15, 0.1) 0px 3px 6px,
+    rgba(15, 15, 15, 0.2) 0px 9px 24px;
+
+  /* Linear speed */
+  --el-transition-duration: 0.15s;
+  --el-transition-duration-fast: 0.1s;
+}
+
+:root {
+  --diff-removed-bg: #ffe2dd;
+  --diff-removed-text: #e03e3e;
+  --diff-removed-border: rgba(224, 62, 62, 0.2);
+  --diff-original-bg: #fef2f2;
+  --diff-original-border: #fecaca;
+
+  --diff-added-bg: #dbeddb;
+  --diff-added-text: #0f7b6c;
+  --diff-added-border: rgba(15, 123, 108, 0.2);
+  --diff-proposed-bg: #e6f5f3;
+  --diff-proposed-border: #87c5be;
+
+  --diff-highlight-bg: #fdecc8;
+  --diff-highlight-border: #d9730d;
+}
+
+.el-button {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition: all 0.15s ease;
+}
+
+.el-button--default {
+  border-color: rgba(55, 53, 47, 0.12);
+  background: transparent;
+}
+
+.el-button--default:hover {
+  background: rgba(55, 53, 47, 0.04);
+  border-color: rgba(55, 53, 47, 0.16);
+  color: #37352f;
+}
+
+.el-button--primary {
+  box-shadow: none;
+}
+
+.el-input__wrapper {
+  box-shadow: 0 0 0 1px rgba(55, 53, 47, 0.16) !important;
+  border-radius: 6px;
+  transition: box-shadow 0.15s ease;
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px rgba(55, 53, 47, 0.3) !important;
+}
+
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 2px #5e6ad2 !important;
+}
+
+.el-card {
+  border: 1px solid rgba(55, 53, 47, 0.09);
+  box-shadow: none;
+  border-radius: 8px;
+  transition: border-color 0.2s ease;
+}
+
+.el-card:hover {
+  border-color: rgba(55, 53, 47, 0.16);
+}
+
+.el-tag {
+  border-radius: 4px;
+  border: none;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.el-tag--info {
+  background: #e3e2e0;
+  color: #787774;
+}
+
+.el-tag--success {
+  background: #dbeddb;
+  color: #0f7b6c;
+}
+
+.el-tag--warning {
+  background: #fdecc8;
+  color: #d9730d;
+}
+
+.el-tag--danger {
+  background: #ffe2dd;
+  color: #e03e3e;
+}
+
+.el-table {
+  --el-table-border-color: rgba(55, 53, 47, 0.06);
+  --el-table-header-bg-color: #f7f6f3;
+  --el-table-row-hover-bg-color: rgba(55, 53, 47, 0.02);
+}
+
+.el-table th.el-table__cell {
+  font-weight: 500;
+  color: #787774;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.el-progress-bar__outer {
+  height: 4px !important;
+  border-radius: 2px;
+  background-color: rgba(55, 53, 47, 0.06);
+}
+
+.el-progress-bar__inner {
+  border-radius: 2px;
+}
+
+.el-dialog {
+  border-radius: 8px;
+  box-shadow: rgba(15, 15, 15, 0.05) 0px 0px 0px 1px,
+    rgba(15, 15, 15, 0.1) 0px 3px 6px,
+    rgba(15, 15, 15, 0.2) 0px 9px 24px;
+  border: none;
+}
+
+.el-collapse {
+  border: none;
+}
+
+.el-collapse-item__header {
+  font-weight: 500;
+  border-bottom-color: rgba(55, 53, 47, 0.06);
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-entry {
+  animation: fadeInUp 0.4s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+.animate-entry:nth-child(1) { animation-delay: 0ms; }
+.animate-entry:nth-child(2) { animation-delay: 50ms; }
+.animate-entry:nth-child(3) { animation-delay: 100ms; }
+.animate-entry:nth-child(4) { animation-delay: 150ms; }
+.animate-entry:nth-child(5) { animation-delay: 200ms; }
+.animate-entry:nth-child(6) { animation-delay: 250ms; }

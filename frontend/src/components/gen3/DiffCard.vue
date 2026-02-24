@@ -219,13 +219,13 @@ function onReject() {
 }
 
 .original {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--diff-original-bg);
+  border: 1px solid var(--diff-original-border);
 }
 
 .proposed {
-  background: #ecfdf5;
-  border: 1px solid #86efac;
+  background: var(--diff-proposed-bg);
+  border: 1px solid var(--diff-proposed-border);
 }
 
 .unified-diff {
@@ -234,16 +234,18 @@ function onReject() {
 }
 
 .unified-diff :deep(.diff-removed) {
-  background: #fee2e2;
-  color: #dc2626;
+  background: var(--diff-removed-bg);
+  color: var(--diff-removed-text);
+  border: 1px solid var(--diff-removed-border);
   text-decoration: line-through;
   padding: 1px 2px;
   border-radius: 2px;
 }
 
 .unified-diff :deep(.diff-added) {
-  background: #d1fae5;
-  color: #059669;
+  background: var(--diff-added-bg);
+  color: var(--diff-added-text);
+  border: 1px solid var(--diff-added-border);
   padding: 1px 2px;
   border-radius: 2px;
 }

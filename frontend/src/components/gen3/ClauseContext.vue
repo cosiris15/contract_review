@@ -107,8 +107,8 @@ watch(
 }
 
 .clause-text :deep(.diff-highlight) {
-  background: #fef3c7;
-  border-bottom: 2px solid #f59e0b;
+  background: var(--diff-highlight-bg);
+  border-bottom: 2px solid var(--diff-highlight-border);
   padding: 1px 0;
 }
 </style>

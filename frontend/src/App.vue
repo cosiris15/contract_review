@@ -131,44 +131,59 @@ onMounted(() => {
 <style>
 /* ========== CSS变量系统 ========== */
 :root {
-  /* 主色 - 深蓝色 */
-  --color-primary: #2563eb;
-  --color-primary-light: #3b82f6;
-  --color-primary-lighter: #60a5fa;
-  --color-primary-dark: #1d4ed8;
-  --color-primary-bg: #eff6ff;
-  --color-primary-bg-hover: #dbeafe;
+  /* SPEC-36 theme core */
+  --primary: #5e6ad2;
+  --primary-light: #f1f1fa;
+  --bg-page: #f7f6f3;
+  --bg-card: #ffffff;
+  --bg-secondary: rgba(55, 53, 47, 0.03);
+  --bg-hover: rgba(55, 53, 47, 0.04);
+  --text-primary: #37352f;
+  --text-secondary: #787774;
+  --text-tertiary: #9b9a97;
+  --border-color: rgba(55, 53, 47, 0.09);
+  --border-color-light: rgba(55, 53, 47, 0.06);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 0 0 1px rgba(55, 53, 47, 0.06);
+
+  /* Legacy aliases kept for existing component styles */
+  --color-primary: var(--primary);
+  --color-primary-light: #8b8fe0;
+  --color-primary-lighter: #aeb1e8;
+  --color-primary-dark: #4b55a8;
+  --color-primary-bg: var(--primary-light);
+  --color-primary-bg-hover: #e3e4f6;
 
   /* 功能色 */
-  --color-success: #10b981;
-  --color-success-bg: #ecfdf5;
-  --color-warning: #f59e0b;
-  --color-warning-bg: #fffbeb;
-  --color-danger: #ef4444;
-  --color-danger-bg: #fef2f2;
-  --color-info: #6b7280;
-  --color-info-bg: #f3f4f6;
+  --color-success: #0f7b6c;
+  --color-success-bg: #e6f5f3;
+  --color-warning: #d9730d;
+  --color-warning-bg: #fdecc8;
+  --color-danger: #e03e3e;
+  --color-danger-bg: #ffe2dd;
+  --color-info: #787774;
+  --color-info-bg: #f0efee;
 
   /* 文本色 */
-  --color-text-primary: #1f2937;
-  --color-text-secondary: #4b5563;
-  --color-text-tertiary: #6b7280;
-  --color-text-placeholder: #9ca3af;
-  --color-text-disabled: #d1d5db;
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-placeholder: #9b9a97;
+  --color-text-disabled: #c0bfbd;
 
   /* 背景色 */
-  --color-bg-page: #f8fafc;
-  --color-bg-card: #ffffff;
-  --color-bg-secondary: #f1f5f9;
-  --color-bg-hover: #f8fafc;
+  --color-bg-page: var(--bg-page);
+  --color-bg-card: var(--bg-card);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-hover: var(--bg-hover);
 
   /* 边框色 */
-  --color-border: #e5e7eb;
-  --color-border-light: #f3f4f6;
-  --color-border-dark: #d1d5db;
+  --color-border: var(--border-color);
+  --color-border-light: var(--border-color-light);
+  --color-border-dark: rgba(55, 53, 47, 0.16);
 
   /* 字体系统 */
-  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-size-xs: 12px;
   --font-size-sm: 13px;
   --font-size-base: 14px;
@@ -206,9 +221,9 @@ onMounted(() => {
   --radius-xl: 16px;
 
   /* 阴影 */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --shadow-lg: rgba(15, 15, 15, 0.05) 0px 0px 0px 1px,
+    rgba(15, 15, 15, 0.1) 0px 3px 6px,
+    rgba(15, 15, 15, 0.2) 0px 9px 24px;
 
   /* 布局 */
   --max-width: 1400px;
@@ -273,8 +288,9 @@ html, body {
   color: var(--color-text-primary);
   padding: 0 var(--spacing-8);
   height: var(--header-height) !important;
-  box-shadow: var(--shadow-sm);
-  border-bottom: 1px solid var(--color-border);
+  box-shadow: none;
+  border-bottom: 1px solid rgba(55, 53, 47, 0.06);
+  background: #ffffff;
 }
 
 .header-left {

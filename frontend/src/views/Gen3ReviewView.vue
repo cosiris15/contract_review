@@ -132,10 +132,12 @@
             <el-tag size="small" effect="plain">{{ group.diffs.length }} 项修改</el-tag>
           </div>
           <DiffCard
-            v-for="item in group.diffs"
+            v-for="(item, index) in group.diffs"
             :key="item.diff_id"
             :diff="item"
             :task-id="store.taskId"
+            class="animate-entry"
+            :style="{ animationDelay: `${index * 50}ms` }"
             @approve="(id, feedback, userModifiedText) => approveSingle(id, 'approve', feedback, userModifiedText)"
             @reject="(id, feedback) => approveSingle(id, 'reject', feedback)"
           />

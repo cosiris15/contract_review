@@ -4,7 +4,7 @@
       <div class="header">条款进度</div>
     </template>
 
-    <el-progress :percentage="percentage" :stroke-width="10" />
+    <el-progress :percentage="percentage" :stroke-width="4" />
     <div class="summary">已审阅 {{ reviewedCount }} / {{ totalClauses }} 条款</div>
 
     <el-empty v-if="totalClauses === 0" description="等待审阅数据" :image-size="70" />
@@ -14,7 +14,7 @@
         :key="item.key"
         :class="['clause-item', item.status]"
       >
-        <span class="icon">{{ item.icon }}</span>
+        <span :class="['status-dot', `status-dot--${item.status}`]"></span>
         <span class="text">{{ item.label }}</span>
       </li>
     </ul>
@@ -48,8 +48,7 @@ const clauseItems = computed(() => {
       label: isCurrent && props.currentClauseId
         ? props.currentClauseId
         : `条款 ${i + 1}`,
-      status: isCurrent ? 'current' : (isDone ? 'done' : 'pending'),
-      icon: isCurrent ? '◉' : (isDone ? '✓' : '○')
+      status: isCurrent ? 'current' : (isDone ? 'done' : 'pending')
     })
   }
   return items
@@ -81,6 +80,27 @@ const clauseItems = computed(() => {
   padding: 6px 0;
 }
 
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.status-dot--done {
+  background: var(--el-color-success);
+}
+
+.status-dot--current {
+  background: var(--el-color-primary);
+  animation: pulse 1.5s infinite;
+}
+
+.status-dot--pending {
+  background: rgba(55, 53, 47, 0.12);
+}
+
 .clause-item.current {
   font-weight: 600;
   color: var(--el-color-primary);
@@ -92,5 +112,10 @@ const clauseItems = computed(() => {
 
 .clause-item.pending {
   color: var(--el-text-color-secondary);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 </style>
