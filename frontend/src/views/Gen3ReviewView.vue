@@ -26,7 +26,9 @@
               v-model="domainId"
               placeholder="请选择领域"
               style="width: 220px;"
-              :disabled="store.phase === 'uploading'"
+              :disabled="store.phase === 'uploading' || !!domainLoadErrorMessage"
+              :loading="domainsLoading"
+              no-data-text="无法加载领域，请检查额度或网络后重试"
             >
               <el-option
                 v-for="item in domains"
@@ -50,10 +52,19 @@
             </el-radio-group>
           </el-form-item>
         </div>
+        <el-alert
+          v-if="domainLoadErrorMessage"
+          :type="domainLoadErrorType === 'quota_exceeded' ? 'warning' : 'error'"
+          :closable="false"
+          show-icon
+          :title="domainLoadErrorType === 'quota_exceeded' ? '额度不足，暂时无法加载领域' : '领域加载失败'"
+          :description="domainLoadErrorMessage"
+          style="margin-bottom: 12px;"
+        />
         <el-button
           type="primary"
           :loading="store.isOperationInProgress"
-          :disabled="store.phase === 'uploading'"
+          :disabled="store.phase === 'uploading' || !!domainLoadErrorMessage"
           @click="initSession"
         >
           创建任务
@@ -197,19 +208,35 @@ const domains = ref([])
 const domainId = ref('fidic')
 const ourParty = ref('')
 const language = ref('zh-CN')
+const domainsLoading = ref(false)
+const domainLoadErrorType = ref('')
+const domainLoadErrorMessage = ref('')
 
 const isSetupPhase = computed(() => ['idle', 'uploading'].includes(store.phase))
 const isReviewPhase = computed(() => ['reviewing', 'interrupted'].includes(store.phase))
 
 async function loadDomains() {
+  domainsLoading.value = true
+  domainLoadErrorType.value = ''
+  domainLoadErrorMessage.value = ''
   try {
     const resp = await gen3Api.listDomains()
     domains.value = resp.data.domains || []
     if (!domains.value.find((item) => item.domain_id === domainId.value) && domains.value[0]) {
       domainId.value = domains.value[0].domain_id
     }
+    if (!domains.value.length) {
+      domainLoadErrorType.value = 'empty'
+      domainLoadErrorMessage.value = '系统暂未返回可用领域，请稍后重试。'
+    }
   } catch (error) {
     console.error('加载领域失败:', error)
+    domainLoadErrorType.value = error?.errorInfo?.type || 'request_failed'
+    domainLoadErrorMessage.value = domainLoadErrorType.value === 'quota_exceeded'
+      ? '当前账号额度已用完。请先充值，然后刷新页面重试。'
+      : (error.message || '请检查网络或稍后重试。')
+  } finally {
+    domainsLoading.value = false
   }
 }
 

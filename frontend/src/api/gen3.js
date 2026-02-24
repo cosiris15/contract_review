@@ -38,9 +38,28 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response) {
-      error.message = error.response.data?.detail || error.message
+    const status = error.response?.status
+    const rawDetail = error.response?.data?.detail
+    const detailText = typeof rawDetail === 'string'
+      ? rawDetail
+      : (rawDetail?.message || rawDetail?.error || '')
+    const isQuotaExceeded = status === 403 && (
+      (typeof detailText === 'string' && /quota|配额/i.test(detailText)) ||
+      rawDetail?.error === 'quota_exceeded'
+    )
+
+    error.errorInfo = {
+      type: isQuotaExceeded ? 'quota_exceeded' : 'gen3_api_error',
+      status: status || 0,
+      detail: rawDetail || null
     }
+
+    if (isQuotaExceeded) {
+      error.message = '免费额度已用完，请先充值后重试'
+    } else if (detailText) {
+      error.message = detailText
+    }
+
     return Promise.reject(error)
   }
 )
