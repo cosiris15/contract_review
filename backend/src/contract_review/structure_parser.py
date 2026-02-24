@@ -157,10 +157,18 @@ class StructureParser:
         extra_patterns: List[CrossRefPattern] = []
         if self.config.cross_reference_patterns:
             for idx, pattern in enumerate(self.config.cross_reference_patterns):
+                regex_str = str(pattern)
+                try:
+                    compiled = re.compile(regex_str)
+                except re.error:
+                    logger.warning("LLM 交叉引用 pattern %d 编译失败，跳过: %s", idx, regex_str)
+                    continue
+                target_group = 1 if compiled.groups >= 1 else 0
                 extra_patterns.append(
                     CrossRefPattern(
                         name=f"llm_extra_{idx}",
-                        regex=str(pattern),
+                        regex=regex_str,
+                        target_group=target_group,
                         reference_type="clause",
                         language="any",
                     )

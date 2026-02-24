@@ -9,10 +9,29 @@ pytest.importorskip("langgraph")
 
 
 class _MockLLMClient:
+    def __init__(self):
+        self._emit_tool_call = True
+
     async def chat_with_tools(self, messages, tools, temperature=None, max_output_tokens=None):
         _ = tools, temperature, max_output_tokens
         system_prompt = messages[0]["content"] if messages else ""
         if "ReAct" in system_prompt or "工具调用" in system_prompt:
+            if self._emit_tool_call:
+                self._emit_tool_call = False
+                return (
+                    "",
+                    [
+                        {
+                            "id": "call_ctx",
+                            "type": "function",
+                            "function": {
+                                "name": "get_clause_context",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                )
+            self._emit_tool_call = True
             return (
                 json.dumps(
                     [
@@ -121,7 +140,6 @@ async def _run_flow_and_complete(client, task_id: str):
         "/api/v3/review/start",
         json={
             "task_id": task_id,
-            "domain_id": "fidic",
             "auto_start": False,
             "our_party": "承包商",
             "language": "zh-CN",
@@ -149,8 +167,8 @@ async def _run_flow_and_complete(client, task_id: str):
     run = await client.post(f"/api/v3/review/{task_id}/run")
     assert run.status_code == 200
 
-    for _ in range(40):
-        status = await _wait_for_interrupt_or_complete(client, task_id, timeout_steps=1)
+    for _ in range(120):
+        status = await _wait_for_interrupt_or_complete(client, task_id, timeout_steps=5)
         if status.get("is_complete"):
             return
         pending_resp = await client.get(f"/api/v3/review/{task_id}/pending-diffs")

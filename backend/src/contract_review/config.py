@@ -72,6 +72,7 @@ class Settings(BaseModel):
     execution_mode: str = "gen3"
     use_react_agent: bool = False  # Deprecated since SPEC-24, use execution_mode instead
     react_max_iterations: int = 5
+    react_clause_timeout: int = 30
     react_temperature: float = 0.1
     use_orchestrator: bool = False  # Deprecated since SPEC-24, use execution_mode instead
 

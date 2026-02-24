@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any, Dict, List, Tuple
 
 from ..llm_client import LLMClient
@@ -38,6 +40,34 @@ def _parse_final_response(response_text: Any) -> List[Dict[str, Any]]:
     return [row for row in parsed if isinstance(row, dict)]
 
 
+async def _execute_tool_call(
+    call: Dict[str, Any],
+    *,
+    dispatcher: SkillDispatcher,
+    clause_id: str,
+    primary_structure: Any,
+    state: dict,
+) -> Tuple[Dict[str, Any], str, Any, str]:
+    skill_id = str(call.get("skill_id", "") or "")
+    llm_arguments = call.get("arguments", {}) or {}
+    target_clause_id = str(llm_arguments.get("clause_id", "") or clause_id)
+
+    try:
+        result = await dispatcher.prepare_and_call(
+            skill_id=skill_id,
+            clause_id=target_clause_id,
+            primary_structure=primary_structure,
+            state=state,
+            llm_arguments=llm_arguments,
+        )
+        if result.success:
+            return call, skill_id, result.data, _serialize_tool_result(result.data)
+        return call, skill_id, None, json.dumps({"error": result.error or "执行失败"}, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("工具 '%s' 执行异常: %s", skill_id, exc)
+        return call, skill_id, None, json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
 async def react_agent_loop(
     llm_client: LLMClient,
     dispatcher: SkillDispatcher,
@@ -56,8 +86,11 @@ async def react_agent_loop(
 
     current_messages = list(messages)
     skill_context: Dict[str, Any] = {}
+    loop_start = time.monotonic()
+    iterations_run = 0
 
-    for _ in range(max_iterations):
+    for iteration in range(max_iterations):
+        iterations_run = iteration + 1
         try:
             response_text, tool_calls = await llm_client.chat_with_tools(
                 current_messages,
@@ -66,10 +99,19 @@ async def react_agent_loop(
             )
         except Exception as exc:
             logger.warning("ReAct LLM 调用失败: %s", exc)
+            logger.info("ReAct 中断，已收集 %d 个 skill 结果", len(skill_context))
             break
 
         if not tool_calls:
             current_messages.append({"role": "assistant", "content": response_text})
+            elapsed = time.monotonic() - loop_start
+            logger.info(
+                "ReAct 完成 clause=%s iters=%d skills=%d elapsed=%.3fs",
+                clause_id,
+                iterations_run,
+                len(skill_context),
+                elapsed,
+            )
             return _parse_final_response(response_text), skill_context, current_messages
 
         current_messages.append(
@@ -81,27 +123,27 @@ async def react_agent_loop(
         )
 
         parsed_calls = parse_tool_calls(tool_calls)
-        for call in parsed_calls:
-            skill_id = call.get("skill_id", "")
-            llm_arguments = call.get("arguments", {}) or {}
-            target_clause_id = str(llm_arguments.get("clause_id", "") or clause_id)
+        tasks = [
+            _execute_tool_call(
+                call,
+                dispatcher=dispatcher,
+                clause_id=clause_id,
+                primary_structure=primary_structure,
+                state=state,
+            )
+            for call in parsed_calls
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            try:
-                result = await dispatcher.prepare_and_call(
-                    skill_id=skill_id,
-                    clause_id=target_clause_id,
-                    primary_structure=primary_structure,
-                    state=state,
-                    llm_arguments=llm_arguments,
-                )
-                if result.success:
-                    skill_context[skill_id] = result.data
-                    tool_content = _serialize_tool_result(result.data)
-                else:
-                    tool_content = json.dumps({"error": result.error or "执行失败"}, ensure_ascii=False)
-            except Exception as exc:
-                logger.warning("工具 '%s' 执行异常: %s", skill_id, exc)
-                tool_content = json.dumps({"error": str(exc)}, ensure_ascii=False)
+        tools_called: list[str] = []
+        for item in results:
+            if isinstance(item, Exception):
+                logger.warning("工具并发执行异常: %s", item)
+                continue
+            call, skill_id, data, tool_content = item
+            if data is not None:
+                skill_context[skill_id] = data
+            tools_called.append(skill_id)
 
             current_messages.append(
                 {
@@ -110,6 +152,23 @@ async def react_agent_loop(
                     "content": tool_content,
                 }
             )
+        elapsed = time.monotonic() - loop_start
+        logger.info(
+            "ReAct iter=%d clause=%s tools_called=%s skill_count=%d elapsed=%.3fs",
+            iterations_run,
+            clause_id,
+            tools_called,
+            len(skill_context),
+            elapsed,
+        )
 
     logger.warning("ReAct 循环达到最大迭代次数 %s，强制结束 (clause=%s)", max_iterations, clause_id)
+    elapsed = time.monotonic() - loop_start
+    logger.info(
+        "ReAct 完成 clause=%s iters=%d skills=%d elapsed=%.3fs",
+        clause_id,
+        iterations_run,
+        len(skill_context),
+        elapsed,
+    )
     return [], skill_context, current_messages

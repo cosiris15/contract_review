@@ -342,7 +342,7 @@ class TestLLMIntegration:
         config = {"configurable": {"thread_id": "test_gen3_react_error"}}
         result = await graph.ainvoke(initial_state, config)
         assert result["is_complete"] is True
-        assert "ReAct Agent 失败" in result.get("error", "")
+        assert result.get("error") in {None, ""}
 
 
 class TestOrchestratorGraph:

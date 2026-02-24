@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from contract_review.cross_reference_extractor import extract_all_cross_refs_hybrid, extract_cross_refs_hybrid
-from contract_review.cross_reference_patterns import _cn_num_to_arabic, extract_cross_refs_by_patterns
-from contract_review.models import ClauseNode, CrossReferenceSource
+from contract_review.cross_reference_patterns import (
+    CrossRefPattern,
+    _cn_num_to_arabic,
+    extract_cross_refs_by_patterns,
+)
+from contract_review.models import ClauseNode, CrossReferenceSource, DocumentParserConfig, LoadedDocument
+from contract_review.structure_parser import StructureParser
 
 
 class TestCrossRefPatternsEN:
@@ -143,3 +150,76 @@ class TestCrossRefExtractor:
         )
         assert len(refs) == 3
         assert llm.chat.call_count == 1
+
+
+def test_pattern_no_capture_group():
+    """LLM 生成的 pattern 无捕获组时不崩溃，回退到 group(0)"""
+    pattern = CrossRefPattern(name="llm_no_group", regex=r"Article\s+\d+(?:\.\d+)?", target_group=1)
+    refs = extract_cross_refs_by_patterns("See Article 4.1 for details.", "1.1", {"Article 4.1"}, [pattern])
+    assert len(refs) == 1
+    assert refs[0].target_clause_id == "Article 4.1"
+
+
+def test_pattern_with_capture_group():
+    """正常 pattern 仍使用 group(1) 提取目标"""
+    pattern = CrossRefPattern(name="llm_with_group", regex=r"Article\s+(\d+(?:\.\d+)?)", target_group=1)
+    refs = extract_cross_refs_by_patterns("See Article 4.1 for details.", "1.1", {"4.1"}, [pattern])
+    assert len(refs) == 1
+    assert refs[0].target_clause_id == "4.1"
+
+
+def test_pattern_capture_group_mismatch_fallback():
+    """捕获组索引错位时回退到 group(0)，不崩溃"""
+    pattern = CrossRefPattern(name="llm_bad_group_idx", regex=r"Rule\s*R-(\d+)", target_group=2)
+    refs = extract_cross_refs_by_patterns("Apply Rule R-7 immediately.", "1.1", {"Rule R-7"}, [pattern])
+    assert len(refs) == 1
+    assert refs[0].target_clause_id == "Rule R-7"
+
+
+def test_llm_extra_pattern_target_group_auto_detect():
+    """structure_parser 自动检测捕获组数量并设置 target_group"""
+    doc = LoadedDocument(
+        path=Path("tmp.txt"),
+        text=(
+            "1 Intro\n"
+            "See Article 4.1 and Rule R-7.\n\n"
+            "4.1 Target\n"
+            "Target clause.\n\n"
+            "7 RuleTarget\n"
+            "Rule clause."
+        ),
+    )
+    cfg = DocumentParserConfig(
+        clause_pattern=r"^\d+(?:\.\d+)*\s+",
+        structure_type="numeric_dotted",
+        cross_reference_patterns=[r"Article\s+\d+(?:\.\d+)?", r"Rule\s*R-(\d+)"],
+    )
+    parser = StructureParser(cfg)
+    structure = parser.parse(doc)
+    targets = {r.target_clause_id for r in structure.cross_references}
+    assert "Article 4.1" in targets
+    assert "7" in targets
+
+
+def test_invalid_regex_skipped(caplog: pytest.LogCaptureFixture):
+    """无效正则被跳过，不影响其他 pattern"""
+    caplog.set_level(logging.WARNING)
+    doc = LoadedDocument(
+        path=Path("tmp.txt"),
+        text=(
+            "1 Intro\n"
+            "Apply Rule R-7.\n\n"
+            "7 RuleTarget\n"
+            "Rule clause."
+        ),
+    )
+    cfg = DocumentParserConfig(
+        clause_pattern=r"^\d+(?:\.\d+)*\s+",
+        structure_type="numeric_dotted",
+        cross_reference_patterns=[r"(", r"Rule\s*R-(\d+)"],
+    )
+    parser = StructureParser(cfg)
+    structure = parser.parse(doc)
+    targets = {r.target_clause_id for r in structure.cross_references}
+    assert "7" in targets
+    assert any("编译失败" in rec.message for rec in caplog.records)

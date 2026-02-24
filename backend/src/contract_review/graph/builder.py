@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -472,6 +473,7 @@ async def _run_react_branch(
         domain_id=state.get("domain_id"),
         suggested_skills=suggested_skills,
         dispatcher=dispatcher,
+        max_iterations=max(1, int(max_iterations or 5)),
     )
 
     risks_raw, skill_context, final_messages = await react_agent_loop(
@@ -601,6 +603,57 @@ async def _analyze_legacy(
     }
 
 
+async def _deterministic_skill_fallback(
+    *,
+    state: ReviewGraphState,
+    dispatcher: SkillDispatcher | None,
+    clause_id: str,
+    clause_name: str,
+    description: str,
+    primary_structure: Any,
+    required_skills: list[str],
+) -> Dict[str, Any]:
+    """Run required skills deterministically when LLM/ReAct is unavailable."""
+    skill_context: Dict[str, Any] = {}
+
+    if dispatcher and primary_structure:
+        for skill_id in required_skills:
+            if skill_id not in dispatcher.skill_ids:
+                continue
+            try:
+                skill_result = await dispatcher.prepare_and_call(
+                    skill_id,
+                    clause_id,
+                    primary_structure,
+                    dict(state),
+                )
+                if skill_result.success and skill_result.data:
+                    skill_context[skill_id] = skill_result.data
+            except Exception as exc:
+                logger.warning("Deterministic fallback: Skill '%s' 调用失败: %s", skill_id, exc)
+
+    clause_text = ""
+    context = skill_context.get("get_clause_context")
+    if isinstance(context, dict):
+        clause_text = str(context.get("context_text", "") or "")
+
+    if not clause_text and primary_structure:
+        clause_text = _extract_clause_text(primary_structure, clause_id)
+
+    if not clause_text:
+        clause_text = f"{clause_name}\n{description}".strip() or clause_id
+
+    return {
+        "current_clause_id": clause_id,
+        "current_clause_text": clause_text,
+        "current_risks": [],
+        "current_skill_context": skill_context,
+        "current_diffs": [],
+        "agent_messages": None,
+        "clause_retry_count": 0,
+    }
+
+
 async def _analyze_gen3(
     *,
     state: ReviewGraphState,
@@ -615,59 +668,63 @@ async def _analyze_gen3(
     required_skills: list[str],
 ) -> Dict[str, Any]:
     llm_client = _get_llm_client()
-    if not llm_client or not dispatcher or not primary_structure:
-        logger.warning(
-            "gen3 模式缺少必要组件 (llm=%s, dispatcher=%s, structure=%s)，返回空结果",
+    if llm_client and dispatcher and primary_structure:
+        settings = get_settings()
+        clause_plan = _get_clause_plan(state, clause_id)
+        suggested_tools = required_skills
+        max_iterations = int(getattr(settings, "react_max_iterations", 5) or 5)
+        react_clause_timeout = float(getattr(settings, "react_clause_timeout", 30) or 30)
+        if clause_plan:
+            suggested_tools = clause_plan.suggested_tools or required_skills
+            max_iterations = int(clause_plan.max_iterations or max_iterations)
+
+        try:
+            result = await asyncio.wait_for(
+                _run_react_branch(
+                    llm_client=llm_client,
+                    dispatcher=dispatcher,
+                    clause_id=clause_id,
+                    clause_name=clause_name,
+                    description=description,
+                    priority=priority,
+                    our_party=our_party,
+                    language=language,
+                    primary_structure=primary_structure,
+                    state=state,
+                    suggested_skills=suggested_tools,
+                    max_iterations=max_iterations,
+                    temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
+                ),
+                timeout=react_clause_timeout,
+            )
+            if result.get("current_skill_context"):
+                return result
+            logger.info("gen3 ReAct 返回空 skill_context (clause=%s)，尝试 deterministic fallback", clause_id)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "gen3 ReAct 超时 (clause=%s, timeout=%ss)，尝试 deterministic fallback",
+                clause_id,
+                react_clause_timeout,
+            )
+        except Exception as exc:
+            logger.warning("gen3 ReAct 执行失败 (clause=%s): %s，尝试 deterministic fallback", clause_id, exc)
+    else:
+        logger.info(
+            "gen3 缺少 LLM 或必要组件 (llm=%s, dispatcher=%s, structure=%s)，走 deterministic fallback",
             bool(llm_client),
             bool(dispatcher),
             bool(primary_structure),
         )
-        return {
-            "current_clause_id": clause_id,
-            "current_clause_text": "",
-            "current_risks": [],
-            "current_skill_context": {},
-            "current_diffs": [],
-            "agent_messages": None,
-            "clause_retry_count": 0,
-        }
 
-    settings = get_settings()
-    clause_plan = _get_clause_plan(state, clause_id)
-    suggested_tools = required_skills
-    max_iterations = int(getattr(settings, "react_max_iterations", 5) or 5)
-    if clause_plan:
-        suggested_tools = clause_plan.suggested_tools or required_skills
-        max_iterations = int(clause_plan.max_iterations or max_iterations)
-
-    try:
-        return await _run_react_branch(
-            llm_client=llm_client,
-            dispatcher=dispatcher,
-            clause_id=clause_id,
-            clause_name=clause_name,
-            description=description,
-            priority=priority,
-            our_party=our_party,
-            language=language,
-            primary_structure=primary_structure,
-            state=state,
-            suggested_skills=suggested_tools,
-            max_iterations=max_iterations,
-            temperature=float(getattr(settings, "react_temperature", 0.1) or 0.1),
-        )
-    except Exception as exc:
-        logger.error("gen3 ReAct Agent 执行失败 (clause=%s): %s", clause_id, exc)
-        return {
-            "current_clause_id": clause_id,
-            "current_clause_text": "",
-            "current_risks": [],
-            "current_skill_context": {},
-            "current_diffs": [],
-            "agent_messages": None,
-            "clause_retry_count": 0,
-            "error": f"ReAct Agent 失败: {exc}",
-        }
+    return await _deterministic_skill_fallback(
+        state=state,
+        dispatcher=dispatcher,
+        clause_id=clause_id,
+        clause_name=clause_name,
+        description=description,
+        primary_structure=primary_structure,
+        required_skills=required_skills,
+    )
 
 
 async def node_clause_analyze(

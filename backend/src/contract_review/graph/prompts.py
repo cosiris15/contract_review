@@ -77,10 +77,12 @@ REACT_AGENT_SYSTEM = """你是一位资深法务审阅专家，正在逐条审�
 {suggested_skills_hint}
 
 【工具使用规则】
-1. 每次可以调用一个或多个工具
-2. 工具的 clause_id 参数使用当前条款编号：{clause_id}
-3. 不需要填写 document_structure 和 state_snapshot 等内部参数，系统会自动注入
-4. 当你认为信息足够时，直接输出最终结果，不要再调用工具
+1. 你必须优先调用以下建议工具：{suggested_skills_hint}
+2. 每次可以调用一个或多个工具，但总轮次不超过 {max_iterations} 轮
+3. 工具的 clause_id 参数使用当前条款编号：{clause_id}
+4. 不需要填写 document_structure 和 state_snapshot 等内部参数，系统会自动注入
+5. 当你认为信息足够时，直接输出最终结果，不要再调用工具
+6. 如果某个工具返回空结果或错误，不要重复调用同一工具
 
 【最终输出要求】
 以 JSON 数组格式输出风险点列表，字段必须包含：
@@ -268,12 +270,14 @@ def _build_sha_spa_instruction(skill_context: Dict[str, Any]) -> str:
 
 def _build_suggested_skills_hint(suggested_skills: list[str] | None, dispatcher: Any) -> str:
     if not suggested_skills or dispatcher is None:
-        return ""
-    lines = ["【建议工具】以下工具可能对本条款分析有帮助（仅供参考）："]
+        return "【建议工具】无（请根据条款内容自主选择工具）"
+    lines = ["【建议工具】"]
     for skill_id in suggested_skills:
         reg = dispatcher.get_registration(skill_id) if hasattr(dispatcher, "get_registration") else None
         if reg:
             lines.append(f"- {skill_id}: {reg.description}")
+    if len(lines) == 1:
+        lines.append("无（请根据条款内容自主选择工具）")
     return "\n".join(lines)
 
 
@@ -290,6 +294,7 @@ def build_react_agent_messages(
     domain_id: str | None = None,
     suggested_skills: list[str] | None = None,
     dispatcher: Any = None,
+    max_iterations: int = 5,
 ) -> List[Dict[str, str]]:
     domain_instruction = ""
     if domain_id == "fidic":
@@ -312,6 +317,7 @@ def build_react_agent_messages(
         our_party=our_party,
         suggested_skills_hint=_build_suggested_skills_hint(suggested_skills, dispatcher),
         clause_id=clause_id,
+        max_iterations=max_iterations,
     )
     user = (
         f"【条款信息】\n"

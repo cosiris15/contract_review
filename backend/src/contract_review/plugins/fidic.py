@@ -92,16 +92,16 @@ FIDIC_DOMAIN_SKILLS: list[SkillRegistration] = [
 FIDIC_SILVER_BOOK_CHECKLIST: list[ReviewChecklistItem] = [
     ReviewChecklistItem(clause_id="1.1", clause_name="定义与解释", priority="high", required_skills=["get_clause_context", "resolve_definition"], description="核实关键定义是否被 PC 修改"),
     ReviewChecklistItem(clause_id="1.5", clause_name="文件优先顺序", priority="high", required_skills=["get_clause_context", "fidic_merge_gc_pc"], description="确认合同文件优先顺序"),
-    ReviewChecklistItem(clause_id="4.1", clause_name="承包商的一般义务", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "fidic_merge_gc_pc", "compare_with_baseline", "cross_reference_check", "assess_deviation"], description="检查义务范围是否被扩大"),
+    ReviewChecklistItem(clause_id="4.1", clause_name="承包商的一般义务", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "fidic_merge_gc_pc", "compare_with_baseline", "cross_reference_check", "assess_deviation", "fidic_check_pc_consistency"], description="检查义务范围是否被扩大"),
     ReviewChecklistItem(clause_id="4.12", clause_name="不可预见的物质条件", priority="high", required_skills=["get_clause_context", "compare_with_baseline"], description="关注风险转移"),
-    ReviewChecklistItem(clause_id="8.2", clause_name="竣工时间", priority="high", required_skills=["get_clause_context", "fidic_calculate_time_bar", "extract_financial_terms"], description="核查工期延误赔偿机制"),
-    ReviewChecklistItem(clause_id="14.1", clause_name="合同价格", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "extract_financial_terms", "compare_with_baseline", "assess_deviation"], description="核查价格调整机制"),
+    ReviewChecklistItem(clause_id="8.2", clause_name="竣工时间", priority="high", required_skills=["get_clause_context", "fidic_calculate_time_bar", "extract_financial_terms", "fidic_check_pc_consistency"], description="核查工期延误赔偿机制"),
+    ReviewChecklistItem(clause_id="14.1", clause_name="合同价格", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "extract_financial_terms", "compare_with_baseline", "assess_deviation", "fidic_check_pc_consistency"], description="核查价格调整机制"),
     ReviewChecklistItem(clause_id="14.2", clause_name="预付款", priority="high", required_skills=["get_clause_context", "fidic_merge_gc_pc", "extract_financial_terms"], description="核查预付款退还机制"),
-    ReviewChecklistItem(clause_id="14.7", clause_name="期中付款", priority="high", required_skills=["get_clause_context", "extract_financial_terms"], description="核查付款周期和条件"),
-    ReviewChecklistItem(clause_id="17.6", clause_name="责任限制", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "extract_financial_terms", "compare_with_baseline", "assess_deviation"], description="核查赔偿上限"),
+    ReviewChecklistItem(clause_id="14.7", clause_name="期中付款", priority="high", required_skills=["get_clause_context", "extract_financial_terms", "fidic_check_pc_consistency"], description="核查付款周期和条件"),
+    ReviewChecklistItem(clause_id="17.6", clause_name="责任限制", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "extract_financial_terms", "compare_with_baseline", "assess_deviation", "fidic_check_pc_consistency"], description="核查赔偿上限"),
     ReviewChecklistItem(clause_id="18.1", clause_name="保险要求", priority="high", required_skills=["get_clause_context", "extract_financial_terms"], description="核查保险要求"),
-    ReviewChecklistItem(clause_id="20.1", clause_name="承包商索赔", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "fidic_calculate_time_bar", "compare_with_baseline", "cross_reference_check", "assess_deviation"], description="核查索赔时效"),
-    ReviewChecklistItem(clause_id="20.2", clause_name="争议裁决", priority="high", required_skills=["get_clause_context", "compare_with_baseline"], description="核查争议解决机制"),
+    ReviewChecklistItem(clause_id="20.1", clause_name="承包商索赔", priority="critical", required_skills=["get_clause_context", "load_review_criteria", "fidic_calculate_time_bar", "compare_with_baseline", "cross_reference_check", "assess_deviation", "fidic_check_pc_consistency"], description="核查索赔时效"),
+    ReviewChecklistItem(clause_id="20.2", clause_name="争议裁决", priority="high", required_skills=["get_clause_context", "compare_with_baseline", "fidic_check_pc_consistency"], description="核查争议解决机制"),
 ]
 
 FIDIC_PLUGIN = DomainPlugin(

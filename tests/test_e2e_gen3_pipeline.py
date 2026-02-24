@@ -178,7 +178,7 @@ class TestGen3EndToEnd:
         assert result["current_clause_id"] == "4.1"
 
     @pytest.mark.asyncio
-    async def test_gen3_react_branch_exception_returns_error(self, primary_structure, base_state, monkeypatch):
+    async def test_gen3_react_branch_exception_uses_deterministic_fallback(self, primary_structure, base_state, monkeypatch):
         dispatcher = _create_dispatcher(domain_id="fidic")
         assert dispatcher is not None
 
@@ -210,9 +210,8 @@ class TestGen3EndToEnd:
             primary_structure=primary_structure,
             required_skills=["get_clause_context"],
         )
-        assert "error" in result
-        assert "ReAct Agent 失败" in result["error"]
-        assert result["current_skill_context"] == {}
+        assert result["current_clause_id"] == "4.1"
+        assert "get_clause_context" in result["current_skill_context"]
 
 
 class TestGetExecutionMode:

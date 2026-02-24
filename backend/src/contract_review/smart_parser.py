@@ -132,6 +132,11 @@ async def detect_clause_pattern(
             for item in raw_xref_patterns:
                 if isinstance(item, str) and _validate_regex(item):
                     valid_xref_patterns.append(item)
+                    try:
+                        if re.compile(item).groups == 0:
+                            logger.debug("LLM xref pattern 无捕获组，将使用全匹配: %s", item)
+                    except re.error:
+                        pass
 
         max_depth = payload.get("max_depth", 4)
         try:

@@ -116,7 +116,11 @@ def extract_cross_refs_by_patterns(
         except re.error:
             continue
         for match in compiled.finditer(text):
-            target_raw = str(match.group(pat.target_group) or "").strip()
+            try:
+                target_raw = str(match.group(pat.target_group) or "").strip()
+            except (IndexError, re.error):
+                # Missing capture group: fall back to the full match text.
+                target_raw = str(match.group(0) or "").strip()
             if not target_raw:
                 continue
 
@@ -147,4 +151,3 @@ def extract_cross_refs_by_patterns(
                 )
             )
     return refs
-
