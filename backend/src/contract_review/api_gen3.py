@@ -37,6 +37,8 @@ from .plugins.registry import (
 )
 from .redline_generator import generate_redline_document
 from .structure_parser import StructureParser
+from .supabase_client import get_storage_bucket, get_supabase_client
+from .upload_job_manager import get_upload_job_manager
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,8 @@ ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".xlsx"}
 MAX_UPLOAD_SIZE_MB = 10
 ALLOWED_ROLES = {"primary", "baseline", "supplement", "reference", "criteria"}
 SSE_CACHE_MAX = 200
+UPLOAD_PARSE_SEMAPHORE = asyncio.Semaphore(2)
+_LOCAL_UPLOAD_BLOBS: Dict[str, bytes] = {}
 
 
 def _role_to_str(value: Any) -> str:
@@ -155,6 +159,59 @@ def _replay_sse_since(entry: Dict[str, Any], last_event_id: int) -> list[str]:
     return replay
 
 
+def _push_upload_event(
+    entry: Dict[str, Any],
+    event_type: str,
+    *,
+    job_id: str,
+    role: str,
+    filename: str,
+    stage: str,
+    progress: int,
+    status: str,
+    result_meta: dict | None = None,
+    error: str | None = None,
+) -> None:
+    payload: Dict[str, Any] = {
+        "job_id": job_id,
+        "role": role,
+        "filename": filename,
+        "stage": stage,
+        "progress": int(progress),
+        "status": status,
+    }
+    if result_meta is not None:
+        payload["result_meta"] = result_meta
+    if error:
+        payload["error"] = error
+    _next_sse_event(entry, event_type, payload)
+
+
+def _get_storage_client():
+    return get_supabase_client().storage.from_(get_storage_bucket())
+
+
+def _upload_storage_bytes(storage_key: str, content: bytes) -> None:
+    try:
+        _get_storage_client().upload(
+            storage_key,
+            content,
+            file_options={"content-type": "application/octet-stream", "upsert": "true"},
+        )
+    except Exception:
+        _LOCAL_UPLOAD_BLOBS[storage_key] = content
+
+
+def _download_storage_bytes(storage_key: str) -> bytes:
+    try:
+        return _get_storage_client().download(storage_key)
+    except Exception:
+        data = _LOCAL_UPLOAD_BLOBS.get(storage_key)
+        if data is None:
+            raise
+        return data
+
+
 def _prune_inactive_graphs() -> None:
     now = _now_ts()
     stale_task_ids = []
@@ -169,6 +226,9 @@ def _prune_inactive_graphs() -> None:
         entry = _active_graphs.pop(task_id, None)
         if not entry:
             continue
+        for task in (entry.get("upload_tasks") or {}).values():
+            if task and not task.done():
+                task.cancel()
         tmp_dir = entry.get("tmp_dir")
         if tmp_dir:
             try:
@@ -222,6 +282,7 @@ async def start_review(request: StartReviewRequest):
         "criteria_file_path": "",
         "sse_seq": 0,
         "sse_cache": [],
+        "upload_tasks": {},
     }
     _active_graphs[task_id] = entry
 
@@ -248,6 +309,14 @@ async def run_review(task_id: str):
         return {"task_id": task_id, "status": "already_running"}
 
     _touch_entry(entry)
+    upload_jobs = get_upload_job_manager().get_jobs_by_task(task_id)
+    running_uploads = [j for j in upload_jobs if j.get("status") in {"queued", "running"}]
+    if running_uploads:
+        raise HTTPException(409, "存在正在处理的上传任务，请等待上传解析完成后再开始审阅")
+    has_primary = any(_role_to_str((d or {}).get("role", "")).lower() == "primary" for d in entry.get("documents", []))
+    if not has_primary:
+        raise HTTPException(400, "请先上传并完成解析主合同文档")
+
     graph = entry["graph"]
     config = entry["config"]
     snapshot = graph.get_state(config)
@@ -328,6 +397,248 @@ async def get_clause_context(task_id: str, clause_id: str):
     }
 
 
+def _schedule_upload_job(task_id: str, job_id: str) -> None:
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        return
+    upload_tasks = entry.setdefault("upload_tasks", {})
+    current = upload_tasks.get(job_id)
+    if current and not current.done():
+        return
+    upload_tasks[job_id] = asyncio.create_task(_process_upload_job(task_id, job_id))
+
+
+async def _emit_upload_stage(entry: Dict[str, Any], job: dict[str, Any], stage: str, progress: int) -> None:
+    manager = get_upload_job_manager()
+    manager.update_job_stage(job["job_id"], stage, progress)
+    _push_upload_event(
+        entry,
+        "upload_progress",
+        job_id=job["job_id"],
+        role=str(job.get("role", "")),
+        filename=str(job.get("filename", "")),
+        stage=stage,
+        progress=progress,
+        status="running",
+    )
+
+
+async def _process_upload_job(task_id: str, job_id: str) -> None:
+    manager = get_upload_job_manager()
+    job = manager.get_job(job_id)
+    entry = _active_graphs.get(task_id)
+    if not job:
+        if entry:
+            entry.get("upload_tasks", {}).pop(job_id, None)
+        return
+
+    try:
+        if not entry:
+            manager.mark_job_failed(job_id, "任务不在活跃会话中，请进入任务后重试")
+            return
+
+        manager.mark_job_running(job_id)
+        async with UPLOAD_PARSE_SEMAPHORE:
+            tmp_dir = entry.get("tmp_dir")
+            if not tmp_dir:
+                tmp_dir = tempfile.mkdtemp(prefix=f"cr_{task_id}_")
+                entry["tmp_dir"] = tmp_dir
+
+            filename = str(job.get("filename") or f"document_{job_id}.txt")
+            ext = Path(filename).suffix.lower()
+            file_path = Path(tmp_dir) / f"{job_id}{ext}"
+
+            await _emit_upload_stage(entry, job, "loading", 10)
+            downloaded = _download_storage_bytes(str(job.get("storage_key", "")))
+            file_path.write_bytes(downloaded)
+
+            role = str(job.get("role", "")).lower()
+            structure = None
+            structure_type = "criteria_table" if role == "criteria" else ""
+            total_clauses = 0
+            total_criteria = None
+            loaded = None
+
+            if role == "criteria":
+                from .criteria_parser import parse_criteria_excel
+
+                await _emit_upload_stage(entry, job, "parsing", 40)
+                criteria = parse_criteria_excel(file_path)
+                entry["criteria_data"] = [row.model_dump() for row in criteria]
+                entry["criteria_file_path"] = str(file_path)
+                total_criteria = len(entry.get("criteria_data", []))
+            else:
+                await _emit_upload_stage(entry, job, "detecting", 25)
+                try:
+                    loaded = load_document(file_path)
+                except Exception as exc:
+                    raise ValueError(f"文档解析失败: {exc}") from exc
+
+                if not loaded.text.strip():
+                    raise ValueError("无法从文档中提取文本内容")
+
+                domain_id = entry.get("domain_id")
+                preset_config = get_parser_config(domain_id) if domain_id else None
+                parser_config = preset_config
+                llm_client = None
+                try:
+                    from .config import get_settings
+                    from .llm_client import LLMClient
+                    from .smart_parser import detect_clause_pattern
+
+                    llm_client = LLMClient(get_settings().llm)
+                    parser_config = await detect_clause_pattern(
+                        llm_client=llm_client,
+                        document_text=loaded.text,
+                        existing_config=preset_config,
+                    )
+                except Exception:
+                    logger.warning("LLM 模式检测跳过，使用预设/默认配置", exc_info=True)
+                    parser_config = preset_config
+
+                await _emit_upload_stage(entry, job, "parsing", 40)
+                parser = StructureParser(config=parser_config)
+                structure = parser.parse(loaded)
+
+                try:
+                    from .definition_extractor import build_definitions_dict, extract_definitions_hybrid
+
+                    await _emit_upload_stage(entry, job, "extracting_defs", 60)
+                    def_section_text = ""
+                    def_section_id = getattr(parser_config, "definitions_section_id", None) if parser_config else None
+                    if def_section_id and structure:
+                        def_node = _find_clause_in_structure(structure, str(def_section_id))
+                        if def_node:
+                            def_section_text = _collect_node_text(def_node)
+
+                    definitions_v2 = await extract_definitions_hybrid(
+                        llm_client=llm_client,
+                        document_text=loaded.text,
+                        definitions_section_text=def_section_text,
+                        parser_config=parser_config,
+                    )
+                    if definitions_v2:
+                        structure.definitions_v2 = definitions_v2
+                        structure.definitions.update(build_definitions_dict(definitions_v2))
+                except Exception:
+                    logger.warning("SPEC-29 定义提取增强跳过", exc_info=True)
+
+                try:
+                    from .cross_reference_extractor import extract_all_cross_refs_hybrid
+
+                    await _emit_upload_stage(entry, job, "extracting_refs", 75)
+                    all_clause_ids: set[str] = set()
+
+                    def _collect_ids(nodes):
+                        for node in nodes or []:
+                            clause_id = getattr(node, "clause_id", None)
+                            if clause_id:
+                                all_clause_ids.add(str(clause_id))
+                            children = getattr(node, "children", []) if node is not None else []
+                            _collect_ids(children)
+
+                    _collect_ids(structure.clauses if structure else [])
+                    enhanced_refs = await extract_all_cross_refs_hybrid(
+                        llm_client=llm_client,
+                        clause_tree=structure.clauses if structure else [],
+                        all_clause_ids=all_clause_ids,
+                        extra_patterns=getattr(parser_config, "cross_reference_patterns", None),
+                    )
+                    if enhanced_refs:
+                        structure.cross_references = enhanced_refs
+                except Exception:
+                    logger.warning("SPEC-30 交叉引用增强跳过", exc_info=True)
+
+                total_clauses = structure.total_clauses
+                structure_type = structure.structure_type
+
+            await _emit_upload_stage(entry, job, "injecting", 90)
+            doc_id = generate_id()
+            task_doc = TaskDocument(
+                id=doc_id,
+                task_id=task_id,
+                role=DocumentRole(role),
+                filename=filename,
+                storage_name=str(job.get("storage_key", "")).split("/")[-1],
+                structure=structure,
+                metadata=(
+                    {"total_criteria": len(entry.get("criteria_data", [])), "source": "gen3_upload"}
+                    if role == "criteria"
+                    else {"text_length": len(loaded.text if loaded else ""), "source": "gen3_upload"}
+                ),
+            )
+
+            docs = entry.get("documents", [])
+            filtered_docs = [d for d in docs if _role_to_str((d or {}).get("role", "")).lower() != role]
+            filtered_docs.append(task_doc.model_dump(mode="json"))
+            entry["documents"] = filtered_docs
+
+            if role == "primary" and structure:
+                entry["primary_structure"] = structure.model_dump(mode="json")
+
+            graph = entry.get("graph")
+            config = entry.get("config")
+            if graph and config:
+                try:
+                    graph.update_state(
+                        config,
+                        {
+                            "documents": entry["documents"],
+                            "primary_structure": entry.get("primary_structure"),
+                            "criteria_data": entry.get("criteria_data", []),
+                            "criteria_file_path": entry.get("criteria_file_path", ""),
+                            "our_party": entry.get("our_party", ""),
+                            "language": entry.get("language", "zh-CN"),
+                        },
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("注入文档到图状态失败: %s", exc)
+
+            result_meta = {
+                "task_id": task_id,
+                "document_id": doc_id,
+                "filename": filename,
+                "role": role,
+                "total_clauses": total_clauses,
+                "total_criteria": total_criteria,
+                "structure_type": structure_type,
+            }
+            manager.mark_job_succeeded(job_id, result_meta)
+            _push_upload_event(
+                entry,
+                "upload_complete",
+                job_id=job_id,
+                role=role,
+                filename=filename,
+                stage="finished",
+                progress=100,
+                status="succeeded",
+                result_meta=result_meta,
+            )
+            _touch_entry(entry)
+    except Exception as exc:
+        logger.exception("上传任务执行失败: task_id=%s job_id=%s", task_id, job_id)
+        manager.mark_job_failed(job_id, str(exc))
+        if entry:
+            _push_upload_event(
+                entry,
+                "upload_failed",
+                job_id=job_id,
+                role=str(job.get("role", "")),
+                filename=str(job.get("filename", "")),
+                stage="failed",
+                progress=int(job.get("progress") or 0),
+                status="failed",
+                error=str(exc),
+            )
+            _touch_entry(entry)
+    finally:
+        if job and job.get("storage_key"):
+            _LOCAL_UPLOAD_BLOBS.pop(str(job.get("storage_key")), None)
+        if entry:
+            entry.get("upload_tasks", {}).pop(job_id, None)
+
+
 @router.post("/review/{task_id}/upload")
 async def upload_document(
     task_id: str,
@@ -353,162 +664,37 @@ async def upload_document(
     if len(content) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
         raise HTTPException(413, f"文件大小超过 {MAX_UPLOAD_SIZE_MB}MB 限制")
 
-    tmp_dir = entry.get("tmp_dir")
-    if not tmp_dir:
-        tmp_dir = tempfile.mkdtemp(prefix=f"cr_{task_id}_")
-        entry["tmp_dir"] = tmp_dir
-
     filename = file.filename or f"document{ext}"
-    file_path = Path(tmp_dir) / filename
-    file_path.write_bytes(content)
-
-    structure = None
-    total_clauses = 0
-    structure_type = "criteria_table" if role == "criteria" else ""
-
-    if role == "criteria":
-        from .criteria_parser import parse_criteria_excel
-
-        criteria = parse_criteria_excel(file_path)
-        entry["criteria_data"] = [row.model_dump() for row in criteria]
-        entry["criteria_file_path"] = str(file_path)
-    else:
-        try:
-            loaded = load_document(file_path)
-        except Exception as exc:
-            raise HTTPException(422, f"文档解析失败: {exc}") from exc
-
-        if not loaded.text.strip():
-            raise HTTPException(422, "无法从文档中提取文本内容")
-
-        domain_id = entry.get("domain_id")
-        preset_config = get_parser_config(domain_id) if domain_id else None
-        parser_config = preset_config
-        llm_client = None
-        try:
-            from .config import get_settings
-            from .llm_client import LLMClient
-            from .smart_parser import detect_clause_pattern
-
-            llm_client = LLMClient(get_settings().llm)
-            parser_config = await detect_clause_pattern(
-                llm_client=llm_client,
-                document_text=loaded.text,
-                existing_config=preset_config,
-            )
-        except Exception:
-            logger.warning("LLM 模式检测跳过，使用预设/默认配置", exc_info=True)
-            parser_config = preset_config
-
-        parser = StructureParser(config=parser_config)
-        structure = parser.parse(loaded)
-        try:
-            from .definition_extractor import build_definitions_dict, extract_definitions_hybrid
-
-            def_section_text = ""
-            def_section_id = getattr(parser_config, "definitions_section_id", None) if parser_config else None
-            if def_section_id and structure:
-                def_node = _find_clause_in_structure(structure, str(def_section_id))
-                if def_node:
-                    def_section_text = _collect_node_text(def_node)
-
-            definitions_v2 = await extract_definitions_hybrid(
-                llm_client=llm_client,
-                document_text=loaded.text,
-                definitions_section_text=def_section_text,
-                parser_config=parser_config,
-            )
-            if definitions_v2:
-                structure.definitions_v2 = definitions_v2
-                structure.definitions.update(build_definitions_dict(definitions_v2))
-        except Exception:
-            logger.warning("SPEC-29 定义提取增强跳过", exc_info=True)
-
-        try:
-            from .cross_reference_extractor import extract_all_cross_refs_hybrid
-
-            all_clause_ids: set[str] = set()
-
-            def _collect_ids(nodes):
-                for node in nodes or []:
-                    clause_id = getattr(node, "clause_id", None)
-                    if clause_id:
-                        all_clause_ids.add(str(clause_id))
-                    children = getattr(node, "children", []) if node is not None else []
-                    _collect_ids(children)
-
-            _collect_ids(structure.clauses if structure else [])
-            enhanced_refs = await extract_all_cross_refs_hybrid(
-                llm_client=llm_client,
-                clause_tree=structure.clauses if structure else [],
-                all_clause_ids=all_clause_ids,
-                extra_patterns=getattr(parser_config, "cross_reference_patterns", None),
-            )
-            if enhanced_refs:
-                structure.cross_references = enhanced_refs
-        except Exception:
-            logger.warning("SPEC-30 交叉引用增强跳过", exc_info=True)
-
-        total_clauses = structure.total_clauses
-        structure_type = structure.structure_type
-
-    doc_id = generate_id()
-    task_doc = TaskDocument(
-        id=doc_id,
-        task_id=task_id,
-        role=DocumentRole(role),
-        filename=filename,
-        storage_name=file_path.name,
-        structure=structure,
-        metadata=(
-            {"total_criteria": len(entry.get("criteria_data", [])), "source": "gen3_upload"}
-            if role == "criteria"
-            else {"text_length": len(loaded.text), "source": "gen3_upload"}
-        ),
-    )
-
-    docs = entry.get("documents", [])
-    filtered_docs = [d for d in docs if _role_to_str((d or {}).get("role", "")).lower() != role]
-    filtered_docs.append(task_doc.model_dump(mode="json"))
-    entry["documents"] = filtered_docs
-
     if our_party:
         entry["our_party"] = our_party
     if language:
         entry["language"] = language
-    if role == "primary":
-        entry["primary_structure"] = structure.model_dump(mode="json")
 
-    graph = entry.get("graph")
-    config = entry.get("config")
-    if graph and config:
-        try:
-            graph.update_state(
-                config,
-                {
-                    "documents": entry["documents"],
-                    "primary_structure": (
-                        entry.get("primary_structure")
-                    ),
-                    "criteria_data": entry.get("criteria_data", []),
-                    "criteria_file_path": entry.get("criteria_file_path", ""),
-                    "our_party": entry.get("our_party", ""),
-                    "language": entry.get("language", "zh-CN"),
-                },
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("注入文档到图状态失败: %s", exc)
-
+    manager = get_upload_job_manager()
+    storage_key = f"gen3_uploads/{task_id}/{generate_id()}/{filename}"
+    _upload_storage_bytes(storage_key, content)
+    job = manager.create_job(
+        task_id=task_id,
+        role=role,
+        filename=filename,
+        storage_key=storage_key,
+        our_party=entry.get("our_party", ""),
+        language=entry.get("language", "zh-CN"),
+    )
+    _schedule_upload_job(task_id, str(job["job_id"]))
     _touch_entry(entry)
+
     return {
         "task_id": task_id,
-        "document_id": doc_id,
+        "job_id": job["job_id"],
+        "status": "queued",
+        "document_id": None,
         "filename": filename,
         "role": role,
-        "total_clauses": total_clauses,
-        "total_criteria": len(entry.get("criteria_data", [])) if role == "criteria" else None,
-        "structure_type": structure_type,
-        "message": "文档上传并解析成功",
+        "total_clauses": None,
+        "total_criteria": None,
+        "structure_type": None,
+        "message": "文档已上传，后台解析中",
     }
 
 
@@ -534,6 +720,37 @@ async def get_documents(task_id: str):
             for d in docs
         ],
     }
+
+
+@router.get("/review/{task_id}/uploads")
+async def get_upload_jobs(task_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+    _touch_entry(entry)
+    jobs = get_upload_job_manager().get_jobs_by_task(task_id)
+    return {"task_id": task_id, "jobs": jobs}
+
+
+@router.post("/review/{task_id}/uploads/{job_id}/retry")
+async def retry_upload_job(task_id: str, job_id: str):
+    _prune_inactive_graphs()
+    entry = _active_graphs.get(task_id)
+    if not entry:
+        raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
+
+    manager = get_upload_job_manager()
+    job = manager.get_job(job_id)
+    if not job or str(job.get("task_id")) != task_id:
+        raise HTTPException(404, "上传任务不存在")
+    if job.get("status") != "failed":
+        raise HTTPException(400, "仅失败的上传任务允许重试")
+
+    manager.mark_job_queued(job_id)
+    _schedule_upload_job(task_id, job_id)
+    _touch_entry(entry)
+    return {"task_id": task_id, "job_id": job_id, "status": "queued"}
 
 
 @router.post("/review/{task_id}/approve", response_model=ApprovalResponse)
@@ -897,6 +1114,7 @@ async def review_events(task_id: str, request: Request):
             last_event_id = int(last_event_id_raw) if last_event_id_raw else 0
         except ValueError:
             last_event_id = 0
+        delivered_event_id = last_event_id
         while True:
             entry = _active_graphs.get(task_id)
             if not entry:
@@ -904,10 +1122,9 @@ async def review_events(task_id: str, request: Request):
                 break
 
             _touch_entry(entry)
-            if last_event_id > 0:
-                for payload in _replay_sse_since(entry, last_event_id):
-                    yield payload
-                last_event_id = 0
+            for payload in _replay_sse_since(entry, delivered_event_id):
+                yield payload
+                delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
             snapshot = entry["graph"].get_state(entry["config"])
             state = snapshot.values
             current_index = state.get("current_clause_index", 0)
@@ -925,6 +1142,7 @@ async def review_events(task_id: str, request: Request):
                         "message": f"正在审查第 {current_index + 1}/{max(len(checklist), 1)} 个条款",
                     },
                 )
+                delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                 last_emit_ts = time.monotonic()
 
             pending = state.get("pending_diffs", [])
@@ -943,6 +1161,7 @@ async def review_events(task_id: str, request: Request):
                         pushed_diff_ids.add(diff_id)
                         new_diffs_pushed = True
                     yield _next_sse_event(entry, "diff_proposed", payload)
+                    delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                     last_emit_ts = time.monotonic()
                 if new_diffs_pushed and snapshot.next:
                     yield _next_sse_event(
@@ -950,6 +1169,7 @@ async def review_events(task_id: str, request: Request):
                         "approval_required",
                         {"task_id": task_id, "pending_count": len(pending), "type": "approval_required"},
                     )
+                    delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                     last_emit_ts = time.monotonic()
 
             if state.get("is_complete"):
@@ -958,12 +1178,14 @@ async def review_events(task_id: str, request: Request):
                     "review_complete",
                     {"task_id": task_id, "summary": state.get("summary_notes", "")},
                 )
+                delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                 break
 
             # Prevent long-lived SSE idle disconnects on proxies/load balancers.
             now_ts = time.monotonic()
             if now_ts - last_emit_ts >= heartbeat_interval:
                 yield _next_sse_event(entry, "heartbeat", {"task_id": task_id, "ts": int(time.time())})
+                delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                 last_emit_ts = now_ts
 
             await asyncio.sleep(2)
@@ -1013,6 +1235,20 @@ async def _resume_graph(task_id: str, graph, config: dict):
                     entry["completed_ts"] = _now_ts()
             except Exception:
                 pass
+
+
+def recover_upload_jobs() -> None:
+    manager = get_upload_job_manager()
+    jobs = manager.get_recoverable_jobs()
+    for job in jobs:
+        task_id = str(job.get("task_id", ""))
+        job_id = str(job.get("job_id", ""))
+        if not task_id or not job_id:
+            continue
+        if task_id not in _active_graphs:
+            manager.mark_job_failed(job_id, "任务不在活跃会话中，请进入任务后重试")
+            continue
+        _schedule_upload_job(task_id, job_id)
 
 
 def _format_gen3_sse(event_type: str, data: Any, event_id: str | None = None) -> str:

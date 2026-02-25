@@ -2,52 +2,57 @@
   <div class="upload-panel">
     <div class="panel-header">
       <h3>文档上传</h3>
-      <el-radio-group v-model="selectedRole" size="small" :disabled="disabled || loading">
-        <el-tooltip
-          v-for="item in roleTabs"
-          :key="item.value"
-          :content="item.tooltip"
-          placement="top"
-          effect="dark"
+      <el-button
+        type="primary"
+        :disabled="disabled || loading || selectedUploads.length === 0"
+        @click="submitBatch"
+      >
+        开始上传
+      </el-button>
+    </div>
+
+    <div class="role-grid">
+      <div v-for="item in roleSections" :key="item.value" class="role-card">
+        <div class="role-card-header">
+          <span>{{ item.label }}</span>
+          <el-tag size="small" :type="item.required ? 'danger' : 'info'" effect="plain">
+            {{ item.required ? '必需项' : '可选项' }}
+          </el-tag>
+        </div>
+        <p class="role-desc">{{ item.description }}</p>
+        <el-upload
+          drag
+          action="#"
+          :auto-upload="false"
+          :show-file-list="false"
+          :disabled="disabled || loading"
+          accept=".txt,.docx,.pdf,.md,.xlsx"
+          :on-change="(uploadFile) => handleFileChange(item.value, uploadFile)"
         >
-          <el-radio-button :label="item.value">
-            {{ item.label }}
-          </el-radio-button>
-        </el-tooltip>
-      </el-radio-group>
+          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+          <div class="el-upload__text">拖拽或点击选择 {{ item.label }}</div>
+        </el-upload>
+        <div v-if="selectedFilesByRole[item.value]" class="selected-file">
+          <span>{{ selectedFilesByRole[item.value].name }}</span>
+          <el-button text type="danger" @click="removeSelected(item.value)">移除</el-button>
+        </div>
+      </div>
     </div>
 
-    <div class="role-desc">
-      <el-tag size="small" :type="selectedRoleMeta.required ? 'danger' : 'info'" effect="plain">
-        {{ selectedRoleMeta.required ? '必需项' : '可选项' }}
-      </el-tag>
-      <span>{{ selectedRoleMeta.description }}</span>
+    <div class="jobs-block" v-if="uploadJobs.length > 0">
+      <h4>上传任务</h4>
+      <div v-for="job in uploadJobs" :key="job.job_id" class="job-item">
+        <div class="job-main">
+          <div class="job-name">{{ job.filename }} <el-tag size="small" effect="plain">{{ job.role }}</el-tag></div>
+          <div class="job-stage">{{ formatStage(job.stage) }} · {{ job.status }}</div>
+        </div>
+        <el-progress :percentage="Number(job.progress || 0)" :stroke-width="6" />
+        <div v-if="job.status === 'failed'" class="job-error">
+          <span>{{ job.error_message || '解析失败' }}</span>
+          <el-button size="small" @click="$emit('retry-upload', job.job_id)">重试</el-button>
+        </div>
+      </div>
     </div>
-
-    <el-alert
-      v-if="hasSameRoleDoc"
-      type="warning"
-      :closable="false"
-      show-icon
-      class="replace-alert"
-      title="同角色文档会被替换"
-    />
-
-    <el-upload
-      drag
-      action="#"
-      :auto-upload="false"
-      :show-file-list="false"
-      :disabled="disabled || loading"
-      accept=".txt,.docx,.pdf,.md"
-      :on-change="handleFileChange"
-    >
-      <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-      <div class="el-upload__text">拖拽文件到此处，或 <em>点击上传</em></div>
-      <template #tip>
-        <div class="el-upload__tip">支持 .txt/.docx/.pdf/.md，单文件不超过 20MB</div>
-      </template>
-    </el-upload>
 
     <div class="doc-list">
       <h4>已上传文档</h4>
@@ -62,64 +67,98 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 
 const props = defineProps({
   documents: { type: Array, default: () => [] },
+  uploadJobs: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['upload'])
+const emit = defineEmits(['batch-upload', 'retry-upload'])
 
-const selectedRole = ref('primary')
 const MAX_SIZE = 20 * 1024 * 1024
-const roleTabs = [
+const roleSections = [
   {
     value: 'primary',
     label: '主合同',
     required: true,
-    description: '待审阅的合同文本。至少上传 1 份主合同才能开始审阅。',
-    tooltip: '必需：上传待审阅合同（不上传无法开始审阅）'
+    description: '待审阅的合同文本。至少上传 1 份主合同才能开始审阅。'
   },
   {
     value: 'baseline',
     label: '基线文本',
     required: false,
-    description: '标准版本或对照模板（如 FIDIC 银皮书），用于条款对比分析。',
-    tooltip: '建议：上传标准模板/对照版本（提升对比能力）'
+    description: '标准版本或对照模板（如 FIDIC 银皮书），用于条款对比分析。'
   },
   {
     value: 'supplement',
     label: '补充材料',
     required: false,
-    description: '与合同条款相关的补充文件（会议纪要、补充协议、附件等）。',
-    tooltip: '可选：上传补充协议、纪要、附件等'
+    description: '补充协议、附件、会议纪要等支持性材料。'
   },
   {
     value: 'reference',
     label: '参考资料',
     required: false,
-    description: '供审阅模型检索参考的资料（标准条款库、历史案例等）。',
-    tooltip: '可选：上传参考文档用于检索增强'
+    description: '用于语义检索或背景参考的历史/标准文档。'
   }
 ]
 
-const hasSameRoleDoc = computed(() => props.documents.some((item) => item.role === selectedRole.value))
-const selectedRoleMeta = computed(() => roleTabs.find((item) => item.value === selectedRole.value) || roleTabs[0])
+const selectedFilesByRole = reactive({
+  primary: null,
+  baseline: null,
+  supplement: null,
+  reference: null
+})
 
-function handleFileChange(uploadFile) {
+const selectedUploads = computed(() => {
+  return Object.entries(selectedFilesByRole)
+    .filter(([, file]) => !!file)
+    .map(([role, file]) => ({ role, file }))
+})
+
+function handleFileChange(role, uploadFile) {
   const file = uploadFile?.raw
-  if (!file) {
-    return
-  }
+  if (!file) return
   if (file.size > MAX_SIZE) {
     ElMessage.error('文件大小不能超过 20MB')
     return
   }
-  emit('upload', file, selectedRole.value)
+  selectedFilesByRole[role] = file
+}
+
+function removeSelected(role) {
+  selectedFilesByRole[role] = null
+}
+
+function submitBatch() {
+  if (!selectedUploads.value.length) {
+    ElMessage.warning('请先选择至少一个文件')
+    return
+  }
+  emit('batch-upload', selectedUploads.value)
+  for (const role of Object.keys(selectedFilesByRole)) {
+    selectedFilesByRole[role] = null
+  }
+}
+
+function formatStage(stage) {
+  const mapping = {
+    uploaded: '已上传',
+    loading: '读取中',
+    detecting: '模式检测',
+    parsing: '结构解析',
+    extracting_defs: '提取定义',
+    extracting_refs: '提取引用',
+    injecting: '写入状态',
+    finished: '完成',
+    failed: '失败'
+  }
+  return mapping[stage] || stage || '排队中'
 }
 </script>
 
@@ -140,19 +179,81 @@ function handleFileChange(uploadFile) {
   margin: 0;
 }
 
-.replace-alert {
-  margin-bottom: 4px;
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-card {
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.role-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .role-desc {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  margin: 8px 0 10px;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 
+.selected-file {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.jobs-block h4,
 .doc-list h4 {
   margin: 0 0 12px;
+}
+
+.job-item {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.job-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.job-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.job-stage {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.job-error {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .role-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

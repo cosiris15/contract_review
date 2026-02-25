@@ -80,7 +80,7 @@ from src.contract_review.sse_protocol import (
     create_done_event,
     create_error_event,
 )
-from src.contract_review.api_gen3 import router as gen3_router
+from src.contract_review.api_gen3 import recover_upload_jobs, router as gen3_router
 from src.contract_review.plugins.fidic import register_fidic_plugin
 from src.contract_review.plugins.sha_spa import register_sha_spa_plugin
 
@@ -283,6 +283,15 @@ async def _register_gen3_plugins():
     """启动时注册 Gen3 领域插件。"""
     register_fidic_plugin()
     register_sha_spa_plugin()
+
+
+@app.on_event("startup")
+async def _recover_gen3_upload_jobs():
+    """恢复未完成的 Gen3 上传解析任务。"""
+    try:
+        recover_upload_jobs()
+    except Exception as exc:  # pragma: no cover - startup guard
+        logger.warning("恢复 Gen3 上传任务失败: %s", exc)
 
 
 @app.on_event("shutdown")

@@ -10,6 +10,7 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
     ourParty: '',
     language: 'zh-CN',
     documents: [],
+    uploadJobs: [],
     currentClauseIndex: 0,
     totalClauses: 0,
     currentClauseId: null,
@@ -32,7 +33,19 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
 
   getters: {
     hasDocuments: (state) => state.documents.length > 0,
-    canStartReview: (state) => state.documents.some((d) => d.role === 'primary'),
+    allUploadsComplete: (state) => state.uploadJobs.length > 0 && state.uploadJobs.every((j) => j.status === 'succeeded'),
+    hasFailedUploads: (state) => state.uploadJobs.some((j) => j.status === 'failed'),
+    uploadProgress: (state) => {
+      if (!state.uploadJobs.length) return 0
+      const total = state.uploadJobs.reduce((sum, j) => sum + Number(j.progress || 0), 0)
+      return Math.round(total / state.uploadJobs.length)
+    },
+    canStartReview: (state) => {
+      const hasPrimary = state.documents.some((d) => d.role === 'primary')
+      const hasUploading = state.uploadJobs.some((j) => ['queued', 'running'].includes(j.status))
+      const allSucceeded = state.uploadJobs.length === 0 || state.uploadJobs.every((j) => j.status === 'succeeded')
+      return hasPrimary && !hasUploading && allSucceeded
+    },
     totalDiffs: (state) => state.pendingDiffs.length + state.approvedDiffs.length + state.rejectedDiffs.length,
     reviewProgress: (state) => (state.totalClauses > 0
       ? Math.round((state.currentClauseIndex / state.totalClauses) * 100)
@@ -84,6 +97,16 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       this.documents.push(doc)
     },
 
+    _upsertUploadJob(job) {
+      const index = this.uploadJobs.findIndex((item) => item.job_id === job.job_id)
+      if (index >= 0) {
+        this.uploadJobs[index] = { ...this.uploadJobs[index], ...job }
+      } else {
+        this.uploadJobs.push(job)
+      }
+      this.uploadJobs.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    },
+
     _moveDiff(diffId, decision) {
       const index = this.pendingDiffs.findIndex((item) => item.diff_id === diffId)
       if (index < 0) {
@@ -118,6 +141,7 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
         this.language = language
         this.phase = 'uploading'
         this.error = null
+        this.uploadJobs = []
         this._endOperation()
         return response.data
       } catch (error) {
@@ -126,32 +150,56 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       }
     },
 
+    async fetchUploadJobs() {
+      if (!this.taskId) return []
+      const resp = await gen3Api.getUploadJobs(this.taskId)
+      this.uploadJobs = resp.data?.jobs || []
+      return this.uploadJobs
+    },
+
     async uploadDocument(file, role = 'primary') {
       if (!this.taskId) {
         throw new Error('请先创建审阅任务')
       }
       this._startOperation('upload_document', `正在上传 ${file.name}...`)
       try {
+        await this._connectEventStream({ phase: 'uploading' })
         const response = await gen3Api.uploadDocument(this.taskId, file, {
           role,
           ourParty: this.ourParty,
           language: this.language
         })
-        this._mergeDocument({
-          document_id: response.data.document_id,
-          filename: response.data.filename,
+        this._upsertUploadJob({
+          job_id: response.data.job_id,
+          task_id: this.taskId,
           role: response.data.role,
-          total_clauses: response.data.total_clauses,
-          uploaded_at: new Date().toISOString()
+          filename: response.data.filename,
+          status: response.data.status,
+          stage: 'uploaded',
+          progress: 0,
+          error_message: null,
+          result_meta: null,
+          created_at: new Date().toISOString()
         })
-        if (role === 'primary') {
-          this.totalClauses = response.data.total_clauses || this.totalClauses
-        }
         this.phase = 'uploading'
         this._endOperation()
         return response.data
       } catch (error) {
         this._endOperation(error)
+        throw error
+      }
+    },
+
+    async retryUploadJob(jobId) {
+      if (!this.taskId) throw new Error('任务不存在')
+      this._startOperation('retry_upload_job', '正在重试上传任务...')
+      try {
+        await gen3Api.retryUploadJob(this.taskId, jobId)
+        this._upsertUploadJob({ job_id: jobId, status: 'queued', stage: 'uploaded', progress: 0, error_message: null })
+        await this._connectEventStream({ phase: 'uploading' })
+        this._endOperation()
+      } catch (error) {
+        this._endOperation(error, { setErrorPhase: false })
         throw error
       }
     },
@@ -168,6 +216,54 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
           this.totalClauses = data.total_clauses || this.totalClauses
           this.currentClauseId = data.current_clause_id || ''
           this.progressMessage = data.message || ''
+        },
+        onUploadProgress: (data) => {
+          this._upsertUploadJob({
+            job_id: data.job_id,
+            role: data.role,
+            filename: data.filename,
+            stage: data.stage,
+            progress: data.progress,
+            status: data.status,
+            error_message: null
+          })
+          this.phase = 'uploading'
+        },
+        onUploadComplete: (data) => {
+          this._upsertUploadJob({
+            job_id: data.job_id,
+            role: data.role,
+            filename: data.filename,
+            stage: data.stage,
+            progress: data.progress,
+            status: data.status,
+            result_meta: data.result_meta,
+            error_message: null
+          })
+          const meta = data.result_meta || {}
+          if (meta.document_id && meta.role) {
+            this._mergeDocument({
+              document_id: meta.document_id,
+              filename: meta.filename,
+              role: meta.role,
+              total_clauses: meta.total_clauses || 0,
+              uploaded_at: new Date().toISOString()
+            })
+            if (meta.role === 'primary') {
+              this.totalClauses = meta.total_clauses || this.totalClauses
+            }
+          }
+        },
+        onUploadFailed: (data) => {
+          this._upsertUploadJob({
+            job_id: data.job_id,
+            role: data.role,
+            filename: data.filename,
+            stage: data.stage,
+            progress: data.progress,
+            status: data.status,
+            error_message: data.error || '上传解析失败'
+          })
         },
         onDiffProposed: (data) => {
           if (!data?.diff_id) {
@@ -199,6 +295,7 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
     async startListening() {
       this._startOperation('start_listening', '正在启动审阅...')
       try {
+        await this.fetchUploadJobs()
         await this._connectEventStream({ phase: 'reviewing' })
         await gen3Api.runReview(this.taskId)
         this._endOperation()
@@ -278,10 +375,11 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       this._startOperation('recover_session', '正在恢复会话...')
       try {
         this.taskId = taskId
-        const [statusResp, docsResp, pendingResp] = await Promise.all([
+        const [statusResp, docsResp, pendingResp, uploadResp] = await Promise.all([
           gen3Api.getStatus(taskId),
           gen3Api.getDocuments(taskId),
-          gen3Api.getPendingDiffs(taskId)
+          gen3Api.getPendingDiffs(taskId),
+          gen3Api.getUploadJobs(taskId)
         ])
 
         const status = statusResp.data || {}
@@ -291,18 +389,18 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
         this.totalClauses = status.total_clauses || 0
         this.documents = docsResp.data?.documents || []
         this.pendingDiffs = pendingResp.data?.pending_diffs || []
+        this.uploadJobs = uploadResp.data?.jobs || []
 
+        const hasActiveUploads = this.uploadJobs.some((job) => ['queued', 'running'].includes(job.status))
         if (status.is_complete) {
           this.phase = 'complete'
           this.isComplete = true
+        } else if (hasActiveUploads) {
+          await this._connectEventStream({ phase: 'uploading' })
         } else if (this.pendingDiffs.length > 0 || status.is_interrupted) {
           await this._connectEventStream({ phase: 'interrupted' })
         } else {
-          if (this.documents.length > 0) {
-            await this._connectEventStream({ phase: 'reviewing' })
-          } else {
-            this.phase = 'uploading'
-          }
+          this.phase = this.documents.length > 0 ? 'uploading' : 'uploading'
         }
         this._endOperation()
       } catch (error) {
@@ -349,6 +447,7 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       this.ourParty = ''
       this.language = 'zh-CN'
       this.documents = []
+      this.uploadJobs = []
       this.currentClauseIndex = 0
       this.totalClauses = 0
       this.currentClauseId = null

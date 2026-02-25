@@ -74,8 +74,10 @@
       <el-card v-if="store.phase === 'uploading'">
         <UploadPanel
           :documents="store.documents"
+          :upload-jobs="store.uploadJobs"
           :loading="store.isOperationInProgress"
-          @upload="onUpload"
+          @batch-upload="onBatchUpload"
+          @retry-upload="onRetryUpload"
         />
         <div class="actions">
           <el-button type="success" :disabled="!store.canStartReview" @click="startReview">
@@ -268,12 +270,24 @@ async function initSession() {
   }
 }
 
-async function onUpload(file, role) {
+async function onBatchUpload(items) {
   try {
-    const data = await store.uploadDocument(file, role)
-    ElMessage.success(`${data.filename} 上传成功`)
+    for (const item of items) {
+      // eslint-disable-next-line no-await-in-loop
+      await store.uploadDocument(item.file, item.role)
+    }
+    ElMessage.success('上传任务已创建，正在后台解析')
   } catch (error) {
     ElMessage.error(error.message || '上传失败')
+  }
+}
+
+async function onRetryUpload(jobId) {
+  try {
+    await store.retryUploadJob(jobId)
+    ElMessage.success('重试任务已提交')
+  } catch (error) {
+    ElMessage.error(error.message || '重试失败')
   }
 }
 

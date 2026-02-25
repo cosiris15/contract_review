@@ -1,8 +1,22 @@
+import asyncio
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 pytest.importorskip("langgraph")
+
+
+async def _wait_upload_done(client, task_id: str, job_id: str, *, timeout_steps: int = 600):
+    for _ in range(timeout_steps):
+        resp = await client.get(f"/api/v3/review/{task_id}/uploads")
+        assert resp.status_code == 200
+        jobs = resp.json().get("jobs", [])
+        target = next((j for j in jobs if j.get("job_id") == job_id), None)
+        if target and target.get("status") in {"succeeded", "failed"}:
+            return target
+        await asyncio.sleep(0.1)
+    pytest.fail(f"上传任务未在预期时间内结束: {job_id}")
 
 
 @pytest.fixture
@@ -77,8 +91,7 @@ class TestReviewEndpoints:
         assert start_resp.json()["status"] == "ready"
 
         run_resp = await client.post("/api/v3/review/test_run/run")
-        assert run_resp.status_code == 200
-        assert run_resp.json()["status"] in {"started", "already_running"}
+        assert run_resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_approve_nonexistent(self, client):
@@ -104,7 +117,9 @@ class TestUploadEndpoints:
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["role"] == "primary"
-        assert payload["total_clauses"] >= 1
+        assert payload["status"] == "queued"
+        assert payload["job_id"]
+        assert payload["total_clauses"] is None
 
     @pytest.mark.asyncio
     async def test_upload_unsupported_type(self, client):
@@ -123,7 +138,10 @@ class TestUploadEndpoints:
     async def test_get_documents(self, client):
         await client.post("/api/v3/review/start", json={"task_id": "test_docs"})
         files = {"file": ("contract.txt", b"1.1 Terms\nSome text.", "text/plain")}
-        await client.post("/api/v3/review/test_docs/upload", files=files)
+        upload = await client.post("/api/v3/review/test_docs/upload", files=files)
+        assert upload.status_code == 200
+        job = await _wait_upload_done(client, "test_docs", upload.json()["job_id"])
+        assert job["status"] == "succeeded"
         resp = await client.get("/api/v3/review/test_docs/documents")
         assert resp.status_code == 200
         docs = resp.json()["documents"]
@@ -136,8 +154,12 @@ class TestUploadEndpoints:
         await client.post("/api/v3/review/start", json={"task_id": "test_replace_docs"})
         files1 = {"file": ("first.txt", b"1.1 A\nabc", "text/plain")}
         files2 = {"file": ("second.txt", b"1.1 B\ndef", "text/plain")}
-        await client.post("/api/v3/review/test_replace_docs/upload", files=files1, data={"role": "primary"})
-        await client.post("/api/v3/review/test_replace_docs/upload", files=files2, data={"role": "primary"})
+        upload1 = await client.post("/api/v3/review/test_replace_docs/upload", files=files1, data={"role": "primary"})
+        upload2 = await client.post("/api/v3/review/test_replace_docs/upload", files=files2, data={"role": "primary"})
+        assert upload1.status_code == 200
+        assert upload2.status_code == 200
+        await _wait_upload_done(client, "test_replace_docs", upload1.json()["job_id"])
+        await _wait_upload_done(client, "test_replace_docs", upload2.json()["job_id"])
         resp = await client.get("/api/v3/review/test_replace_docs/documents")
         assert resp.status_code == 200
         docs = resp.json()["documents"]
@@ -174,7 +196,9 @@ class TestUploadEndpoints:
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["role"] == "criteria"
-        assert payload["total_criteria"] >= 1
+        job = await _wait_upload_done(client, "test_upload_criteria", payload["job_id"])
+        assert job["status"] == "succeeded"
+        assert (job.get("result_meta") or {}).get("total_criteria", 0) >= 1
 
 
 class TestSSEProtocol:

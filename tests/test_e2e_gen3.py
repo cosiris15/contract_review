@@ -135,6 +135,20 @@ async def _wait_for_interrupt_or_complete(client, task_id: str, timeout_steps: i
     pytest.fail(f"任务 {task_id} 超时未进入中断/完成状态")
 
 
+async def _wait_upload_succeeded(client, task_id: str, job_id: str, timeout_steps: int = 600):
+    for _ in range(timeout_steps):
+        await asyncio.sleep(0.1)
+        resp = await client.get(f"/api/v3/review/{task_id}/uploads")
+        assert resp.status_code == 200
+        jobs = resp.json().get("jobs", [])
+        target = next((j for j in jobs if j.get("job_id") == job_id), None)
+        if target and target.get("status") == "succeeded":
+            return
+        if target and target.get("status") == "failed":
+            pytest.fail(f"上传解析失败: {target.get('error_message')}")
+    pytest.fail(f"上传任务超时未完成: {job_id}")
+
+
 async def _run_flow_and_complete(client, task_id: str):
     start = await client.post(
         "/api/v3/review/start",
@@ -163,6 +177,7 @@ async def _run_flow_and_complete(client, task_id: str):
         data={"role": "primary", "our_party": "承包商", "language": "zh-CN"},
     )
     assert upload.status_code == 200
+    await _wait_upload_succeeded(client, task_id, upload.json()["job_id"])
 
     run = await client.post(f"/api/v3/review/{task_id}/run")
     assert run.status_code == 200
@@ -221,6 +236,7 @@ async def test_clause_text_extraction_from_structure(client):
     files = {"file": ("contract.txt", contract_text, "text/plain")}
     upload = await client.post(f"/api/v3/review/{task_id}/upload", files=files, data={"role": "primary"})
     assert upload.status_code == 200
+    await _wait_upload_succeeded(client, task_id, upload.json()["job_id"])
 
     await client.post(f"/api/v3/review/{task_id}/run")
     status = await _wait_for_interrupt_or_complete(client, task_id)

@@ -125,9 +125,16 @@ const gen3Api = {
     formData.append('language', language)
     return api.post(`/review/${taskId}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      // Large doc parsing/OCR/LLM may exceed default 120s on cloud environments.
-      timeout: 600000
+      timeout: 120000
     })
+  },
+
+  getUploadJobs(taskId) {
+    return api.get(`/review/${taskId}/uploads`)
+  },
+
+  retryUploadJob(taskId, jobId) {
+    return api.post(`/review/${taskId}/uploads/${jobId}/retry`)
   },
 
   getDocuments(taskId) {
@@ -190,6 +197,9 @@ const gen3Api = {
       onProgress,
       onDiffProposed,
       onApprovalRequired,
+      onUploadProgress,
+      onUploadComplete,
+      onUploadFailed,
       onComplete,
       onError
     } = callbacks
@@ -283,6 +293,15 @@ const gen3Api = {
                   break
                 case 'approval_required':
                   if (onApprovalRequired) onApprovalRequired(data)
+                  break
+                case 'upload_progress':
+                  if (onUploadProgress) onUploadProgress(data)
+                  break
+                case 'upload_complete':
+                  if (onUploadComplete) onUploadComplete(data)
+                  break
+                case 'upload_failed':
+                  if (onUploadFailed) onUploadFailed(data)
                   break
                 case 'review_complete':
                   if (onComplete) onComplete(data)
