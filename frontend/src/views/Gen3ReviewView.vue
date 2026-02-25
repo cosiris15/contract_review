@@ -86,6 +86,14 @@
     </div>
 
     <div v-else-if="isReviewPhase" class="review-section">
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="审阅进行中，请勿部署或刷新页面"
+        description="部署/刷新会中断实时连接；系统会自动重连，但建议等待当前批次处理完成后再发布。"
+        style="margin-bottom: 12px;"
+      />
       <ClauseProgress
         :current-index="store.currentClauseIndex"
         :total-clauses="store.totalClauses"
@@ -215,6 +223,12 @@ const domainLoadErrorMessage = ref('')
 const isSetupPhase = computed(() => ['idle', 'uploading'].includes(store.phase))
 const isReviewPhase = computed(() => ['reviewing', 'interrupted'].includes(store.phase))
 
+function handleBeforeUnload(event) {
+  if (!isReviewPhase.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 async function loadDomains() {
   domainsLoading.value = true
   domainLoadErrorType.value = ''
@@ -290,6 +304,7 @@ async function approveAll(decision) {
 }
 
 onMounted(async () => {
+  window.addEventListener('beforeunload', handleBeforeUnload)
   await loadDomains()
   const routeTaskId = route.params.taskId
   if (typeof routeTaskId === 'string' && routeTaskId) {
@@ -303,6 +318,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   store.disconnect()
 })
 </script>

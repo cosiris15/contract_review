@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from .config import ExecutionMode
@@ -47,6 +47,7 @@ GRAPH_RETENTION_SECONDS = 3600
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".xlsx"}
 MAX_UPLOAD_SIZE_MB = 10
 ALLOWED_ROLES = {"primary", "baseline", "supplement", "reference", "criteria"}
+SSE_CACHE_MAX = 200
 
 
 def _role_to_str(value: Any) -> str:
@@ -132,6 +133,28 @@ def _touch_entry(entry: Dict[str, Any]) -> None:
     entry["last_access_ts"] = _now_ts()
 
 
+def _next_sse_event(entry: Dict[str, Any], event_type: str, data: Any) -> str:
+    seq = int(entry.get("sse_seq", 0)) + 1
+    entry["sse_seq"] = seq
+    payload = _format_gen3_sse(event_type, data, event_id=str(seq))
+    cache = entry.setdefault("sse_cache", [])
+    cache.append({"id": seq, "payload": payload})
+    if len(cache) > SSE_CACHE_MAX:
+        del cache[: len(cache) - SSE_CACHE_MAX]
+    return payload
+
+
+def _replay_sse_since(entry: Dict[str, Any], last_event_id: int) -> list[str]:
+    cache = entry.get("sse_cache", [])
+    if not isinstance(cache, list) or not cache:
+        return []
+    replay: list[str] = []
+    for item in cache:
+        if int(item.get("id", 0)) > last_event_id and isinstance(item.get("payload"), str):
+            replay.append(item["payload"])
+    return replay
+
+
 def _prune_inactive_graphs() -> None:
     now = _now_ts()
     stale_task_ids = []
@@ -197,6 +220,8 @@ async def start_review(request: StartReviewRequest):
         "language": request.language,
         "criteria_data": [],
         "criteria_file_path": "",
+        "sse_seq": 0,
+        "sse_cache": [],
     }
     _active_graphs[task_id] = entry
 
@@ -860,13 +885,18 @@ async def get_domain_checklist(domain_id: str):
 
 
 @router.get("/review/{task_id}/events")
-async def review_events(task_id: str):
+async def review_events(task_id: str, request: Request):
     async def event_generator():
         _prune_inactive_graphs()
         last_clause_index = -1
         pushed_diff_ids = set()
         heartbeat_interval = 10.0
         last_emit_ts = time.monotonic()
+        last_event_id_raw = request.headers.get("last-event-id")
+        try:
+            last_event_id = int(last_event_id_raw) if last_event_id_raw else 0
+        except ValueError:
+            last_event_id = 0
         while True:
             entry = _active_graphs.get(task_id)
             if not entry:
@@ -874,13 +904,18 @@ async def review_events(task_id: str):
                 break
 
             _touch_entry(entry)
+            if last_event_id > 0:
+                for payload in _replay_sse_since(entry, last_event_id):
+                    yield payload
+                last_event_id = 0
             snapshot = entry["graph"].get_state(entry["config"])
             state = snapshot.values
             current_index = state.get("current_clause_index", 0)
             if current_index != last_clause_index:
                 last_clause_index = current_index
                 checklist = state.get("review_checklist", [])
-                yield _format_gen3_sse(
+                yield _next_sse_event(
+                    entry,
                     "review_progress",
                     {
                         "task_id": task_id,
@@ -907,23 +942,28 @@ async def review_events(task_id: str):
                     if diff_id:
                         pushed_diff_ids.add(diff_id)
                         new_diffs_pushed = True
-                    yield _format_gen3_sse("diff_proposed", payload)
+                    yield _next_sse_event(entry, "diff_proposed", payload)
                     last_emit_ts = time.monotonic()
                 if new_diffs_pushed and snapshot.next:
-                    yield _format_gen3_sse(
+                    yield _next_sse_event(
+                        entry,
                         "approval_required",
                         {"task_id": task_id, "pending_count": len(pending), "type": "approval_required"},
                     )
                     last_emit_ts = time.monotonic()
 
             if state.get("is_complete"):
-                yield _format_gen3_sse("review_complete", {"task_id": task_id, "summary": state.get("summary_notes", "")})
+                yield _next_sse_event(
+                    entry,
+                    "review_complete",
+                    {"task_id": task_id, "summary": state.get("summary_notes", "")},
+                )
                 break
 
             # Prevent long-lived SSE idle disconnects on proxies/load balancers.
             now_ts = time.monotonic()
             if now_ts - last_emit_ts >= heartbeat_interval:
-                yield _format_gen3_sse("heartbeat", {"task_id": task_id, "ts": int(time.time())})
+                yield _next_sse_event(entry, "heartbeat", {"task_id": task_id, "ts": int(time.time())})
                 last_emit_ts = now_ts
 
             await asyncio.sleep(2)
@@ -975,5 +1015,6 @@ async def _resume_graph(task_id: str, graph, config: dict):
                 pass
 
 
-def _format_gen3_sse(event_type: str, data: Any) -> str:
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+def _format_gen3_sse(event_type: str, data: Any, event_id: str | None = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id else ""
+    return f"{prefix}event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"

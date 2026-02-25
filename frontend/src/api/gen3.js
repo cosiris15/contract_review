@@ -199,6 +199,7 @@ const gen3Api = {
     let reconnectAttempts = 0
     const maxReconnectAttempts = 5
     let reconnectTimer = null
+    let lastEventId = null
 
     const clearReconnectTimer = () => {
       if (reconnectTimer) {
@@ -226,7 +227,8 @@ const gen3Api = {
         const response = await fetch(`${API_BASE_URL}/review/${taskId}/events`, {
           method: 'GET',
           headers: {
-            'Authorization': token ? `Bearer ${token}` : ''
+            'Authorization': token ? `Bearer ${token}` : '',
+            ...(lastEventId ? { 'Last-Event-ID': String(lastEventId) } : {})
           },
           signal: controller.signal
         })
@@ -240,6 +242,7 @@ const gen3Api = {
         const reader = response.body.getReader()
         let buffer = ''
         let currentEvent = null
+        let currentEventId = null
 
         while (true) {
           const { done, value } = await reader.read()
@@ -256,13 +259,19 @@ const gen3Api = {
 
           for (const line of lines) {
             const cleaned = line.replace(/\r$/, '')
-            if (cleaned.startsWith('event: ')) {
+            if (cleaned.startsWith('id: ')) {
+              currentEventId = cleaned.slice(4).trim()
+            } else if (cleaned.startsWith('event: ')) {
               currentEvent = cleaned.slice(7).trim()
             } else if (cleaned.startsWith('data: ')) {
               const data = parseSsePayload(cleaned.slice(6))
               if (!data) {
                 currentEvent = null
+                currentEventId = null
                 continue
+              }
+              if (currentEventId) {
+                lastEventId = currentEventId
               }
 
               switch (currentEvent) {
@@ -285,6 +294,7 @@ const gen3Api = {
                   break
               }
               currentEvent = null
+              currentEventId = null
             }
           }
         }
