@@ -101,6 +101,22 @@ class TestReviewEndpoints:
         )
         assert resp.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_rehydrate_endpoint_and_status_auto_recover(self, client):
+        from contract_review.api_gen3 import _active_graphs
+
+        await client.post("/api/v3/review/start", json={"task_id": "test_rehydrate", "auto_start": False})
+        _active_graphs.pop("test_rehydrate", None)
+
+        status = await client.get("/api/v3/review/test_rehydrate/status")
+        assert status.status_code == 200
+        assert status.json()["task_id"] == "test_rehydrate"
+
+        _active_graphs.pop("test_rehydrate", None)
+        rehydrate = await client.post("/api/v3/review/test_rehydrate/rehydrate")
+        assert rehydrate.status_code == 200
+        assert rehydrate.json()["status"] == "rehydrated"
+
 
 class TestUploadEndpoints:
     @pytest.mark.asyncio

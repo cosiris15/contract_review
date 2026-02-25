@@ -145,6 +145,10 @@ const gen3Api = {
     return api.get(`/review/${taskId}/status`)
   },
 
+  rehydrateSession(taskId) {
+    return api.post(`/review/${taskId}/rehydrate`)
+  },
+
   getPendingDiffs(taskId) {
     return api.get(`/review/${taskId}/pending-diffs`)
   },

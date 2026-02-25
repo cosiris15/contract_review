@@ -80,7 +80,7 @@ const props = defineProps({
 
 const emit = defineEmits(['batch-upload', 'retry-upload'])
 
-const MAX_SIZE = 20 * 1024 * 1024
+const MAX_SIZE = 10 * 1024 * 1024
 const roleSections = [
   {
     value: 'primary',
@@ -125,7 +125,7 @@ function handleFileChange(role, uploadFile) {
   const file = uploadFile?.raw
   if (!file) return
   if (file.size > MAX_SIZE) {
-    ElMessage.error('文件大小不能超过 20MB')
+    ElMessage.error('文件大小不能超过 10MB')
     return
   }
   selectedFilesByRole[role] = file

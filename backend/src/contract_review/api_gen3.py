@@ -36,6 +36,13 @@ from .plugins.registry import (
     list_domain_plugins,
 )
 from .redline_generator import generate_redline_document
+from .session_manager import (
+    load_session,
+    mark_session_completed,
+    mark_session_failed,
+    save_session,
+    update_session_status,
+)
 from .structure_parser import StructureParser
 from .supabase_client import get_storage_bucket, get_supabase_client
 from .upload_job_manager import get_upload_job_manager
@@ -52,6 +59,7 @@ ALLOWED_ROLES = {"primary", "baseline", "supplement", "reference", "criteria"}
 SSE_CACHE_MAX = 200
 UPLOAD_PARSE_SEMAPHORE = asyncio.Semaphore(2)
 _LOCAL_UPLOAD_BLOBS: Dict[str, bytes] = {}
+CHECKPOINT_EVENTS = {"review_progress", "diff_proposed", "review_complete", "review_error"}
 
 
 def _role_to_str(value: Any) -> str:
@@ -148,6 +156,49 @@ def _next_sse_event(entry: Dict[str, Any], event_type: str, data: Any) -> str:
     return payload
 
 
+def _snapshot_values(entry: Dict[str, Any]) -> Dict[str, Any]:
+    graph = entry.get("graph")
+    config = entry.get("config")
+    if not graph or not config:
+        return _as_dict(entry.get("initial_state", {}))
+    snapshot = graph.get_state(config)
+    return _as_dict(snapshot.values or {})
+
+
+def _session_status_from_state(state: Dict[str, Any], default: str = "reviewing") -> str:
+    if bool(state.get("is_complete")):
+        return "completed"
+    if state.get("error"):
+        return "failed"
+    pending = state.get("pending_diffs", [])
+    if isinstance(pending, list) and pending:
+        return "interrupted"
+    return default
+
+
+def _persist_session(
+    task_id: str,
+    entry: Dict[str, Any],
+    snapshot: Dict[str, Any] | None = None,
+    status: str | None = None,
+) -> None:
+    try:
+        state = snapshot if snapshot is not None else _snapshot_values(entry)
+        resolved_status = status or _session_status_from_state(state)
+        save_session(task_id, entry, state, status=resolved_status)
+    except Exception:
+        logger.warning("session persistence failed: task=%s", task_id, exc_info=True)
+
+
+def _push_sse_event(entry: Dict[str, Any], event_type: str, data: Any) -> str:
+    payload = _next_sse_event(entry, event_type, data)
+    if event_type in CHECKPOINT_EVENTS:
+        task_id = str(_as_dict(data).get("task_id") or _as_dict(entry.get("initial_state")).get("task_id") or "")
+        if task_id:
+            _persist_session(task_id, entry)
+    return payload
+
+
 def _replay_sse_since(entry: Dict[str, Any], last_event_id: int) -> list[str]:
     cache = entry.get("sse_cache", [])
     if not isinstance(cache, list) or not cache:
@@ -184,7 +235,7 @@ def _push_upload_event(
         payload["result_meta"] = result_meta
     if error:
         payload["error"] = error
-    _next_sse_event(entry, event_type, payload)
+    _push_sse_event(entry, event_type, payload)
 
 
 def _get_storage_client():
@@ -235,6 +286,55 @@ def _prune_inactive_graphs() -> None:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             except Exception as exc:  # pragma: no cover - defensive cleanup
                 logger.warning("清理临时目录失败 [%s]: %s", tmp_dir, exc)
+
+
+def _build_entry_from_session(task_id: str, session: Dict[str, Any]) -> Dict[str, Any]:
+    from .graph.builder import build_review_graph
+
+    state = _as_dict(session.get("graph_state", {}))
+    domain_id = session.get("domain_id") or state.get("domain_id")
+    graph = build_review_graph(domain_id=domain_id, force_mode=ExecutionMode.GEN3)
+    config = {"configurable": {"thread_id": task_id}}
+    graph.update_state(config, state)
+
+    return {
+        "graph": graph,
+        "config": config,
+        "initial_state": _as_dict(state.get("initial_state", state)),
+        "graph_run_id": session.get("graph_run_id") or f"run_{task_id}",
+        "last_access_ts": _now_ts(),
+        "completed_ts": None,
+        "domain_id": domain_id,
+        "documents": state.get("documents", []),
+        "our_party": session.get("our_party") or state.get("our_party", ""),
+        "language": session.get("language") or state.get("language", "zh-CN"),
+        "criteria_data": state.get("criteria_data", []),
+        "criteria_file_path": state.get("criteria_file_path", ""),
+        "sse_seq": 0,
+        "sse_cache": [],
+        "upload_tasks": {},
+        "primary_structure": state.get("primary_structure"),
+    }
+
+
+def _rehydrate_task_if_needed(task_id: str) -> Dict[str, Any] | None:
+    entry = _active_graphs.get(task_id)
+    if entry:
+        return entry
+
+    session = load_session(task_id)
+    if not session:
+        return None
+    if str(session.get("status")) in {"completed", "failed"}:
+        return None
+
+    try:
+        entry = _build_entry_from_session(task_id, session)
+        _active_graphs[task_id] = entry
+        return entry
+    except Exception:
+        logger.warning("rehydrate task failed: %s", task_id, exc_info=True)
+        return None
 
 
 @router.post("/review/start", response_model=StartReviewResponse)
@@ -291,9 +391,11 @@ async def start_review(request: StartReviewRequest):
         run_task = asyncio.create_task(_run_graph(task_id, graph, initial_state, config))
         entry["run_task"] = run_task
         status = "reviewing"
+        update_session_status(task_id, "reviewing")
     else:
         graph.update_state(config, initial_state)
 
+    _persist_session(task_id, entry, snapshot=initial_state, status="reviewing" if request.auto_start else "uploading")
     return StartReviewResponse(task_id=task_id, status=status, graph_run_id=graph_run_id)
 
 
@@ -322,13 +424,14 @@ async def run_review(task_id: str):
     snapshot = graph.get_state(config)
     state_for_run = snapshot.values or entry.get("initial_state", {})
     entry["run_task"] = asyncio.create_task(_run_graph(task_id, graph, state_for_run, config))
+    update_session_status(task_id, "reviewing", error=None)
     return {"task_id": task_id, "status": "started"}
 
 
 @router.get("/review/{task_id}/status")
 async def get_review_status(task_id: str):
     _prune_inactive_graphs()
-    entry = _active_graphs.get(task_id)
+    entry = _active_graphs.get(task_id) or _rehydrate_task_if_needed(task_id)
     if not entry:
         raise HTTPException(404, f"任务 {task_id} 无活跃审查流程")
 
@@ -346,6 +449,32 @@ async def get_review_status(task_id: str):
         "total_clauses": len(snapshot.values.get("review_checklist", [])),
         "is_complete": snapshot.values.get("is_complete", False),
         "error": snapshot.values.get("error"),
+    }
+
+
+@router.post("/review/{task_id}/rehydrate")
+async def rehydrate_session(task_id: str):
+    _prune_inactive_graphs()
+    if task_id in _active_graphs:
+        return {"task_id": task_id, "status": "already_active"}
+
+    session = load_session(task_id)
+    if not session:
+        raise HTTPException(404, "无可恢复的会话")
+    if str(session.get("status")) in {"completed", "failed"}:
+        raise HTTPException(400, "会话已结束，无法恢复")
+
+    entry = _build_entry_from_session(task_id, session)
+    _active_graphs[task_id] = entry
+    _touch_entry(entry)
+    state = _snapshot_values(entry)
+    return {
+        "task_id": task_id,
+        "status": "rehydrated",
+        "is_interrupted": bool(state.get("pending_diffs")),
+        "is_complete": bool(state.get("is_complete", False)),
+        "current_clause_index": int(state.get("current_clause_index", 0) or 0),
+        "total_clauses": len(state.get("review_checklist", []) or []),
     }
 
 
@@ -615,6 +744,7 @@ async def _process_upload_job(task_id: str, job_id: str) -> None:
                 status="succeeded",
                 result_meta=result_meta,
             )
+            _persist_session(task_id, entry, status="uploading")
             _touch_entry(entry)
     except Exception as exc:
         logger.exception("上传任务执行失败: task_id=%s job_id=%s", task_id, job_id)
@@ -631,9 +761,11 @@ async def _process_upload_job(task_id: str, job_id: str) -> None:
                 status="failed",
                 error=str(exc),
             )
+            _persist_session(task_id, entry, status="uploading")
             _touch_entry(entry)
     finally:
-        if job and job.get("storage_key"):
+        final_job = manager.get_job(job_id)
+        if final_job and final_job.get("status") == "succeeded" and job and job.get("storage_key"):
             _LOCAL_UPLOAD_BLOBS.pop(str(job.get("storage_key")), None)
         if entry:
             entry.get("upload_tasks", {}).pop(job_id, None)
@@ -772,6 +904,9 @@ async def approve_diff(task_id: str, request: ApprovalRequest):
         feedback[request.diff_id] = request.feedback
 
     graph.update_state(config, {"user_decisions": decisions, "user_feedback": feedback})
+    new_snapshot = graph.get_state(config)
+    pending = new_snapshot.values.get("pending_diffs", [])
+    _persist_session(task_id, entry, snapshot=_as_dict(new_snapshot.values), status="interrupted" if pending else "reviewing")
     new_status = "approved" if request.decision == "approve" else "rejected"
     return ApprovalResponse(diff_id=request.diff_id, new_status=new_status, message=f"Diff {request.diff_id} 已{new_status}")
 
@@ -798,6 +933,9 @@ async def approve_batch(task_id: str, request: BatchApprovalRequest):
         results.append({"diff_id": approval.diff_id, "new_status": "approved" if approval.decision == "approve" else "rejected"})
 
     graph.update_state(config, {"user_decisions": decisions, "user_feedback": feedback})
+    new_snapshot = graph.get_state(config)
+    pending = new_snapshot.values.get("pending_diffs", [])
+    _persist_session(task_id, entry, snapshot=_as_dict(new_snapshot.values), status="interrupted" if pending else "reviewing")
     return {"task_id": task_id, "results": results}
 
 
@@ -837,6 +975,7 @@ async def resume_review(task_id: str):
     entry["resume_task"] = asyncio.create_task(
         _resume_graph(task_id, entry["graph"], entry["config"])
     )
+    update_session_status(task_id, "reviewing", error=None)
     return {"task_id": task_id, "status": "resumed"}
 
 
@@ -1131,7 +1270,7 @@ async def review_events(task_id: str, request: Request):
             if current_index != last_clause_index:
                 last_clause_index = current_index
                 checklist = state.get("review_checklist", [])
-                yield _next_sse_event(
+                yield _push_sse_event(
                     entry,
                     "review_progress",
                     {
@@ -1160,11 +1299,11 @@ async def review_events(task_id: str, request: Request):
                     if diff_id:
                         pushed_diff_ids.add(diff_id)
                         new_diffs_pushed = True
-                    yield _next_sse_event(entry, "diff_proposed", payload)
+                    yield _push_sse_event(entry, "diff_proposed", payload)
                     delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                     last_emit_ts = time.monotonic()
                 if new_diffs_pushed and snapshot.next:
-                    yield _next_sse_event(
+                    yield _push_sse_event(
                         entry,
                         "approval_required",
                         {"task_id": task_id, "pending_count": len(pending), "type": "approval_required"},
@@ -1173,7 +1312,7 @@ async def review_events(task_id: str, request: Request):
                     last_emit_ts = time.monotonic()
 
             if state.get("is_complete"):
-                yield _next_sse_event(
+                yield _push_sse_event(
                     entry,
                     "review_complete",
                     {"task_id": task_id, "summary": state.get("summary_notes", "")},
@@ -1184,7 +1323,7 @@ async def review_events(task_id: str, request: Request):
             # Prevent long-lived SSE idle disconnects on proxies/load balancers.
             now_ts = time.monotonic()
             if now_ts - last_emit_ts >= heartbeat_interval:
-                yield _next_sse_event(entry, "heartbeat", {"task_id": task_id, "ts": int(time.time())})
+                yield _push_sse_event(entry, "heartbeat", {"task_id": task_id, "ts": int(time.time())})
                 delivered_event_id = int(entry.get("sse_seq", delivered_event_id))
                 last_emit_ts = now_ts
 
@@ -1198,12 +1337,15 @@ async def review_events(task_id: str, request: Request):
 
 
 async def _run_graph(task_id: str, graph, initial_state: dict, config: dict):
+    failed_error: str | None = None
     try:
         logger.info("开始执行审查图: %s", task_id)
         await graph.ainvoke(initial_state, config)
         logger.info("审查图执行完成或中断: %s", task_id)
     except Exception as exc:
+        failed_error = str(exc)
         logger.error("审查图执行异常: %s — %s", task_id, exc)
+        mark_session_failed(task_id, failed_error)
     finally:
         entry = _active_graphs.get(task_id)
         if entry:
@@ -1211,19 +1353,28 @@ async def _run_graph(task_id: str, graph, initial_state: dict, config: dict):
             entry.pop("run_task", None)
             try:
                 snapshot = graph.get_state(config)
-                if snapshot.values.get("is_complete"):
+                values = _as_dict(snapshot.values)
+                if values.get("is_complete"):
                     entry["completed_ts"] = _now_ts()
+                    mark_session_completed(task_id)
+                elif failed_error:
+                    mark_session_failed(task_id, failed_error)
+                else:
+                    _persist_session(task_id, entry, snapshot=values, status=_session_status_from_state(values, default="reviewing"))
             except Exception:
                 pass
 
 
 async def _resume_graph(task_id: str, graph, config: dict):
+    failed_error: str | None = None
     try:
         logger.info("恢复审查图执行: %s", task_id)
         await graph.ainvoke(None, config)
         logger.info("审查图恢复执行完成或再次中断: %s", task_id)
     except Exception as exc:
+        failed_error = str(exc)
         logger.error("审查图恢复执行异常: %s — %s", task_id, exc)
+        mark_session_failed(task_id, failed_error)
     finally:
         entry = _active_graphs.get(task_id)
         if entry:
@@ -1231,8 +1382,14 @@ async def _resume_graph(task_id: str, graph, config: dict):
             entry.pop("resume_task", None)
             try:
                 snapshot = graph.get_state(config)
-                if snapshot.values.get("is_complete"):
+                values = _as_dict(snapshot.values)
+                if values.get("is_complete"):
                     entry["completed_ts"] = _now_ts()
+                    mark_session_completed(task_id)
+                elif failed_error:
+                    mark_session_failed(task_id, failed_error)
+                else:
+                    _persist_session(task_id, entry, snapshot=values, status=_session_status_from_state(values, default="interrupted"))
             except Exception:
                 pass
 

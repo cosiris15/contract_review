@@ -375,8 +375,19 @@ export const useGen3ReviewStore = defineStore('gen3Review', {
       this._startOperation('recover_session', '正在恢复会话...')
       try {
         this.taskId = taskId
-        const [statusResp, docsResp, pendingResp, uploadResp] = await Promise.all([
-          gen3Api.getStatus(taskId),
+        let statusResp
+        try {
+          statusResp = await gen3Api.getStatus(taskId)
+        } catch (error) {
+          if (error?.response?.status === 404) {
+            await gen3Api.rehydrateSession(taskId)
+            statusResp = await gen3Api.getStatus(taskId)
+          } else {
+            throw error
+          }
+        }
+
+        const [docsResp, pendingResp, uploadResp] = await Promise.all([
           gen3Api.getDocuments(taskId),
           gen3Api.getPendingDiffs(taskId),
           gen3Api.getUploadJobs(taskId)

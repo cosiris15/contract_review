@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from .models import generate_id
@@ -16,7 +16,7 @@ _MEMORY_JOBS: dict[str, dict[str, Any]] = {}
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class UploadJobManager:

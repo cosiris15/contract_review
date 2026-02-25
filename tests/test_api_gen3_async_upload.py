@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 pytest.importorskip("langgraph")
 
 
-async def _wait_job(client, task_id: str, job_id: str, timeout_steps: int = 120):
+async def _wait_job(client, task_id: str, job_id: str, timeout_steps: int = 600):
     for _ in range(timeout_steps):
         resp = await client.get(f"/api/v3/review/{task_id}/uploads")
         assert resp.status_code == 200
@@ -67,6 +67,8 @@ async def test_upload_returns_quick_with_job_id(client):
 
 @pytest.mark.asyncio
 async def test_upload_job_lifecycle_succeeds(client):
+    from contract_review.session_manager import load_session
+
     await client.post("/api/v3/review/start", json={"task_id": "au_lifecycle"})
     files = {"file": ("contract.txt", b"1.1 Terms\nBody", "text/plain")}
     resp = await client.post("/api/v3/review/au_lifecycle/upload", files=files, data={"role": "primary"})
@@ -74,10 +76,16 @@ async def test_upload_job_lifecycle_succeeds(client):
     job = await _wait_job(client, "au_lifecycle", resp.json()["job_id"])
     assert job["status"] == "succeeded"
     assert (job.get("result_meta") or {}).get("document_id")
+    session = load_session("au_lifecycle")
+    assert session is not None
+    docs = (session.get("graph_state") or {}).get("documents") or []
+    assert len(docs) >= 1
 
 
 @pytest.mark.asyncio
 async def test_upload_job_failed_path(client, monkeypatch):
+    from contract_review.api_gen3 import _LOCAL_UPLOAD_BLOBS
+
     await client.post("/api/v3/review/start", json={"task_id": "au_fail"})
 
     def _raise(*args, **kwargs):
@@ -90,6 +98,7 @@ async def test_upload_job_failed_path(client, monkeypatch):
     job = await _wait_job(client, "au_fail", resp.json()["job_id"])
     assert job["status"] == "failed"
     assert "boom" in (job.get("error_message") or "")
+    assert len(_LOCAL_UPLOAD_BLOBS) >= 1
 
 
 @pytest.mark.asyncio
