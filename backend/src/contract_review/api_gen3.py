@@ -865,6 +865,8 @@ async def review_events(task_id: str):
         _prune_inactive_graphs()
         last_clause_index = -1
         pushed_diff_ids = set()
+        heartbeat_interval = 10.0
+        last_emit_ts = time.monotonic()
         while True:
             entry = _active_graphs.get(task_id)
             if not entry:
@@ -888,6 +890,7 @@ async def review_events(task_id: str):
                         "message": f"正在审查第 {current_index + 1}/{max(len(checklist), 1)} 个条款",
                     },
                 )
+                last_emit_ts = time.monotonic()
 
             pending = state.get("pending_diffs", [])
             if pending and snapshot.next:
@@ -905,15 +908,23 @@ async def review_events(task_id: str):
                         pushed_diff_ids.add(diff_id)
                         new_diffs_pushed = True
                     yield _format_gen3_sse("diff_proposed", payload)
+                    last_emit_ts = time.monotonic()
                 if new_diffs_pushed and snapshot.next:
                     yield _format_gen3_sse(
                         "approval_required",
                         {"task_id": task_id, "pending_count": len(pending), "type": "approval_required"},
                     )
+                    last_emit_ts = time.monotonic()
 
             if state.get("is_complete"):
                 yield _format_gen3_sse("review_complete", {"task_id": task_id, "summary": state.get("summary_notes", "")})
                 break
+
+            # Prevent long-lived SSE idle disconnects on proxies/load balancers.
+            now_ts = time.monotonic()
+            if now_ts - last_emit_ts >= heartbeat_interval:
+                yield _format_gen3_sse("heartbeat", {"task_id": task_id, "ts": int(time.time())})
+                last_emit_ts = now_ts
 
             await asyncio.sleep(2)
 

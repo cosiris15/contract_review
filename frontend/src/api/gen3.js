@@ -194,32 +194,59 @@ const gen3Api = {
       onError
     } = callbacks
 
-    // TODO: SSE 长连接场景下 token 可能过期，后续补充自动重连与 token 刷新。
-    const token = await getBearerToken()
     const controller = new AbortController()
-    const response = await fetch(`${API_BASE_URL}/review/${taskId}/events`, {
-      method: 'GET',
-      headers: {
-        'Authorization': token ? `Bearer ${token}` : ''
-      },
-      signal: controller.signal
-    })
+    const decoder = new TextDecoder()
+    let reconnectAttempts = 0
+    const maxReconnectAttempts = 5
+    let reconnectTimer = null
 
-    if (!response.ok) {
-      const detail = await response.json().catch(() => ({}))
-      throw new Error(detail?.detail || `HTTP ${response.status}`)
+    const clearReconnectTimer = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
     }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let currentEvent = null
+    const scheduleReconnect = () => {
+      if (controller.signal.aborted) return false
+      if (reconnectAttempts >= maxReconnectAttempts) return false
+      reconnectAttempts += 1
+      const delayMs = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 8000)
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        startStream()
+      }, delayMs)
+      return true
+    }
 
-    ;(async () => {
+    const startStream = async () => {
       try {
+        // TODO: SSE 长连接场景下 token 可能过期，后续补充自动重连与 token 刷新。
+        const token = await getBearerToken()
+        const response = await fetch(`${API_BASE_URL}/review/${taskId}/events`, {
+          method: 'GET',
+          headers: {
+            'Authorization': token ? `Bearer ${token}` : ''
+          },
+          signal: controller.signal
+        })
+
+        if (!response.ok) {
+          const detail = await response.json().catch(() => ({}))
+          throw new Error(detail?.detail || `HTTP ${response.status}`)
+        }
+
+        reconnectAttempts = 0
+        const reader = response.body.getReader()
+        let buffer = ''
+        let currentEvent = null
+
         while (true) {
           const { done, value } = await reader.read()
           if (done) {
+            if (!scheduleReconnect() && onError) {
+              onError(new Error('审阅事件流连接已断开'))
+            }
             break
           }
 
@@ -254,20 +281,26 @@ const gen3Api = {
                 case 'review_error':
                   if (onError) onError(new Error(data.message || '审阅失败'))
                   break
+                case 'heartbeat':
+                  break
               }
               currentEvent = null
             }
           }
         }
       } catch (error) {
-        if (error?.name !== 'AbortError' && onError) {
+        if (error?.name === 'AbortError') return
+        if (!scheduleReconnect() && onError) {
           onError(error)
         }
       }
-    })()
+    }
+
+    startStream()
 
     return {
       close() {
+        clearReconnectTimer()
         controller.abort()
       }
     }
