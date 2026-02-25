@@ -52,11 +52,28 @@ def _import_handler(handler_path: str):
     """Dynamically import a local handler."""
 
     module_path, func_name = handler_path.rsplit(".", 1)
-    module = importlib.import_module(module_path)
-    handler = getattr(module, func_name)
-    if not callable(handler):
-        raise TypeError(f"{handler_path} 不是可调用对象")
-    return handler
+    module_candidates: list[str] = [module_path]
+    # Render/production environment may expose package as `src.contract_review`,
+    # while local runs may resolve `contract_review` directly.
+    if module_path.startswith("contract_review."):
+        module_candidates.append(f"src.{module_path}")
+    elif module_path.startswith("src.contract_review."):
+        module_candidates.append(module_path.replace("src.", "", 1))
+
+    last_exc: Exception | None = None
+    for candidate in module_candidates:
+        try:
+            module = importlib.import_module(candidate)
+            if candidate != module_path:
+                logger.info("动态导入路径兼容重写: %s -> %s", module_path, candidate)
+            handler = getattr(module, func_name)
+            if not callable(handler):
+                raise TypeError(f"{candidate}.{func_name} 不是可调用对象")
+            return handler
+        except Exception as exc:
+            last_exc = exc
+
+    raise ModuleNotFoundError(f"无法导入 handler: {handler_path}") from last_exc
 
 
 class SkillDispatcher:

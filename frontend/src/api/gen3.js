@@ -124,7 +124,9 @@ const gen3Api = {
     formData.append('our_party', ourParty)
     formData.append('language', language)
     return api.post(`/review/${taskId}/upload`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      // Large doc parsing/OCR/LLM may exceed default 120s on cloud environments.
+      timeout: 600000
     })
   },
 
