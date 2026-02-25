@@ -87,15 +87,16 @@
       </el-card>
     </div>
 
-    <div v-else-if="isReviewPhase" class="review-section">
+    <template v-else-if="isReviewPhase">
       <el-alert
+        class="review-warning-alert"
         type="warning"
         :closable="false"
         show-icon
         title="审阅进行中，请勿部署或刷新页面"
         description="部署/刷新会中断实时连接；系统会自动重连，但建议等待当前批次处理完成后再发布。"
-        style="margin-bottom: 12px;"
       />
+      <div class="review-section">
       <ClauseProgress
         :current-index="store.currentClauseIndex"
         :total-clauses="store.totalClauses"
@@ -184,7 +185,8 @@
           </el-collapse-item>
         </el-collapse>
       </div>
-    </div>
+      </div>
+    </template>
 
     <div v-else-if="store.phase === 'complete'" class="complete-section">
       <ReviewSummary
@@ -377,6 +379,10 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.review-warning-alert {
+  margin-bottom: 12px;
 }
 
 .review-section {
